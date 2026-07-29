@@ -1,0 +1,316 @@
+"""FastAPI application exposing IMX camera snapshots and MJPEG streams."""
+
+from __future__ import annotations
+
+import logging
+
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from packages.camera.camera import Camera
+from packages.stream.stream import MJPEGStream
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yml")
+
+
+@dataclass(frozen=True)
+class APIConfig:
+    """Validated settings used to create the FastAPI application.
+
+    Attributes:
+        title: Application title displayed in OpenAPI documentation.
+        description: Application description displayed in OpenAPI documentation.
+        version: Application version displayed in OpenAPI documentation.
+        snapshot_timeout: Maximum snapshot wait time, in seconds.
+    """
+
+    title: str = "IMX Camera API"
+    description: str = "Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera."
+    version: str = "0.1.0"
+    snapshot_timeout: float = 2.0
+
+
+DEFAULT_API_CONFIG = APIConfig()
+
+try:
+    from fastapi import FastAPI, HTTPException, Query
+    from fastapi.responses import Response, StreamingResponse
+
+except ImportError:
+    FastAPI: Any | None = None
+    HTTPException: Any | None = None
+    Query: Any | None = None
+    Response: Any | None = None
+    StreamingResponse: Any | None = None
+
+try:
+    import yaml
+
+except ImportError:
+    yaml: Any | None = None
+
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+def _validate_api_config(config: APIConfig) -> None:
+    """Validate values used to create the API application.
+
+    Args:
+        config: Configuration to validate.
+
+    Raises:
+        ValueError: If API metadata or the snapshot timeout is invalid.
+    """
+    for field_name in ("title", "description", "version"):
+        value = getattr(config, field_name)
+
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field_name} must be a non-empty string")
+
+    if isinstance(config.snapshot_timeout, bool) or not isinstance(
+        config.snapshot_timeout, (int, float)
+    ):
+        raise ValueError("snapshot_timeout must be a number")
+
+    if config.snapshot_timeout <= 0:
+        raise ValueError("snapshot_timeout must be greater than zero")
+
+
+def _read_config_values(config_data: dict[str, Any]) -> APIConfig:
+    """Convert a parsed YAML mapping into a validated API configuration.
+
+    Args:
+        config_data: Mapping stored under ``api_config`` in the YAML file.
+
+    Returns:
+        Validated API configuration.
+
+    Raises:
+        ValueError: If keys are unknown or values have invalid types or ranges.
+    """
+    valid_keys = set(DEFAULT_API_CONFIG.__dataclass_fields__)
+    unknown_keys = set(config_data) - valid_keys
+
+    if unknown_keys:
+        formatted_keys = ", ".join(sorted(unknown_keys))
+        raise ValueError(f"unknown API configuration key(s): {formatted_keys}")
+
+    config = APIConfig(
+        title=config_data.get("title", DEFAULT_API_CONFIG.title),
+        description=config_data.get("description", DEFAULT_API_CONFIG.description),
+        version=config_data.get("version", DEFAULT_API_CONFIG.version),
+        snapshot_timeout=config_data.get(
+            "snapshot_timeout", DEFAULT_API_CONFIG.snapshot_timeout
+        ),
+    )
+
+    _validate_api_config(config)
+    return config
+
+
+def load_api_config(config_path: str | Path | None = None) -> APIConfig:
+    """Load API settings from YAML, falling back to built-in defaults.
+
+    Args:
+        config_path: Path to a YAML file. When omitted, uses the ``config.yml``
+            located next to this module.
+
+    Returns:
+        A validated configuration. Built-in defaults are returned when the file
+        is missing, cannot be read, is malformed, or contains invalid values.
+    """
+    path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
+
+    try:
+        raw_config = path.read_text(encoding="utf-8")
+
+    except FileNotFoundError:
+        return DEFAULT_API_CONFIG
+
+    except OSError as error:
+        logger.warning("Could not read API configuration %s: %s", path, error)
+        return DEFAULT_API_CONFIG
+
+    if yaml is None:
+        logger.warning("PyYAML is unavailable; using built-in API configuration defaults")
+        return DEFAULT_API_CONFIG
+
+    try:
+        parsed_config = yaml.safe_load(raw_config)
+
+        if not isinstance(parsed_config, dict):
+            raise ValueError("the YAML document must be a mapping")
+
+        config_data = parsed_config.get("api_config")
+
+        if not isinstance(config_data, dict):
+            raise ValueError("api_config must be a mapping")
+
+        return _read_config_values(config_data)
+
+    except (ValueError, yaml.YAMLError) as error:
+        logger.warning("Invalid API configuration %s: %s", path, error)
+        return DEFAULT_API_CONFIG
+
+
+def _camera_status(camera: Camera) -> dict[str, object]:
+    """Return JSON-serializable state and capture metrics for a camera.
+
+    Args:
+        camera: Camera instance to inspect.
+
+    Returns:
+        Health status, frame availability, capture metrics, and the last
+        background capture error when one exists.
+    """
+    last_error = str(camera.last_error) if camera.last_error is not None else None
+
+    if camera.running:
+        status = "ok"
+
+    elif last_error is not None:
+        status = "error"
+
+    else:
+        status = "unavailable"
+
+    return {
+        "status": status,
+        "camera_running": camera.running,
+        "frame_available": camera.frame_available,
+        "frame_number": camera.frame_number,
+        "frames_captured": camera.frames_captured,
+        "frames_encoded": camera.frames_encoded,
+        "last_frame_time": camera.last_frame_time,
+        "last_error": last_error,
+    }
+
+
+def create_app(
+    camera: Camera | None = None,
+    *,
+    config_path: str | Path | None = None,
+) -> Any:
+    """Create a FastAPI application backed by one shared camera instance.
+
+    The camera is started during the FastAPI lifespan startup event and stopped
+    during shutdown. It is deliberately shared by the snapshot and MJPEG
+    endpoints instead of being created once per HTTP request.
+
+    Args:
+        camera: Camera to expose. When omitted, creates a default ``Camera``.
+        config_path: Optional path to a YAML API configuration file.
+
+    Returns:
+        Configured FastAPI application.
+
+    Raises:
+        RuntimeError: If FastAPI is unavailable in the current environment.
+    """
+    if FastAPI is None:
+        raise RuntimeError(
+            "FastAPI is not installed. Add FastAPI to the project's uv "
+            "dependencies before creating the API application."
+        )
+
+    shared_camera = camera if camera is not None else Camera()
+    config = load_api_config(config_path)
+
+    @asynccontextmanager
+    async def lifespan(_: Any):
+        """Start the shared camera for the lifetime of the API application."""
+        shared_camera.start()
+
+        try:
+            yield
+
+        finally:
+            shared_camera.stop()
+
+    application = FastAPI(
+        title=config.title,
+        description=config.description,
+        version=config.version,
+        lifespan=lifespan,
+    )
+    application.state.config = config
+
+    @application.get("/")
+    def index() -> dict[str, str]:
+        """Return links to the camera API endpoints.
+
+        Returns:
+            Available camera API endpoint paths.
+        """
+        return {
+            "health": "/api/health",
+            "snapshot": "/api/camera/snapshot",
+            "mjpeg": "/api/camera/mjpeg",
+        }
+
+    @application.get("/api/health")
+    def health() -> dict[str, object]:
+        """Return camera health and capture metrics.
+
+        Returns:
+            JSON-serializable state for the shared camera.
+        """
+        return _camera_status(shared_camera)
+
+    @application.get("/api/camera/snapshot")
+    def camera_snapshot(after: int = Query(default=-1, ge=-1)) -> Any:
+        """Return the newest JPEG camera frame.
+
+        Args:
+            after: Previously consumed frame number. A newer frame is awaited
+                for up to two seconds when this value is non-negative.
+
+        Returns:
+            JPEG response with the current frame number in ``X-Frame-Number``.
+
+        Raises:
+            HTTPException: If the camera has not produced a frame.
+        """
+        frame_number, jpeg = shared_camera.wait_for_jpeg(
+            previous_frame_number=after,
+            timeout=config.snapshot_timeout,
+        )
+        if jpeg is None:
+            raise HTTPException(status_code=503, detail="Camera frame unavailable")
+
+        if after >= 0 and frame_number == after:
+            return Response(status_code=204, headers=NO_CACHE_HEADERS)
+
+        headers = {
+            **NO_CACHE_HEADERS,
+            "X-Frame-Number": str(frame_number),
+        }
+
+        return Response(content=jpeg, media_type="image/jpeg", headers=headers)
+
+    @application.get("/api/camera/mjpeg")
+    def camera_mjpeg() -> Any:
+        """Return a live MJPEG response from the shared camera.
+
+        Returns:
+            Multipart HTTP response that emits only the newest JPEG frames.
+        """
+        stream = MJPEGStream(shared_camera)
+        return StreamingResponse(
+            stream,
+            media_type=stream.content_type,
+            headers=NO_CACHE_HEADERS,
+        )
+
+    return application
+
+
+app = create_app() if FastAPI is not None else None
