@@ -2,10 +2,38 @@
 
 from __future__ import annotations
 
+import logging
+
 from packages.api.api import app
 
 HOST = "0.0.0.0"
 PORT = 8000
+
+
+class SnapshotAccessLogFilter(logging.Filter):
+    """Exclude high-frequency camera snapshot requests from access logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Return whether an access log record should be emitted.
+
+        Args:
+            record: Logging record prepared by Uvicorn.
+
+        Returns:
+            ``False`` for snapshot access records and ``True`` otherwise.
+        """
+        return "/api/camera/snapshot" not in record.getMessage()
+
+
+def configure_access_logging() -> None:
+    """Suppress repetitive snapshot requests while preserving other access logs."""
+    access_logger = logging.getLogger("uvicorn.access")
+
+    if not any(
+        isinstance(log_filter, SnapshotAccessLogFilter)
+        for log_filter in access_logger.filters
+    ):
+        access_logger.addFilter(SnapshotAccessLogFilter())
 
 
 def main() -> None:
@@ -32,8 +60,11 @@ def main() -> None:
             "`uv sync` before starting the camera server."
         ) from error
 
+    configure_access_logging()
+
     print(f"Camera preview: http://localhost:{PORT}/")
     print(f"API documentation: http://localhost:{PORT}/docs")
+
     uvicorn.run(app, host=HOST, port=PORT)
 
 

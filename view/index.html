@@ -65,7 +65,7 @@
     <main>
         <header>
             <h1>Camera Preview</h1>
-            <span class="status">Live MJPEG stream</span>
+            <span class="status" id="stream-status">Connecting to camera</span>
         </header>
 
         <section class="camera-frame">
@@ -77,6 +77,74 @@
             <img data-camera-stream src="{{ camera_stream_url }}" alt="Live IMX camera feed">
         </section>
     </main>
+    <script>
+        const image = document.querySelector("[data-camera-stream]");
+        const status = document.getElementById("stream-status");
+        const snapshotUrl = "/api/camera/snapshot";
+
+        let lastFrameNumber = -1;
+        let objectUrl = null;
+
+        function sleep(milliseconds) {
+            return new Promise((resolve) => setTimeout(resolve, milliseconds));
+        }
+
+        async function displayFrame(blob) {
+            const nextObjectUrl = URL.createObjectURL(blob);
+
+            await new Promise((resolve) => {
+                const finish = () => {
+                    image.removeEventListener("load", finish);
+                    image.removeEventListener("error", finish);
+                    resolve();
+                };
+
+                image.addEventListener("load", finish, { once: true });
+                image.addEventListener("error", finish, { once: true });
+                image.src = nextObjectUrl;
+            });
+
+            if (objectUrl !== null) {
+                URL.revokeObjectURL(objectUrl);
+            }
+
+            objectUrl = nextObjectUrl;
+        }
+
+        async function showCamera() {
+            image.removeAttribute("src");
+
+            while (true) {
+                try {
+                    const response = await fetch(
+                        `${snapshotUrl}?after=${lastFrameNumber}`,
+                        { cache: "no-store" },
+                    );
+
+                    if (response.status === 204) {
+                        continue;
+                    }
+
+                    if (!response.ok) {
+                        throw new Error(`Camera returned HTTP ${response.status}`);
+                    }
+
+                    const frameNumber = Number(
+                        response.headers.get("X-Frame-Number"),
+                    );
+
+                    await displayFrame(await response.blob());
+                    lastFrameNumber = frameNumber;
+                    status.textContent = "Live camera preview";
+                } catch (error) {
+                    status.textContent = "Waiting for camera";
+                    await sleep(500);
+                }
+            }
+        }
+
+        showCamera();
+    </script>
 </body>
 
 </html>

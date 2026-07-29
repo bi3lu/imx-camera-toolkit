@@ -330,7 +330,10 @@ def create_app(
                 camera stream image tag.
         """
         try:
-            return HTMLResponse(content=load_camera_view(resolved_view_path))
+            return HTMLResponse(
+                content=load_camera_view(resolved_view_path),
+                headers=NO_CACHE_HEADERS,
+            )
 
         except (RuntimeError, ValueError) as error:
             logger.error("Could not serve camera view: %s", error)
