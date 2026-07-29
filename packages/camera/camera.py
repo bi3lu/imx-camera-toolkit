@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 try:
     import cv2  # NOTE: OpenCV is supplied by JetPack 6.2.2.
 
@@ -22,8 +24,6 @@ try:
 except ImportError:
     yaml: Any | None = None
 
-
-logger = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yml")
 
 
