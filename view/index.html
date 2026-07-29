@@ -210,21 +210,13 @@
                     <div class="control-field">
                         <label for="exposure-us">Exposure: <output class="range-value"
                                 id="exposure-value"></output></label>
-                        <input id="exposure-us" type="range" min="100" max="1000000"
+                        <input id="exposure-us" type="range" min="100" max="22000"
                             step="100" value="10000">
-                        <label class="check-field" for="auto-exposure">
-                            <input id="auto-exposure" type="checkbox">
-                            Automatic exposure
-                        </label>
                     </div>
                     <div class="control-field">
                         <label for="gain">Analog gain: <output class="range-value"
                                 id="gain-value"></output></label>
-                        <input id="gain" type="range" min="1" max="32" step="0.1" value="1">
-                        <label class="check-field" for="auto-gain">
-                            <input id="auto-gain" type="checkbox">
-                            Automatic gain
-                        </label>
+                        <input id="gain" type="range" min="1" max="8" step="0.1" value="1">
                     </div>
                     <label class="control-field">
                         White balance
@@ -358,20 +350,17 @@
             controlStatus.style.color = isError ? "#ff9b9b" : "#9aa4b2";
         }
 
-        function setControls(settings, capabilities) {
+        function setControls(settings, capabilities, captureFps = null) {
             const exposure = document.getElementById("exposure-us");
             const gain = document.getElementById("gain");
             const denoiseStrength = document.getElementById("denoise-strength");
-            const autoExposure = document.getElementById("auto-exposure");
-            const autoGain = document.getElementById("auto-gain");
             const defaultDenoiseStrength = document.getElementById("default-denoise-strength");
 
-            autoExposure.checked = settings.exposure_us === null;
-            autoGain.checked = settings.gain === null;
             defaultDenoiseStrength.checked = settings.denoise_strength === null;
-            exposure.disabled = autoExposure.checked;
-            gain.disabled = autoGain.checked;
             denoiseStrength.disabled = defaultDenoiseStrength.checked;
+            if (captureFps !== null) {
+                exposure.max = Math.max(100, Math.floor(1000000 / captureFps));
+            }
             setRangeValue(exposure, settings.exposure_us);
             setRangeValue(gain, settings.gain);
             document.getElementById("awb-mode").value = settings.awb_mode;
@@ -428,7 +417,7 @@
                 }
 
                 const state = await response.json();
-                setControls(state.settings, state.capabilities);
+                setControls(state.settings, state.capabilities, state.capture_fps);
                 setControlStatus("Camera controls ready");
             } catch (error) {
                 setControlStatus(error.message, true);
@@ -437,12 +426,8 @@
 
         async function applyControls() {
             const payload = {
-                exposure_us: document.getElementById("auto-exposure").checked
-                    ? null
-                    : optionalNumber(document.getElementById("exposure-us"), true),
-                gain: document.getElementById("auto-gain").checked
-                    ? null
-                    : optionalNumber(document.getElementById("gain")),
+                exposure_us: optionalNumber(document.getElementById("exposure-us"), true),
+                gain: optionalNumber(document.getElementById("gain")),
                 awb_mode: document.getElementById("awb-mode").value,
                 awb_locked: document.getElementById("awb-locked").checked,
                 denoise_mode: document.getElementById("denoise-mode").value,
@@ -452,7 +437,7 @@
                 sensor_mode: optionalNumber(document.getElementById("sensor-mode"), true),
                 hdr_enabled: document.getElementById("hdr-enabled").checked,
             };
-            setControlStatus("Applying controls and restarting camera pipeline");
+            setControlStatus("Applying camera controls");
 
             const response = await fetch(controlUrl, {
                 method: "PATCH",
@@ -465,10 +450,13 @@
             }
 
             const update = await response.json();
-            setControls(update.settings, (await getControlState()).capabilities);
+            const state = await getControlState();
+            setControls(update.settings, state.capabilities, state.capture_fps);
             setControlStatus(
-                update.changed_fields.length
-                    ? "Camera controls applied"
+                update.restart_required
+                    ? "Sensor mode applied; camera pipeline restarted"
+                    : update.changed_fields.length
+                    ? "Camera controls applied immediately"
                     : "Camera controls are already current",
             );
         }
@@ -493,12 +481,27 @@
             }
         });
 
-        document.getElementById("reset-exposure").addEventListener("click", () => {
-            document.getElementById("auto-exposure").checked = true;
-            document.getElementById("auto-gain").checked = true;
-            document.getElementById("exposure-us").disabled = true;
-            document.getElementById("gain").disabled = true;
-            controlsForm.requestSubmit();
+        document.getElementById("reset-exposure").addEventListener("click", async () => {
+            setControlStatus("Restoring automatic exposure and gain");
+
+            try {
+                const response = await fetch(controlUrl, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ exposure_us: null, gain: null }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(await readError(response));
+                }
+
+                const update = await response.json();
+                const state = await getControlState();
+                setControls(update.settings, state.capabilities, state.capture_fps);
+                setControlStatus("Automatic exposure and gain restored");
+            } catch (error) {
+                setControlStatus(error.message, true);
+            }
         });
 
         for (const range of document.querySelectorAll('input[type="range"]')) {
@@ -506,8 +509,6 @@
         }
 
         for (const [checkboxId, rangeId] of [
-            ["auto-exposure", "exposure-us"],
-            ["auto-gain", "gain"],
             ["default-denoise-strength", "denoise-strength"],
         ]) {
             document.getElementById(checkboxId).addEventListener("change", (event) => {

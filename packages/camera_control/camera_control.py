@@ -5,11 +5,10 @@ camera acquisition.  It models the controls accepted by ``nvarguscamerasrc``,
 validates them against declared sensor capabilities, and emits an atomic
 runtime update whenever a setting changes.
 
-OpenCV's ``VideoCapture`` API does not expose the GStreamer source element
-after a pipeline has been opened.  Applications using the project's current
-``Camera`` class must therefore rebuild the capture pipeline to apply an
-update.  ``CameraController`` makes that explicit through its runtime handler
-instead of pretending that a value was applied to the sensor immediately.
+The project's GStreamer camera backend applies exposure, gain, white balance,
+and temporal denoising directly to the active Argus source. Selecting a sensor
+mode or HDR mode remains a pipeline-level change and is marked accordingly in
+each runtime update.
 """
 
 from __future__ import annotations
@@ -176,6 +175,7 @@ ARGUS_CONTROL_PROPERTIES: Final[frozenset[str]] = frozenset(
         "awblock",
         "exposuretimerange",
         "gainrange",
+        "ispdigitalgainrange",
         "sensor-mode",
         "tnr-mode",
         "tnr-strength",
@@ -307,7 +307,7 @@ class CameraControlUpdate:
     settings: CameraSettings
     changed_fields: tuple[str, ...]
     source_properties: tuple[str, ...]
-    restart_required: bool = True
+    restart_required: bool = False
 
     def as_dict(self) -> dict[str, object]:
         """Return a JSON-serialisable representation for a future API layer.
@@ -428,7 +428,8 @@ def build_argus_control_properties(
         properties.append(f'gainrange="{gain} {gain}"')
 
     if exposure_or_gain_fixed:
-        properties.append("aelock=true")
+        properties.append('ispdigitalgainrange="1 1"')
+        properties.append("aelock=false")
 
     properties.append(f"wbmode={settings.awb_mode.value}")
     properties.append(f"awblock={_format_bool(settings.awb_locked)}")
@@ -444,8 +445,8 @@ class CameraController:
     """Thread-safe runtime API for Argus camera settings and profiles.
 
     The controller owns only desired state.  A supplied ``runtime_handler`` is
-    invoked before the new state is committed; it should rebuild and replace
-    the active capture pipeline using ``update.source_properties``.  If that
+    invoked before the new state is committed; it applies
+    ``update.source_properties`` to the active capture pipeline. If that
     operation fails, the controller retains its previous state and profiles.
 
     Args:
@@ -505,7 +506,7 @@ class CameraController:
                 "source_properties": list(
                     build_argus_control_properties(self._settings, self._capabilities)
                 ),
-                "restart_required": True,
+                "restart_required": False,
             }
 
     def set_runtime_handler(self, runtime_handler: RuntimeHandler | None) -> None:
@@ -784,12 +785,19 @@ class CameraController:
             for field_name in settings.__dataclass_fields__
             if getattr(self._settings, field_name) != getattr(settings, field_name)
         )
+        manual_control_reset = (
+            self._settings.exposure_us is not None and settings.exposure_us is None
+        ) or (self._settings.gain is not None and settings.gain is None)
         update = CameraControlUpdate(
             revision=self._revision + (1 if changed_fields else 0),
             previous=self._settings,
             settings=settings,
             changed_fields=changed_fields,
             source_properties=source_properties,
+            restart_required=bool(
+                {"sensor_mode", "hdr_enabled"}.intersection(changed_fields)
+            )
+            or manual_control_reset,
         )
 
         if changed_fields and self._runtime_handler is not None:
@@ -818,6 +826,7 @@ def _validate_settings_capabilities(
 
     if settings.exposure_us is not None or settings.gain is not None:
         required_properties.add("aelock")
+        required_properties.add("ispdigitalgainrange")
 
     if settings.denoise_strength is not None:
         required_properties.add("tnr-strength")

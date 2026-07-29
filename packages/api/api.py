@@ -302,8 +302,9 @@ def create_app(
 
     shared_camera = camera if camera is not None else Camera()
     camera_controller = CameraController(
-        runtime_handler=lambda update: shared_camera.reconfigure_argus_properties(
-            update.source_properties
+        runtime_handler=lambda update: shared_camera.apply_argus_properties(
+            update.source_properties,
+            restart_required=update.restart_required,
         )
     )
     config = load_api_config(config_path)
@@ -367,16 +368,19 @@ def create_app(
         Returns:
             JSON-ready control state, available source properties, and profiles.
         """
-        return camera_controller.get_runtime_state()
+        state = camera_controller.get_runtime_state()
+        state["capture_fps"] = shared_camera.config.capture_fps
+        return state
 
     @application.patch("/api/camera/control")
     def update_camera_control(values: dict[str, Any] = Body(...)) -> dict[str, object]:
         """Apply a validated camera-control update at runtime.
 
-        The capture pipeline is briefly restarted only when one or more values
-        change. Keys omitted from the request preserve their current values;
-        ``null`` restores automatic exposure, gain, denoise strength, or
-        sensor-mode selection where applicable.
+        Exposure, gain, white balance, and denoising are applied to the live
+        Argus source. Sensor-mode and HDR changes restart capture because they
+        alter the sensor operating mode. Keys omitted from the request preserve
+        their current values; ``null`` restores automatic exposure, gain,
+        denoise strength, or sensor-mode selection where applicable.
 
         Args:
             values: Partial ``CameraController.update`` settings mapping.
