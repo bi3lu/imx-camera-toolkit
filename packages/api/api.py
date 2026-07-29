@@ -2,11 +2,39 @@
 
 from __future__ import annotations
 
+import logging
+
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from packages.camera.camera import Camera
 from packages.stream.stream import MJPEGStream
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yml")
+
+
+@dataclass(frozen=True)
+class APIConfig:
+    """Validated settings used to create the FastAPI application.
+
+    Attributes:
+        title: Application title displayed in OpenAPI documentation.
+        description: Application description displayed in OpenAPI documentation.
+        version: Application version displayed in OpenAPI documentation.
+        snapshot_timeout: Maximum snapshot wait time, in seconds.
+    """
+
+    title: str = "IMX Camera API"
+    description: str = "Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera."
+    version: str = "0.1.0"
+    snapshot_timeout: float = 2.0
+
+
+DEFAULT_API_CONFIG = APIConfig()
 
 try:
     from fastapi import FastAPI, HTTPException, Query
@@ -19,13 +47,118 @@ except ImportError:
     Response: Any | None = None
     StreamingResponse: Any | None = None
 
+try:
+    import yaml
 
-SNAPSHOT_TIMEOUT = 2.0
+except ImportError:
+    yaml: Any | None = None
+
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
     "Expires": "0",
 }
+
+
+def _validate_api_config(config: APIConfig) -> None:
+    """Validate values used to create the API application.
+
+    Args:
+        config: Configuration to validate.
+
+    Raises:
+        ValueError: If API metadata or the snapshot timeout is invalid.
+    """
+    for field_name in ("title", "description", "version"):
+        value = getattr(config, field_name)
+
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{field_name} must be a non-empty string")
+
+    if isinstance(config.snapshot_timeout, bool) or not isinstance(
+        config.snapshot_timeout, (int, float)
+    ):
+        raise ValueError("snapshot_timeout must be a number")
+
+    if config.snapshot_timeout <= 0:
+        raise ValueError("snapshot_timeout must be greater than zero")
+
+
+def _read_config_values(config_data: dict[str, Any]) -> APIConfig:
+    """Convert a parsed YAML mapping into a validated API configuration.
+
+    Args:
+        config_data: Mapping stored under ``api_config`` in the YAML file.
+
+    Returns:
+        Validated API configuration.
+
+    Raises:
+        ValueError: If keys are unknown or values have invalid types or ranges.
+    """
+    valid_keys = set(DEFAULT_API_CONFIG.__dataclass_fields__)
+    unknown_keys = set(config_data) - valid_keys
+
+    if unknown_keys:
+        formatted_keys = ", ".join(sorted(unknown_keys))
+        raise ValueError(f"unknown API configuration key(s): {formatted_keys}")
+
+    config = APIConfig(
+        title=config_data.get("title", DEFAULT_API_CONFIG.title),
+        description=config_data.get("description", DEFAULT_API_CONFIG.description),
+        version=config_data.get("version", DEFAULT_API_CONFIG.version),
+        snapshot_timeout=config_data.get(
+            "snapshot_timeout", DEFAULT_API_CONFIG.snapshot_timeout
+        ),
+    )
+
+    _validate_api_config(config)
+    return config
+
+
+def load_api_config(config_path: str | Path | None = None) -> APIConfig:
+    """Load API settings from YAML, falling back to built-in defaults.
+
+    Args:
+        config_path: Path to a YAML file. When omitted, uses the ``config.yml``
+            located next to this module.
+
+    Returns:
+        A validated configuration. Built-in defaults are returned when the file
+        is missing, cannot be read, is malformed, or contains invalid values.
+    """
+    path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
+
+    try:
+        raw_config = path.read_text(encoding="utf-8")
+
+    except FileNotFoundError:
+        return DEFAULT_API_CONFIG
+
+    except OSError as error:
+        logger.warning("Could not read API configuration %s: %s", path, error)
+        return DEFAULT_API_CONFIG
+
+    if yaml is None:
+        logger.warning("PyYAML is unavailable; using built-in API configuration defaults")
+        return DEFAULT_API_CONFIG
+
+    try:
+        parsed_config = yaml.safe_load(raw_config)
+
+        if not isinstance(parsed_config, dict):
+            raise ValueError("the YAML document must be a mapping")
+
+        config_data = parsed_config.get("api_config")
+
+        if not isinstance(config_data, dict):
+            raise ValueError("api_config must be a mapping")
+
+        return _read_config_values(config_data)
+
+    except (ValueError, yaml.YAMLError) as error:
+        logger.warning("Invalid API configuration %s: %s", path, error)
+        return DEFAULT_API_CONFIG
 
 
 def _camera_status(camera: Camera) -> dict[str, object]:
@@ -61,7 +194,11 @@ def _camera_status(camera: Camera) -> dict[str, object]:
     }
 
 
-def create_app(camera: Camera | None = None) -> Any:
+def create_app(
+    camera: Camera | None = None,
+    *,
+    config_path: str | Path | None = None,
+) -> Any:
     """Create a FastAPI application backed by one shared camera instance.
 
     The camera is started during the FastAPI lifespan startup event and stopped
@@ -70,6 +207,7 @@ def create_app(camera: Camera | None = None) -> Any:
 
     Args:
         camera: Camera to expose. When omitted, creates a default ``Camera``.
+        config_path: Optional path to a YAML API configuration file.
 
     Returns:
         Configured FastAPI application.
@@ -84,6 +222,7 @@ def create_app(camera: Camera | None = None) -> Any:
         )
 
     shared_camera = camera if camera is not None else Camera()
+    config = load_api_config(config_path)
 
     @asynccontextmanager
     async def lifespan(_: Any):
@@ -97,11 +236,12 @@ def create_app(camera: Camera | None = None) -> Any:
             shared_camera.stop()
 
     application = FastAPI(
-        title="IMX Camera API",
-        description="Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera.",
-        version="0.1.0",
+        title=config.title,
+        description=config.description,
+        version=config.version,
         lifespan=lifespan,
     )
+    application.state.config = config
 
     @application.get("/")
     def index() -> dict[str, str]:
@@ -141,7 +281,7 @@ def create_app(camera: Camera | None = None) -> Any:
         """
         frame_number, jpeg = shared_camera.wait_for_jpeg(
             previous_frame_number=after,
-            timeout=SNAPSHOT_TIMEOUT,
+            timeout=config.snapshot_timeout,
         )
         if jpeg is None:
             raise HTTPException(status_code=503, detail="Camera frame unavailable")
