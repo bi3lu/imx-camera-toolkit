@@ -11,6 +11,11 @@ from pathlib import Path
 from typing import Any
 
 from packages.camera.camera import Camera
+from packages.camera_control.camera_control import (
+    CameraController,
+    ProfileNotFoundError,
+    UnsupportedControlError,
+)
 from packages.stream.stream import MJPEGStream
 
 logger = logging.getLogger(__name__)
@@ -41,11 +46,12 @@ class APIConfig:
 DEFAULT_API_CONFIG = APIConfig()
 
 try:
-    from fastapi import FastAPI, HTTPException, Query
+    from fastapi import Body, FastAPI, HTTPException, Query
     from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 except ImportError:
     FastAPI: Any | None = None
+    Body: Any | None = None
     HTTPException: Any | None = None
     Query: Any | None = None
     HTMLResponse: Any | None = None
@@ -295,6 +301,12 @@ def create_app(
         )
 
     shared_camera = camera if camera is not None else Camera()
+    camera_controller = CameraController(
+        runtime_handler=lambda update: shared_camera.apply_argus_properties(
+            update.source_properties,
+            restart_required=update.restart_required,
+        )
+    )
     config = load_api_config(config_path)
     resolved_view_path = Path(view_path) if view_path is not None else DEFAULT_VIEW_PATH
 
@@ -317,6 +329,7 @@ def create_app(
     )
     application.state.config = config
     application.state.view_path = resolved_view_path
+    application.state.camera_controller = camera_controller
 
     @application.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index() -> Any:
@@ -347,6 +360,188 @@ def create_app(
             JSON-serializable state for the shared camera.
         """
         return _camera_status(shared_camera)
+
+    @application.get("/api/camera/control")
+    def camera_control_state() -> dict[str, object]:
+        """Return runtime camera-control settings and capabilities.
+
+        Returns:
+            JSON-ready control state, available source properties, and profiles.
+        """
+        state = camera_controller.get_runtime_state()
+        state["capture_fps"] = shared_camera.config.capture_fps
+        state["software_hdr"] = shared_camera.software_hdr_state
+        return state
+
+    @application.patch("/api/camera/control")
+    def update_camera_control(values: dict[str, Any] = Body(...)) -> dict[str, object]:
+        """Apply a validated camera-control update at runtime.
+
+        Exposure, gain, white balance, and denoising are applied to the live
+        Argus source. Sensor-mode and HDR changes restart capture because they
+        alter the sensor operating mode. Keys omitted from the request preserve
+        their current values; ``null`` restores automatic exposure, gain,
+        denoise strength, or sensor-mode selection where applicable.
+
+        Args:
+            values: Partial ``CameraController.update`` settings mapping.
+
+        Returns:
+            The committed update, including generated Argus properties.
+
+        Raises:
+            HTTPException: If a key, value, capability, or pipeline update is
+                invalid.
+        """
+        valid_keys = set(camera_controller.settings.__dataclass_fields__)
+        unknown_keys = set(values) - valid_keys
+
+        if unknown_keys:
+            formatted_keys = ", ".join(sorted(unknown_keys))
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown camera-control key(s): {formatted_keys}",
+            )
+
+        try:
+            return camera_controller.update(**values).as_dict()
+
+        except UnsupportedControlError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        except RuntimeError as error:
+            logger.exception("Could not apply camera-control update")
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @application.get("/api/camera/software-hdr")
+    def software_hdr_state() -> dict[str, object]:
+        """Return the active Jetson-side exposure-fusion HDR state.
+
+        Returns:
+            Enabled state, configured base exposure, and resolved brackets.
+        """
+        return shared_camera.software_hdr_state
+
+    @application.put("/api/camera/software-hdr")
+    def configure_software_hdr(values: dict[str, Any] = Body(...)) -> dict[str, object]:
+        """Configure three-exposure HDR fusion for sensors without native HDR.
+
+        Args:
+            values: ``enabled`` plus optional ``base_exposure_us`` and
+                ``settle_frames`` values.
+
+        Returns:
+            The committed software HDR state.
+
+        Raises:
+            HTTPException: If the request is invalid or sensor controls fail.
+        """
+        valid_keys = {"enabled", "base_exposure_us", "settle_frames"}
+        unknown_keys = set(values) - valid_keys
+
+        if unknown_keys:
+            formatted_keys = ", ".join(sorted(unknown_keys))
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown software HDR key(s): {formatted_keys}",
+            )
+
+        if "enabled" not in values:
+            raise HTTPException(status_code=422, detail="enabled is required")
+
+        try:
+            return shared_camera.configure_software_hdr(
+                enabled=values["enabled"],
+                base_exposure_us=values.get("base_exposure_us"),
+                settle_frames=values.get("settle_frames"),
+            )
+
+        except (ValueError, RuntimeError) as error:
+            logger.warning("Could not configure software HDR: %s", error)
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @application.get("/api/camera/control/profiles")
+    def list_camera_control_profiles() -> dict[str, list[str]]:
+        """Return names of available in-memory camera-control profiles.
+
+        Returns:
+            Profile names ordered lexicographically.
+        """
+        return {
+            "profiles": [profile.name for profile in camera_controller.list_profiles()]
+        }
+
+    @application.put("/api/camera/control/profiles/{name}")
+    def save_camera_control_profile(name: str) -> dict[str, object]:
+        """Store the current runtime settings as a named profile.
+
+        Args:
+            name: Profile identifier.
+
+        Returns:
+            Name and settings held by the new profile.
+
+        Raises:
+            HTTPException: If the profile name is invalid.
+        """
+        try:
+            profile = camera_controller.save_profile(name)
+
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+        return {
+            "name": profile.name,
+            "settings": camera_controller.get_runtime_state()["settings"],
+        }
+
+    @application.post("/api/camera/control/profiles/{name}/apply")
+    def apply_camera_control_profile(name: str) -> dict[str, object]:
+        """Apply one named profile to the active camera.
+
+        Args:
+            name: Profile identifier.
+
+        Returns:
+            The committed runtime update.
+
+        Raises:
+            HTTPException: If the profile is absent or the update cannot apply.
+        """
+        try:
+            return camera_controller.apply_profile(name).as_dict()
+
+        except ProfileNotFoundError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unknown profile: {name}",
+            ) from error
+
+        except RuntimeError as error:
+            logger.exception("Could not apply camera-control profile %s", name)
+            raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @application.delete("/api/camera/control/profiles/{name}", status_code=204)
+    def delete_camera_control_profile(name: str) -> None:
+        """Remove one in-memory camera-control profile.
+
+        Args:
+            name: Profile identifier.
+
+        Raises:
+            HTTPException: If the profile is absent.
+        """
+        try:
+            camera_controller.delete_profile(name)
+
+        except ProfileNotFoundError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"unknown profile: {name}",
+            ) from error
 
     @application.get("/api/camera/snapshot")
     def camera_snapshot(after: int = Query(default=-1, ge=-1)) -> Any:

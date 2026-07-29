@@ -1,0 +1,59 @@
+# Default runtime controls for an NVIDIA Argus CSI camera.
+#
+# CameraController() loads this file automatically. If it is missing,
+# unreadable, malformed, or invalid, the built-in defaults are used safely.
+# Explicit CameraController() arguments override the matching values here.
+#
+# Source-property names must match the nvarguscamerasrc properties provided by
+# the JetPack image installed on the Jetson. Sensor-mode metadata is optional;
+# when it is supplied, it enables validation and selection of native HDR modes.
+
+camera_control_config:
+  # Optional sensor identifier shown by API clients. Set null when unknown.
+  model: null
+
+  # Argus properties declared as available for this camera pipeline.
+  # Remove properties that are not supported by the installed camera driver.
+  source_properties:
+    - aelock
+    - awblock
+    - exposuretimerange
+    - gainrange
+    - ispdigitalgainrange
+    - sensor-mode
+    - tnr-mode
+    - tnr-strength
+    - wbmode
+
+  # Optional sensor mode metadata. An empty list means that no complete mode
+  # metadata is known. Add HDR/WDR modes here only when they are provided by
+  # the sensor driver; software HDR is configured separately at runtime.
+  #
+  # Example:
+  # sensor_modes:
+  #   - index: 0
+  #     width: 1920
+  #     height: 1080
+  #     max_fps: 30.0
+  #     hdr: false
+  #     name: 1080p SDR
+  #   - index: 1
+  #     width: 1920
+  #     height: 1080
+  #     max_fps: 30.0
+  #     hdr: true
+  #     name: 1080p HDR
+  sensor_modes: []
+
+  # Runtime values used when CameraController is created. Use null for
+  # automatic exposure, automatic gain, default denoise strength, or Argus
+  # sensor-mode selection. Exposure is expressed in microseconds.
+  initial_settings:
+    exposure_us: null
+    gain: null
+    awb_mode: auto
+    awb_locked: false
+    denoise_mode: fast
+    denoise_strength: null
+    sensor_mode: null
+    hdr_enabled: false
