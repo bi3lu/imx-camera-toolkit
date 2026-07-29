@@ -32,7 +32,7 @@ def main() -> None:
             "`uv sync` before starting the camera server."
         ) from error
 
-    print(f"Camera preview: http://localhost:{PORT}/api/camera/mjpeg")
+    print(f"Camera preview: http://localhost:{PORT}/")
     print(f"API documentation: http://localhost:{PORT}/docs")
     uvicorn.run(app, host=HOST, port=PORT)
 

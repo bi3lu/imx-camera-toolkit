@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Preview</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+            background: #101216;
+            color: #f4f7fb;
+        }
+
+        body {
+            display: grid;
+            min-height: 100vh;
+            margin: 0;
+            padding: 24px;
+            place-items: center;
+        }
+
+        main {
+            width: min(1280px, 100%);
+        }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(1.25rem, 3vw, 2rem);
+        }
+
+        .status {
+            color: #9aa4b2;
+            font-size: 0.875rem;
+        }
+
+        .camera-frame {
+            overflow: hidden;
+            border: 1px solid #303846;
+            border-radius: 16px;
+            background: #000;
+            box-shadow: 0 24px 72px rgb(0 0 0 / 35%);
+        }
+
+        .camera-frame img {
+            display: block;
+            width: 100%;
+            min-height: 240px;
+            max-height: calc(100vh - 150px);
+            object-fit: contain;
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <header>
+            <h1>Camera Preview</h1>
+            <span class="status">Live MJPEG stream</span>
+        </header>
+
+        <section class="camera-frame">
+            <!--
+                This img element is required. You may freely change its classes,
+                styles, alt text, and surrounding markup, but keep data-camera-stream
+                and src="{{ camera_stream_url }}" so the API can insert the feed URL.
+            -->
+            <img data-camera-stream src="{{ camera_stream_url }}" alt="Live IMX camera feed">
+        </section>
+    </main>
+</body>
+
+</html>

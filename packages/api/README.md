@@ -13,8 +13,8 @@ the framework-neutral MJPEG iterator from the `stream` package.
   uv sync
   ```
 
-- An ASGI server to expose the application over HTTP. Uvicorn is a common
-  choice, but it is not currently bundled with this package.
+- Uvicorn, included in the project dependencies, to expose the application
+  over HTTP.
 
 ## Application lifecycle
 
@@ -23,8 +23,13 @@ starts one shared `Camera` during application startup and stops it during
 shutdown. Endpoints share that camera; the API does not create a camera per
 request or per connected MJPEG client.
 
-When using Uvicorn after adding it to the project dependencies, the application
-can be served with:
+For a local camera preview, run:
+
+```bash
+uv run python main.py
+```
+
+The application can also be served directly with Uvicorn:
 
 ```bash
 uv run uvicorn packages.api.api:app --host 0.0.0.0 --port 8000
@@ -37,7 +42,7 @@ FastAPI exposes interactive documentation at `/docs` and the OpenAPI schema at
 
 | Endpoint | Description |
 | --- | --- |
-| `GET /` | JSON map of the camera API endpoints. |
+| `GET /` | Customizable HTML camera preview. |
 | `GET /api/health` | Camera state, frame availability, capture metrics, and the latest background error. |
 | `GET /api/camera/snapshot` | Latest JPEG camera image. |
 | `GET /api/camera/mjpeg` | Live `multipart/x-mixed-replace` MJPEG response. |
@@ -72,6 +77,25 @@ HTML image element:
 <img src="/api/camera/mjpeg" alt="Live camera feed">
 ```
 
+## Browser view customization
+
+`GET /` serves the customizable template at
+[view/index.html](../../view/index.html). You may freely change its HTML, CSS,
+JavaScript, title, layout, and styling. The template is read for every request,
+so refreshing the browser applies changes without restarting the server.
+
+The live camera image is required. Keep this element in the template (it may
+have additional classes, attributes, and surrounding markup):
+
+```html
+<img data-camera-stream src="{{ camera_stream_url }}" alt="Live camera feed">
+```
+
+The API validates the `data-camera-stream` marker and replaces
+`{{ camera_stream_url }}` with `/api/camera/mjpeg` before serving the page. If
+the required image element is absent or changed, the root endpoint returns an
+error instead of serving a view without a live feed.
+
 ## Configuration
 
 [config.yml](config.yml) controls the FastAPI title, description, version, and
@@ -89,10 +113,12 @@ camera = Camera(sensor_id=1)
 app = create_app(
     camera,
     config_path="/etc/imx-camera/api.yml",
+    view_path="/etc/imx-camera/index.html",
 )
 ```
 
-The resolved configuration is available as `app.state.config`.
+The resolved configuration is available as `app.state.config`, and the chosen
+view path as `app.state.view_path`.
 
 ## Security
 
