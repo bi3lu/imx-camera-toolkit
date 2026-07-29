@@ -6,6 +6,7 @@ import logging
 
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,9 @@ from packages.stream.stream import MJPEGStream
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yml")
+DEFAULT_VIEW_PATH = Path(__file__).parents[2] / "view" / "index.html"
+CAMERA_STREAM_PATH = "/api/camera/mjpeg"
+CAMERA_STREAM_TEMPLATE = "{{ camera_stream_url }}"
 
 
 @dataclass(frozen=True)
@@ -38,12 +42,13 @@ DEFAULT_API_CONFIG = APIConfig()
 
 try:
     from fastapi import FastAPI, HTTPException, Query
-    from fastapi.responses import Response, StreamingResponse
+    from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 except ImportError:
     FastAPI: Any | None = None
     HTTPException: Any | None = None
     Query: Any | None = None
+    HTMLResponse: Any | None = None
     Response: Any | None = None
     StreamingResponse: Any | None = None
 
@@ -161,6 +166,72 @@ def load_api_config(config_path: str | Path | None = None) -> APIConfig:
         return DEFAULT_API_CONFIG
 
 
+class _CameraStreamImageParser(HTMLParser):
+    """Detect the image element reserved for the MJPEG camera stream."""
+
+    def __init__(self) -> None:
+        """Initialize the parser without an identified stream image."""
+        super().__init__()
+        self.has_stream_image = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Inspect image tags for the required camera stream marker.
+
+        Args:
+            tag: Parsed HTML tag name.
+            attrs: Attributes associated with the tag.
+        """
+        if tag != "img":
+            return
+
+        attributes = dict(attrs)
+
+        if (
+            "data-camera-stream" in attributes
+            and attributes.get("src") == CAMERA_STREAM_TEMPLATE
+        ):
+            self.has_stream_image = True
+
+
+def load_camera_view(view_path: str | Path | None = None) -> str:
+    """Load a camera view template and insert the MJPEG stream URL.
+
+    The template must include an ``img`` tag with both
+    ``data-camera-stream`` and ``src="{{ camera_stream_url }}"``. Other HTML,
+    CSS, and JavaScript are left unchanged, so users can fully style the view.
+
+    Args:
+        view_path: Path to an HTML template. When omitted, uses
+            ``view/index.html`` at the project root.
+
+    Returns:
+        HTML ready to serve to the browser.
+
+    Raises:
+        RuntimeError: If the view file cannot be read.
+        ValueError: If the required camera stream image element is absent.
+    """
+    path = Path(view_path) if view_path is not None else DEFAULT_VIEW_PATH
+
+    try:
+        html = path.read_text(encoding="utf-8")
+
+    except OSError as error:
+        raise RuntimeError(f"Could not read camera view {path}: {error}") from error
+
+    parser = _CameraStreamImageParser()
+    parser.feed(html)
+    parser.close()
+
+    if not parser.has_stream_image:
+        raise ValueError(
+            "camera view must contain "
+            '<img data-camera-stream src="{{ camera_stream_url }}">'
+        )
+
+    return html.replace(CAMERA_STREAM_TEMPLATE, CAMERA_STREAM_PATH)
+
+
 def _camera_status(camera: Camera) -> dict[str, object]:
     """Return JSON-serializable state and capture metrics for a camera.
 
@@ -198,6 +269,7 @@ def create_app(
     camera: Camera | None = None,
     *,
     config_path: str | Path | None = None,
+    view_path: str | Path | None = None,
 ) -> Any:
     """Create a FastAPI application backed by one shared camera instance.
 
@@ -208,6 +280,7 @@ def create_app(
     Args:
         camera: Camera to expose. When omitted, creates a default ``Camera``.
         config_path: Optional path to a YAML API configuration file.
+        view_path: Optional path to the browser camera view template.
 
     Returns:
         Configured FastAPI application.
@@ -223,6 +296,7 @@ def create_app(
 
     shared_camera = camera if camera is not None else Camera()
     config = load_api_config(config_path)
+    resolved_view_path = Path(view_path) if view_path is not None else DEFAULT_VIEW_PATH
 
     @asynccontextmanager
     async def lifespan(_: Any):
@@ -242,19 +316,25 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.config = config
+    application.state.view_path = resolved_view_path
 
-    @application.get("/")
-    def index() -> dict[str, str]:
-        """Return links to the camera API endpoints.
+    @application.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def index() -> Any:
+        """Return the customizable browser camera view.
 
         Returns:
-            Available camera API endpoint paths.
+            HTML containing the live MJPEG camera image.
+
+        Raises:
+            HTTPException: If the view file cannot be loaded or has no valid
+                camera stream image tag.
         """
-        return {
-            "health": "/api/health",
-            "snapshot": "/api/camera/snapshot",
-            "mjpeg": "/api/camera/mjpeg",
-        }
+        try:
+            return HTMLResponse(content=load_camera_view(resolved_view_path))
+
+        except (RuntimeError, ValueError) as error:
+            logger.error("Could not serve camera view: %s", error)
+            raise HTTPException(status_code=500, detail=str(error)) from error
 
     @application.get("/api/health")
     def health() -> dict[str, object]:
