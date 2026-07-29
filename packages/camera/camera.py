@@ -479,6 +479,7 @@ class Camera:
 
         finally:
             self._running.clear()
+
             with self._condition:
                 self._condition.notify_all()
 
@@ -534,6 +535,7 @@ class Camera:
 
             self._capture = None
             self._thread = None
+
             with self._condition:
                 self._jpeg = None
 
