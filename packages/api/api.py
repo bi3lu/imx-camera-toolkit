@@ -370,6 +370,7 @@ def create_app(
         """
         state = camera_controller.get_runtime_state()
         state["capture_fps"] = shared_camera.config.capture_fps
+        state["software_hdr"] = shared_camera.software_hdr_state
         return state
 
     @application.patch("/api/camera/control")
@@ -414,6 +415,53 @@ def create_app(
         except RuntimeError as error:
             logger.exception("Could not apply camera-control update")
             raise HTTPException(status_code=503, detail=str(error)) from error
+
+    @application.get("/api/camera/software-hdr")
+    def software_hdr_state() -> dict[str, object]:
+        """Return the active Jetson-side exposure-fusion HDR state.
+
+        Returns:
+            Enabled state, configured base exposure, and resolved brackets.
+        """
+        return shared_camera.software_hdr_state
+
+    @application.put("/api/camera/software-hdr")
+    def configure_software_hdr(values: dict[str, Any] = Body(...)) -> dict[str, object]:
+        """Configure three-exposure HDR fusion for sensors without native HDR.
+
+        Args:
+            values: ``enabled`` plus optional ``base_exposure_us`` and
+                ``settle_frames`` values.
+
+        Returns:
+            The committed software HDR state.
+
+        Raises:
+            HTTPException: If the request is invalid or sensor controls fail.
+        """
+        valid_keys = {"enabled", "base_exposure_us", "settle_frames"}
+        unknown_keys = set(values) - valid_keys
+
+        if unknown_keys:
+            formatted_keys = ", ".join(sorted(unknown_keys))
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown software HDR key(s): {formatted_keys}",
+            )
+
+        if "enabled" not in values:
+            raise HTTPException(status_code=422, detail="enabled is required")
+
+        try:
+            return shared_camera.configure_software_hdr(
+                enabled=values["enabled"],
+                base_exposure_us=values.get("base_exposure_us"),
+                settle_frames=values.get("settle_frames"),
+            )
+
+        except (ValueError, RuntimeError) as error:
+            logger.warning("Could not configure software HDR: %s", error)
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @application.get("/api/camera/control/profiles")
     def list_camera_control_profiles() -> dict[str, list[str]]:

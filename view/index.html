@@ -263,10 +263,21 @@
                         <input id="hdr-enabled" type="checkbox">
                         HDR sensor mode
                     </label>
+                    <div class="control-field">
+                        <label class="check-field" for="software-hdr-enabled">
+                            <input id="software-hdr-enabled" type="checkbox">
+                            Software HDR fusion
+                        </label>
+                        <label for="software-hdr-exposure">HDR base exposure: <output class="range-value"
+                                id="software-hdr-exposure-value"></output></label>
+                        <input id="software-hdr-exposure" type="range" min="100" max="22000"
+                            step="100" value="5000">
+                    </div>
                 </div>
                 <div class="control-actions">
                     <button type="submit">Apply controls</button>
                     <button id="reset-exposure" type="button">Use automatic exposure and gain</button>
+                    <button id="apply-software-hdr" type="button">Apply software HDR</button>
                 </div>
             </form>
             <p class="control-status" id="control-status">Loading camera controls</p>
@@ -277,6 +288,7 @@
         const status = document.getElementById("stream-status");
         const snapshotUrl = "/api/camera/snapshot";
         const controlUrl = "/api/camera/control";
+        const softwareHdrUrl = "/api/camera/software-hdr";
         const controlsForm = document.getElementById("camera-controls");
         const controlStatus = document.getElementById("control-status");
 
@@ -350,7 +362,7 @@
             controlStatus.style.color = isError ? "#ff9b9b" : "#9aa4b2";
         }
 
-        function setControls(settings, capabilities, captureFps = null) {
+        function setControls(settings, capabilities, captureFps = null, softwareHdr = null) {
             const exposure = document.getElementById("exposure-us");
             const gain = document.getElementById("gain");
             const denoiseStrength = document.getElementById("denoise-strength");
@@ -373,6 +385,25 @@
             document.getElementById("hdr-enabled").title = capabilities.hdr_supported
                 ? ""
                 : "This sensor does not declare an HDR mode.";
+            if (softwareHdr !== null) {
+                setSoftwareHdr(softwareHdr, captureFps);
+            }
+            updateRangeValues();
+        }
+
+        function setSoftwareHdr(softwareHdr, captureFps = null) {
+            const enabled = document.getElementById("software-hdr-enabled");
+            const baseExposure = document.getElementById("software-hdr-exposure");
+
+            if (captureFps !== null) {
+                baseExposure.max = Math.max(100, Math.floor(1000000 / captureFps));
+            }
+            enabled.checked = softwareHdr.enabled;
+            setRangeValue(baseExposure, softwareHdr.base_exposure_us);
+            baseExposure.disabled = !softwareHdr.enabled;
+            document.getElementById("exposure-us").disabled = softwareHdr.enabled;
+            document.getElementById("gain").disabled = softwareHdr.enabled;
+            document.getElementById("reset-exposure").disabled = softwareHdr.enabled;
             updateRangeValues();
         }
 
@@ -402,6 +433,8 @@
                 `${Number(gain.value).toFixed(1)}×`;
             document.getElementById("denoise-strength-value").textContent =
                 Number(denoiseStrength.value).toFixed(2);
+            document.getElementById("software-hdr-exposure-value").textContent =
+                `${Number(document.getElementById("software-hdr-exposure").value).toLocaleString()} µs`;
         }
 
         async function readError(response) {
@@ -417,7 +450,12 @@
                 }
 
                 const state = await response.json();
-                setControls(state.settings, state.capabilities, state.capture_fps);
+                setControls(
+                    state.settings,
+                    state.capabilities,
+                    state.capture_fps,
+                    state.software_hdr,
+                );
                 setControlStatus("Camera controls ready");
             } catch (error) {
                 setControlStatus(error.message, true);
@@ -451,7 +489,12 @@
 
             const update = await response.json();
             const state = await getControlState();
-            setControls(update.settings, state.capabilities, state.capture_fps);
+            setControls(
+                update.settings,
+                state.capabilities,
+                state.capture_fps,
+                state.software_hdr,
+            );
             setControlStatus(
                 update.restart_required
                     ? "Sensor mode applied; camera pipeline restarted"
@@ -469,6 +512,39 @@
             }
 
             return response.json();
+        }
+
+        async function applySoftwareHdr() {
+            const enabled = document.getElementById("software-hdr-enabled").checked;
+            const baseExposure = optionalNumber(
+                document.getElementById("software-hdr-exposure"),
+                true,
+            );
+            setControlStatus(enabled ? "Starting software HDR fusion" : "Stopping software HDR fusion");
+
+            const response = await fetch(softwareHdrUrl, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled, base_exposure_us: baseExposure }),
+            });
+
+            if (!response.ok) {
+                throw new Error(await readError(response));
+            }
+
+            const softwareHdr = await response.json();
+            const state = await getControlState();
+            setControls(
+                state.settings,
+                state.capabilities,
+                state.capture_fps,
+                softwareHdr,
+            );
+            setControlStatus(
+                softwareHdr.enabled
+                    ? `Software HDR active (${softwareHdr.exposures_us.join(", ")} µs)`
+                    : "Software HDR stopped",
+            );
         }
 
         controlsForm.addEventListener("submit", async (event) => {
@@ -497,11 +573,28 @@
 
                 const update = await response.json();
                 const state = await getControlState();
-                setControls(update.settings, state.capabilities, state.capture_fps);
+                setControls(
+                    update.settings,
+                    state.capabilities,
+                    state.capture_fps,
+                    state.software_hdr,
+                );
                 setControlStatus("Automatic exposure and gain restored");
             } catch (error) {
                 setControlStatus(error.message, true);
             }
+        });
+
+        document.getElementById("apply-software-hdr").addEventListener("click", async () => {
+            try {
+                await applySoftwareHdr();
+            } catch (error) {
+                setControlStatus(error.message, true);
+            }
+        });
+
+        document.getElementById("software-hdr-enabled").addEventListener("change", (event) => {
+            document.getElementById("software-hdr-exposure").disabled = !event.target.checked;
         });
 
         for (const range of document.querySelectorAll('input[type="range"]')) {

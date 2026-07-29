@@ -11,7 +11,7 @@ import time
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,104 @@ class CameraConfig:
 
 
 DEFAULT_CAMERA_CONFIG = CameraConfig()
+
+
+@dataclass(frozen=True)
+class SoftwareHDRSettings:
+    """Settings for exposure-bracket fusion performed on the Jetson.
+
+    The camera captures three sequential frames at -2 EV, 0 EV, and +2 EV
+    relative to ``base_exposure_us``. OpenCV's exposure-fusion algorithm then
+    combines them into one standard dynamic range frame suitable for JPEG and
+    browser delivery. The result does not require an HDR-capable sensor.
+
+    Args:
+        enabled: Whether software HDR processing is active.
+        base_exposure_us: Middle bracket exposure in microseconds.
+        settle_frames: Frames discarded after each exposure change so the
+            sensor can settle before the bracket frame is captured.
+    """
+
+    enabled: bool = False
+    base_exposure_us: int = 5_000
+    settle_frames: int = 2
+
+    def __post_init__(self) -> None:
+        """Validate software HDR settings."""
+        if not isinstance(self.enabled, bool):
+            raise ValueError("software HDR enabled must be a boolean")
+
+        if isinstance(self.base_exposure_us, bool) or not isinstance(
+            self.base_exposure_us, int
+        ):
+            raise ValueError("software HDR base exposure must be an integer")
+
+        if self.base_exposure_us <= 0:
+            raise ValueError("software HDR base exposure must be greater than zero")
+
+        if isinstance(self.settle_frames, bool) or not isinstance(
+            self.settle_frames, int
+        ):
+            raise ValueError("software HDR settle frames must be an integer")
+
+        if not 0 <= self.settle_frames <= 10:
+            raise ValueError("software HDR settle frames must be between 0 and 10")
+
+
+class _SoftwareHDRProcessor:
+    """Collect exposure brackets and merge them into one displayable frame."""
+
+    _BRACKET_EV = (-2, 0, 2)
+
+    def __init__(self, settings: SoftwareHDRSettings, max_exposure_us: int) -> None:
+        """Initialize the bracket sequence for one camera configuration."""
+        self._settings = settings
+        self._exposures_us = tuple(
+            min(
+                max_exposure_us,
+                max(100, round(settings.base_exposure_us * (2**exposure_ev))),
+            )
+            for exposure_ev in self._BRACKET_EV
+        )
+        self._frames: list[Any] = []
+        self._bracket_index = 0
+        self._settle_remaining = settings.settle_frames
+        self._merge = cv2.createMergeMertens()
+
+    @property
+    def exposures_us(self) -> tuple[int, int, int]:
+        """tuple[int, int, int]: Resolved -2 EV, 0 EV, and +2 EV exposures."""
+        return self._exposures_us
+
+    def start(self, set_exposure: Callable[[int], None]) -> None:
+        """Select the first bracket exposure before capture begins."""
+        set_exposure(self._exposures_us[0])
+
+    def process(
+        self,
+        frame: Any,
+        set_exposure: Callable[[int], None],
+    ) -> Any | None:
+        """Consume one captured frame and return a fused frame when complete."""
+        if self._settle_remaining > 0:
+            self._settle_remaining -= 1
+            return None
+
+        self._frames.append(frame)
+        self._bracket_index += 1
+
+        if self._bracket_index < len(self._exposures_us):
+            set_exposure(self._exposures_us[self._bracket_index])
+            self._settle_remaining = self._settings.settle_frames
+            return None
+
+        merged = self._merge.process(self._frames)
+        output = np.clip(merged * 255.0, 0, 255).astype(np.uint8)
+        self._frames.clear()
+        self._bracket_index = 0
+        self._settle_remaining = self._settings.settle_frames
+        set_exposure(self._exposures_us[0])
+        return output
 
 
 def build_gstreamer_pipeline(
@@ -469,6 +567,9 @@ class Camera:
         self._argus_properties = _normalize_argus_properties(argus_properties)
         self._jpeg_quality = config.quality
         self._jpeg_interval = 1.0 / config.max_fps
+        self._software_hdr_settings = SoftwareHDRSettings()
+        self._software_hdr_processor: _SoftwareHDRProcessor | None = None
+        self._software_hdr_lock = threading.RLock()
 
         self._capture: Any | None = None
         self._gst_pipeline: Any | None = None
@@ -501,6 +602,23 @@ class Camera:
     def config(self) -> CameraConfig:
         """CameraConfig: Resolved configuration used by this camera instance."""
         return self._config
+
+    @property
+    def software_hdr_state(self) -> dict[str, object]:
+        """Return the current software HDR configuration and bracket exposures."""
+        with self._software_hdr_lock:
+            exposures_us: list[int] = []
+
+            if self._software_hdr_processor is not None:
+                exposures_us = list(self._software_hdr_processor.exposures_us)
+
+            return {
+                "enabled": self._software_hdr_settings.enabled,
+                "base_exposure_us": self._software_hdr_settings.base_exposure_us,
+                "settle_frames": self._software_hdr_settings.settle_frames,
+                "bracket_ev": list(_SoftwareHDRProcessor._BRACKET_EV),
+                "exposures_us": exposures_us,
+            }
 
     @property
     def running(self) -> bool:
@@ -546,6 +664,12 @@ class Camera:
 
             self._release_finished_capture()
             self._open_capture()
+
+            with self._software_hdr_lock:
+                if self._software_hdr_settings.enabled:
+                    self._software_hdr_processor = self._create_software_hdr_processor()
+                    self._software_hdr_processor.start(self._set_v4l2_exposure)
+
             self.last_error = None
             self._running.set()
             self._thread = threading.Thread(
@@ -653,6 +777,12 @@ class Camera:
                     continue
 
                 self.frames_captured += 1
+
+                frame = self._process_software_hdr_frame(frame)
+
+                if frame is None:
+                    continue
+
                 now = time.monotonic()
 
                 if now - last_encode_time < self._jpeg_interval:
@@ -792,6 +922,15 @@ class Camera:
             if normalized == self._argus_properties:
                 return
 
+            with self._software_hdr_lock:
+                if self._software_hdr_settings.enabled and (
+                    _manual_control_properties(normalized)
+                    != _manual_control_properties(self._argus_properties)
+                ):
+                    raise RuntimeError(
+                        "Disable software HDR before changing exposure or gain controls"
+                    )
+
             if (
                 self.running
                 and self._argus_source is not None
@@ -809,6 +948,85 @@ class Camera:
                 return
 
         self.reconfigure_argus_properties(normalized)
+
+    def configure_software_hdr(
+        self,
+        *,
+        enabled: bool,
+        base_exposure_us: int | None = None,
+        settle_frames: int | None = None,
+    ) -> dict[str, object]:
+        """Enable or configure Jetson-side three-exposure HDR fusion.
+
+        This feature controls exposure through V4L2 and fuses the resulting
+        frames locally. It is independent of an HDR sensor mode and therefore
+        works with sensors that expose only standard dynamic range modes.
+
+        Args:
+            enabled: Whether to enable software HDR.
+            base_exposure_us: Middle exposure in microseconds. When omitted,
+                the previous value is retained.
+            settle_frames: Frames to discard after each exposure change. When
+                omitted, the previous value is retained.
+
+        Returns:
+            JSON-ready software HDR state including resolved bracket exposures.
+
+        Raises:
+            RuntimeError: If OpenCV, NumPy, or the V4L2 sensor control is not
+                available.
+            ValueError: If a configuration value is invalid.
+        """
+        with self._lifecycle_lock, self._software_hdr_lock:
+            current = self._software_hdr_settings
+            settings = SoftwareHDRSettings(
+                enabled=enabled,
+                base_exposure_us=(
+                    current.base_exposure_us
+                    if base_exposure_us is None
+                    else base_exposure_us
+                ),
+                settle_frames=(
+                    current.settle_frames if settle_frames is None else settle_frames
+                ),
+            )
+
+            if settings.enabled and (cv2 is None or np is None):
+                raise RuntimeError(
+                    "Software HDR requires the JetPack OpenCV and NumPy packages"
+                )
+
+            if not settings.enabled:
+                self._software_hdr_settings = settings
+                self._software_hdr_processor = None
+                return self.software_hdr_state
+
+            processor = self._create_software_hdr_processor(settings)
+            if self.running:
+                processor.start(self._set_v4l2_exposure)
+
+            self._software_hdr_settings = settings
+            self._software_hdr_processor = processor
+            return self.software_hdr_state
+
+    def _create_software_hdr_processor(
+        self,
+        settings: SoftwareHDRSettings | None = None,
+    ) -> _SoftwareHDRProcessor:
+        """Create a processor whose longest bracket fits the capture period."""
+        resolved_settings = settings or self._software_hdr_settings
+        max_exposure_us = max(100, 1_000_000 // self._config.capture_fps)
+        return _SoftwareHDRProcessor(resolved_settings, max_exposure_us)
+
+    def _process_software_hdr_frame(self, frame: Any) -> Any | None:
+        """Return a source frame or the next completed software HDR frame."""
+        with self._software_hdr_lock:
+            processor = self._software_hdr_processor
+
+            if processor is None:
+                return frame
+
+            return processor.process(frame, self._set_v4l2_exposure)
 
     def _apply_v4l2_manual_controls(
         self,
@@ -845,6 +1063,25 @@ class Camera:
                 gain_db_tenths = round(200 * math.log10(gain))
                 controls.append(f"gain={gain_db_tenths}")
 
+        if not controls:
+            return
+
+        self._set_v4l2_controls(controls)
+
+    def _set_v4l2_exposure(self, exposure_us: int) -> None:
+        """Set one fixed sensor exposure through the V4L2 control device."""
+        self._set_v4l2_controls([f"exposure={exposure_us}"])
+
+    def _set_v4l2_controls(self, controls: Sequence[str]) -> None:
+        """Apply one atomic list of V4L2 controls to the selected sensor.
+
+        Args:
+            controls: ``v4l2-ctl`` assignments without the ``--set-ctrl``
+                prefix.
+
+        Raises:
+            RuntimeError: If the V4L2 control device cannot apply a setting.
+        """
         if not controls:
             return
 
