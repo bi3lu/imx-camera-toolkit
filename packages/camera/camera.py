@@ -1,3 +1,5 @@
+"""Capture JPEG frames from IMX CSI cameras on NVIDIA Jetson devices."""
+
 from __future__ import annotations
 
 import logging
@@ -6,7 +8,7 @@ import time
 from typing import Any
 
 try:
-    import cv2  # NOTE: OpenCV is supplied by JetPack 6.2.2.
+    import cv2  # OpenCV is supplied by JetPack 6.2.2.
 
 except ImportError:
     cv2: Any | None = None
@@ -24,12 +26,28 @@ def build_gstreamer_pipeline(
     framerate: int = 30,
     flip_method: int = 0,
 ) -> str:
-        if sensor_id < 0:
-        raise ValueError("sensor_id must be greater than or equal to zero")
+    """Build an OpenCV-compatible Argus pipeline for a CSI camera.
 
+    Args:
+        sensor_id: Zero-based CSI sensor identifier used by Argus.
+        capture_width: Width captured directly from the sensor, in pixels.
+        capture_height: Height captured directly from the sensor, in pixels.
+        output_width: Width of frames delivered to OpenCV, in pixels.
+        output_height: Height of frames delivered to OpenCV, in pixels.
+        framerate: Camera capture rate, in frames per second.
+        flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
+
+    Returns:
+        A GStreamer pipeline string suitable for ``cv2.VideoCapture``.
+
+    Raises:
+        ValueError: If an identifier, dimension, frame rate, or flip method is
+            outside its supported range.
+    """
+    if sensor_id < 0:
+        raise ValueError("sensor_id must be greater than or equal to zero")
     if min(capture_width, capture_height, output_width, output_height, framerate) <= 0:
         raise ValueError("frame dimensions and framerate must be greater than zero")
-
     if not 0 <= flip_method <= 7:
         raise ValueError("flip_method must be between 0 and 7")
 
@@ -52,11 +70,28 @@ def build_gstreamer_pipeline(
 
 
 class Camera:
-    """Continuously capture and JPEG-encode the newest image from one sensor.
+    """Capture and JPEG-encode the latest image from one CSI sensor.
 
-    Call :meth:`start` before consuming frames and :meth:`stop` when finished,
-    or use the camera as a context manager.  OpenCV with GStreamer support is
-    required; NVIDIA's JetPack image provides it system-wide.
+    Only the most recent encoded frame is retained in memory. This makes the
+    class appropriate for live previews and streaming, where stale frames are
+    less useful than current ones.
+
+    Args:
+        quality: JPEG quality from 0 to 100.
+        max_fps: Maximum JPEG encoding rate in frames per second.
+        sensor_id: Zero-based CSI sensor identifier used by Argus.
+        capture_width: Width captured directly from the sensor, in pixels.
+        capture_height: Height captured directly from the sensor, in pixels.
+        output_width: Width of frames delivered to OpenCV, in pixels.
+        output_height: Height of frames delivered to OpenCV, in pixels.
+        capture_fps: Camera capture rate, in frames per second.
+        flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
+
+    Attributes:
+        frames_captured: Number of frames read from the camera.
+        frames_encoded: Number of frames successfully JPEG-encoded.
+        last_frame_time: Unix timestamp of the latest encoded frame, if any.
+        last_error: Most recent background capture exception, if any.
     """
 
     def __init__(
@@ -72,6 +107,12 @@ class Camera:
         capture_fps: int = 30,
         flip_method: int = 0,
     ) -> None:
+        """Initialize a camera without opening its capture device.
+
+        Raises:
+            ValueError: If JPEG quality or encoding rate is invalid, or if a
+                pipeline configuration argument is invalid.
+        """
         if not 0 <= quality <= 100:
             raise ValueError("quality must be between 0 and 100")
 
@@ -105,29 +146,42 @@ class Camera:
 
     @property
     def pipeline(self) -> str:
-                return self._pipeline
+        """str: GStreamer pipeline used when :meth:`start` is called."""
+        return self._pipeline
 
     @property
     def running(self) -> bool:
+        """bool: Whether the background capture loop is active."""
         return self._running.is_set()
 
     @property
     def frame_available(self) -> bool:
+        """bool: Whether at least one JPEG frame is currently available."""
         with self._condition:
             return self._jpeg is not None
 
     @property
     def frame_number(self) -> int:
+        """int: Monotonically increasing identifier of the latest JPEG frame."""
         with self._condition:
             return self._frame_number
 
     @property
     def jpeg(self) -> bytes | None:
-                with self._condition:
+        """bytes | None: Latest JPEG frame, or ``None`` when unavailable."""
+        with self._condition:
             return self._jpeg
 
     def start(self) -> None:
-                if cv2 is None:
+        """Open the camera and start the background capture thread.
+
+        Calling this method while capture is already active has no effect.
+
+        Raises:
+            RuntimeError: If OpenCV is unavailable, the previous capture thread
+                has not stopped, or the Argus camera cannot be opened.
+        """
+        if cv2 is None:
             raise RuntimeError(
                 "OpenCV is not available. Use the JetPack-provided Python/OpenCV "
                 "environment with GStreamer support."
@@ -158,7 +212,12 @@ class Camera:
             self._thread.start()
 
     def _release_finished_capture(self) -> None:
-                if self._thread is not None and self._thread.is_alive():
+        """Release resources retained after an unexpectedly ended capture loop.
+
+        Raises:
+            RuntimeError: If the previous capture thread is still alive.
+        """
+        if self._thread is not None and self._thread.is_alive():
             raise RuntimeError("camera capture thread is still stopping")
 
         if self._capture is not None:
@@ -168,6 +227,7 @@ class Camera:
         self._capture = None
 
     def _capture_loop(self) -> None:
+        """Read frames, rate-limit JPEG encoding, and publish the latest frame."""
         last_encode_time = 0.0
 
         try:
@@ -194,6 +254,7 @@ class Camera:
                 success, encoded = cv2.imencode(
                     ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality]
                 )
+
                 if not success:
                     continue
 
@@ -211,16 +272,24 @@ class Camera:
 
         finally:
             self._running.clear()
-
             with self._condition:
                 self._condition.notify_all()
 
     def wait_for_jpeg(
         self, previous_frame_number: int, timeout: float = 2.0
     ) -> tuple[int, bytes | None]:
-        """Wait for a newer JPEG frame and return ``(frame_number, jpeg)``.
+        """Wait for a JPEG frame newer than a known frame number.
 
-        A timeout or a stopped camera returns the latest available frame.
+        Args:
+            previous_frame_number: Frame number already consumed by the caller.
+            timeout: Maximum time to wait, in seconds.
+
+        Returns:
+            A pair containing the latest frame number and JPEG bytes. The bytes
+            are ``None`` until the first frame is encoded.
+
+        Raises:
+            ValueError: If ``timeout`` is negative.
         """
         if timeout < 0:
             raise ValueError("timeout must be greater than or equal to zero")
@@ -233,7 +302,12 @@ class Camera:
             return self._frame_number, self._jpeg
 
     def stop(self) -> None:
-                with self._lifecycle_lock:
+        """Stop capture, release the camera handle, and discard the last frame.
+
+        If the capture thread does not end within three seconds, the camera
+        handle remains open and a warning is logged.
+        """
+        with self._lifecycle_lock:
             self._running.clear()
 
             with self._condition:
@@ -257,12 +331,26 @@ class Camera:
                 self._jpeg = None
 
     def __enter__(self) -> Camera:
+        """Open the camera and return this instance.
+
+        Returns:
+            The started camera instance.
+        """
         self.start()
         return self
 
     def __exit__(self, *_: object) -> None:
+        """Stop the camera when leaving a context-manager block."""
         self.stop()
 
 
 def get_camera(**kwargs: Any) -> Camera:
-        return Camera(**kwargs)
+    """Create a camera instance.
+
+    Args:
+        **kwargs: Keyword arguments accepted by :class:`Camera`.
+
+    Returns:
+        A configured but not yet started camera instance.
+    """
+    return Camera(**kwargs)
