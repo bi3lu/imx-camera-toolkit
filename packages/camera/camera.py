@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ def build_gstreamer_pipeline(
     output_height: int = 360,
     framerate: int = 30,
     flip_method: int = 0,
+    argus_properties: Sequence[str] = (),
 ) -> str:
     """Build an OpenCV-compatible Argus pipeline for a CSI camera.
 
@@ -76,13 +78,15 @@ def build_gstreamer_pipeline(
         output_height: Height of frames delivered to OpenCV, in pixels.
         framerate: Camera capture rate, in frames per second.
         flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
+        argus_properties: Validated ``nvarguscamerasrc`` properties to append
+            after the sensor identifier.
 
     Returns:
         A GStreamer pipeline string suitable for ``cv2.VideoCapture``.
 
     Raises:
-        ValueError: If an identifier, dimension, frame rate, or flip method is
-            outside its supported range.
+        ValueError: If an identifier, dimension, frame rate, flip method, or
+            source property is outside its supported range.
     """
     if sensor_id < 0:
         raise ValueError("sensor_id must be greater than or equal to zero")
@@ -93,8 +97,12 @@ def build_gstreamer_pipeline(
     if not 0 <= flip_method <= 7:
         raise ValueError("flip_method must be between 0 and 7")
 
+    source_properties = _normalize_argus_properties(argus_properties)
+    source_arguments = " ".join(source_properties)
+    source_suffix = f" {source_arguments}" if source_arguments else ""
+
     return (
-        f"nvarguscamerasrc sensor-id={sensor_id} ! "
+        f"nvarguscamerasrc sensor-id={sensor_id}{source_suffix} ! "
         "video/x-raw(memory:NVMM), "
         f"width=(int){capture_width}, "
         f"height=(int){capture_height}, "
@@ -109,6 +117,39 @@ def build_gstreamer_pipeline(
         "video/x-raw, format=(string)BGR ! "
         "appsink max-buffers=1 drop=true sync=false"
     )
+
+
+def _normalize_argus_properties(properties: Sequence[str]) -> tuple[str, ...]:
+    """Validate properties that are safe to place in an Argus pipeline.
+
+    Args:
+        properties: ``nvarguscamerasrc`` property assignments.
+
+    Returns:
+        Normalized property assignments in their original order.
+
+    Raises:
+        ValueError: If an assignment is malformed or could alter pipeline
+            structure.
+    """
+    if isinstance(properties, str):
+        raise ValueError("argus_properties must be a sequence of assignments")
+
+    normalized: list[str] = []
+    property_pattern = re.compile(
+        r'[A-Za-z][A-Za-z0-9-]*=(?:[A-Za-z0-9_.-]+|"[A-Za-z0-9_. -]+")'
+    )
+
+    for property_value in properties:
+        if not isinstance(property_value, str):
+            raise ValueError("each Argus property must be a string")
+
+        if not property_pattern.fullmatch(property_value):
+            raise ValueError(f"invalid Argus property: {property_value!r}")
+
+        normalized.append(property_value)
+
+    return tuple(normalized)
 
 
 def _validate_config(config: CameraConfig) -> None:
@@ -293,6 +334,7 @@ class Camera:
         output_height: int | None = None,
         capture_fps: int | None = None,
         flip_method: int | None = None,
+        argus_properties: Sequence[str] = (),
     ) -> None:
         """Initialize a camera without opening its capture device.
 
@@ -328,15 +370,17 @@ class Camera:
             output_height=config.output_height,
             framerate=config.capture_fps,
             flip_method=config.flip_method,
+            argus_properties=argus_properties,
         )
         self._config = config
+        self._argus_properties = _normalize_argus_properties(argus_properties)
         self._jpeg_quality = config.quality
         self._jpeg_interval = 1.0 / config.max_fps
 
         self._capture: Any | None = None
         self._thread: threading.Thread | None = None
         self._running = threading.Event()
-        self._lifecycle_lock = threading.Lock()
+        self._lifecycle_lock = threading.RLock()
         self._condition = threading.Condition()
         self._jpeg: bytes | None = None
         self._frame_number = 0
@@ -350,6 +394,12 @@ class Camera:
     def pipeline(self) -> str:
         """str: GStreamer pipeline used when :meth:`start` is called."""
         return self._pipeline
+
+    @property
+    def argus_properties(self) -> tuple[str, ...]:
+        """tuple[str, ...]: Current Argus source property assignments."""
+        with self._lifecycle_lock:
+            return self._argus_properties
 
     @property
     def config(self) -> CameraConfig:
@@ -508,6 +558,68 @@ class Camera:
                 timeout=timeout,
             )
             return self._frame_number, self._jpeg
+
+    def reconfigure_argus_properties(self, properties: Sequence[str]) -> None:
+        """Apply Argus source properties, restarting active capture if needed.
+
+        The OpenCV GStreamer backend does not expose a live source element.
+        An active capture is therefore stopped and reopened using a pipeline
+        containing the requested properties. If the new pipeline cannot open,
+        the previous pipeline is restored when possible.
+
+        Args:
+            properties: Valid ``nvarguscamerasrc`` property assignments.
+
+        Raises:
+            RuntimeError: If the running capture cannot stop or the new
+                pipeline cannot open.
+            ValueError: If a source property is malformed.
+        """
+        normalized = _normalize_argus_properties(properties)
+        new_pipeline = build_gstreamer_pipeline(
+            sensor_id=self._config.sensor_id,
+            capture_width=self._config.capture_width,
+            capture_height=self._config.capture_height,
+            output_width=self._config.output_width,
+            output_height=self._config.output_height,
+            framerate=self._config.capture_fps,
+            flip_method=self._config.flip_method,
+            argus_properties=normalized,
+        )
+
+        with self._lifecycle_lock:
+            if normalized == self._argus_properties:
+                return
+
+            old_properties = self._argus_properties
+            old_pipeline = self._pipeline
+            was_running = self.running
+
+            if was_running:
+                self.stop()
+                if self._capture is not None:
+                    raise RuntimeError("camera capture thread did not stop")
+
+            self._argus_properties = normalized
+            self._pipeline = new_pipeline
+
+            if not was_running:
+                return
+
+            try:
+                self.start()
+
+            except Exception:
+                self._argus_properties = old_properties
+                self._pipeline = old_pipeline
+
+                try:
+                    self.start()
+
+                except Exception:
+                    logger.exception("Could not restore the previous IMX pipeline")
+
+                raise
 
     def stop(self) -> None:
         """Stop capture, release the camera handle, and discard the last frame.

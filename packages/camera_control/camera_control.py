@@ -418,6 +418,7 @@ def build_argus_control_properties(
     exposure_or_gain_fixed = (
         settings.exposure_us is not None or settings.gain is not None
     )
+
     if settings.exposure_us is not None:
         exposure_ns = settings.exposure_us * 1_000
         properties.append(f'exposuretimerange="{exposure_ns} {exposure_ns}"')
@@ -666,6 +667,7 @@ class CameraController:
 
         with self._lock:
             modes = self._capabilities.sensor_modes
+
             if not modes:
                 raise UnsupportedControlError(
                     "HDR selection requires declared sensor-mode capabilities"
