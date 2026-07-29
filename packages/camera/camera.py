@@ -44,13 +44,13 @@ class CameraConfig:
     """
 
     quality: int = 65
-    max_fps: float = 30.0
+    max_fps: float = 45.0
     sensor_id: int = 0
     capture_width: int = 1280
     capture_height: int = 720
     output_width: int = 640
     output_height: int = 360
-    capture_fps: int = 30
+    capture_fps: int = 45
     flip_method: int = 0
 
 

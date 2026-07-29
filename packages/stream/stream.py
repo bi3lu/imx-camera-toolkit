@@ -49,6 +49,11 @@ class JPEGCamera(Protocol):
         """bool: Whether the camera capture loop is active."""
         ...
 
+    @property
+    def frame_number(self) -> int:
+        """int: Identifier of the newest JPEG frame."""
+        ...
+
     def wait_for_jpeg(
         self, previous_frame_number: int, timeout: float = 2.0
     ) -> tuple[int, bytes | None]:
@@ -273,13 +278,23 @@ class MJPEGStream:
         """Yield the latest JPEG frame until the camera capture loop stops.
 
         Frames skipped by the camera or by a slow consumer are intentionally
-        not replayed. Each yielded item can be written directly to an HTTP
-        response body.
+        not replayed. An already available frame is yielded immediately; when
+        no frame exists yet, the stream waits for the first encoded frame.
+        Each yielded item can be written directly to an HTTP response body.
 
         Yields:
             A complete multipart body part containing one JPEG frame.
         """
-        previous_frame_number = -1
+        initial_frame_number = self._camera.frame_number
+        previous_frame_number, jpeg = self._camera.wait_for_jpeg(
+            max(-1, initial_frame_number - 1),
+            timeout=0,
+        )
+
+        if jpeg is not None:
+            self.frames_sent += 1
+            self.last_frame_number = previous_frame_number
+            yield build_mjpeg_part(jpeg, self._boundary)
 
         while self._camera.running:
             frame_number, jpeg = self._camera.wait_for_jpeg(
