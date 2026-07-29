@@ -1,0 +1,14 @@
+# Default MJPEG stream settings.
+#
+# This file is loaded automatically when MJPEGStream() is created. If it is
+# missing, unreadable, malformed, or contains invalid values, the built-in
+# defaults are used. Arguments passed directly to MJPEGStream() or
+# stream_mjpeg() override their corresponding settings here.
+
+stream_config:
+  # MIME multipart boundary without the leading "--".
+  # It must contain only ASCII characters and no whitespace.
+  boundary: frame
+
+  # Maximum time, in seconds, to wait for a newer JPEG camera frame.
+  timeout: 2.0

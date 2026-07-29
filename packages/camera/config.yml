@@ -1,0 +1,32 @@
+# Default CSI IMX camera settings for NVIDIA Jetson.
+#
+# This file is loaded automatically when Camera() is created. If it is missing,
+# unreadable, malformed, or contains an invalid value, the built-in defaults are
+# used safely. An argument passed directly to Camera() overrides its matching
+# value in this file.
+
+camera_config:
+  # JPEG encoding quality: 0 (smallest file) .. 100 (best quality).
+  quality: 65
+
+  # Maximum number of JPEG frames encoded per second.
+  # Excess sensor frames are dropped to reduce CPU usage.
+  max_fps: 30.0
+
+  # CSI camera number (0 for the first sensor, 1 for the second).
+  sensor_id: 0
+
+  # Resolution captured from the sensor by nvarguscamerasrc, in pixels.
+  capture_width: 1280
+  capture_height: 720
+
+  # BGR resolution passed to OpenCV and the JPEG encoder, in pixels.
+  output_width: 640
+  output_height: 360
+
+  # Number of frames captured from the sensor per second.
+  capture_fps: 30
+
+  # Image rotation/mirroring for nvvidconv: an integer from 0 to 7.
+  # 0 means no transformation.
+  flip_method: 0
