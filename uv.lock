@@ -1,0 +1,8 @@
+version = 1
+revision = 3
+requires-python = ">=3.10"
+
+[[package]]
+name = "imx-camera-toolkit"
+version = "0.1.0"
+source = { virtual = "." }
