@@ -368,6 +368,35 @@ class Camera:
         """bool: Whether JPEG encoding for preview clients is enabled."""
         return self._enable_preview
 
+    def set_preview_enabled(self, enabled: bool) -> None:
+        """Enable or disable JPEG preview without recreating capture.
+
+        The raw-frame path is unaffected. When enabled during active capture,
+        the next captured frame is encoded for preview clients; when disabled,
+        the retained JPEG is discarded. Starting a camera with preview enabled
+        still requires the JetPack-provided OpenCV runtime.
+
+        Args:
+            enabled: Whether JPEG encoding for browser and MJPEG clients is
+                active.
+
+        Raises:
+            ValueError: If ``enabled`` is not a boolean.
+        """
+        if not isinstance(enabled, bool):
+            raise ValueError("enabled must be a boolean")
+
+        with self._lifecycle_lock:
+            if self._enable_preview == enabled:
+                return
+
+            self._enable_preview = enabled
+            self._config = replace(self._config, enable_preview=enabled)
+
+            if not enabled:
+                self._publisher.clear()
+                self._publisher.notify_waiters()
+
     @property
     def frame_number(self) -> int:
         """int: Monotonically increasing identifier of the latest JPEG frame."""

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import uvicorn
 
-from .api import create_app
+from .api import ViewMode, create_app
 from .camera import Camera, CameraConfig
 
 
@@ -114,3 +115,44 @@ def preview(
         host=host,
         port=port,
     ).run()
+
+
+def create_preview_app(
+    camera: Camera,
+    *,
+    config_path: str | Path | None = None,
+    view_mode: ViewMode = "simple",
+    view_path: str | Path | None = None,
+) -> Any:
+    """Create a browser preview application using an existing camera.
+
+    The caller retains camera lifecycle ownership. In particular, this helper
+    neither starts nor stops ``camera``, so one capture pipeline can serve
+    inference, raw-frame consumers, snapshots, MJPEG preview, diagnostics, and
+    other application components concurrently. JPEG preview is enabled on the
+    supplied camera without recreating its capture backend.
+
+    Args:
+        camera: Existing camera instance shared with the application.
+        config_path: Optional path to the API YAML configuration file.
+        view_mode: Bundled preview view: ``"simple"`` or ``"advanced"``.
+        view_path: Optional custom browser-view template path.
+
+    Returns:
+        FastAPI application backed by the supplied camera.
+
+    Raises:
+        TypeError: If ``camera`` is not a :class:`Camera` instance.
+        ValueError: If view configuration is invalid.
+    """
+    if not isinstance(camera, Camera):
+        raise TypeError("camera must be a Camera instance")
+
+    camera.set_preview_enabled(True)
+    return create_app(
+        camera,
+        config_path=config_path,
+        view_mode=view_mode,
+        view_path=view_path,
+        manage_camera=False,
+    )

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from imx_camera_toolkit import CameraPreview, preview
+from imx_camera_toolkit import Camera, CameraPreview, preview
 
 preview_module = importlib.import_module("imx_camera_toolkit.preview")
 
@@ -69,6 +69,39 @@ def test_camera_preview_uses_documented_defaults() -> None:
         host="0.0.0.0",
         port=8000,
     )
+
+
+def test_create_preview_app_reuses_camera_without_taking_its_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing capture must be reused by preview, not replaced or managed."""
+    camera = Camera()
+    pipeline = camera.pipeline
+    application = object()
+    captured: dict[str, Any] = {}
+
+    def fake_create_app(camera_arg: Camera, **kwargs: object) -> object:
+        """Record the supplied camera and API ownership configuration."""
+        captured["camera"] = camera_arg
+        captured["kwargs"] = kwargs
+        return application
+
+    monkeypatch.setattr(preview_module, "create_app", fake_create_app)
+
+    result = preview_module.create_preview_app(camera)
+
+    assert result is application
+    assert captured["camera"] is camera
+    assert captured["kwargs"]["manage_camera"] is False
+    assert camera.preview_enabled is True
+    assert camera.config.enable_preview is True
+    assert camera.pipeline == pipeline
+
+
+def test_create_preview_app_requires_a_camera_instance() -> None:
+    """The shared-preview helper must reject an incompatible capture object."""
+    with pytest.raises(TypeError, match="Camera instance"):
+        preview_module.create_preview_app(object())
 
 
 @pytest.mark.parametrize(

@@ -203,6 +203,27 @@ if stats.consecutive_failures:
 
 The FastAPI health endpoint also exposes these capture diagnostics in JSON.
 
+### Reusing one camera for inference and preview
+
+The browser preview can attach to an existing camera instead of constructing a
+second capture pipeline. This lets raw-frame inference, snapshots, MJPEG,
+diagnostics, and browser preview share the same source:
+
+```python
+from imx_camera_toolkit import Camera
+from imx_camera_toolkit.preview import create_preview_app
+
+camera = Camera()
+app = create_preview_app(camera)
+
+with camera:
+    run_my_pipeline(camera)
+```
+
+`create_preview_app()` enables JPEG preview on the provided camera but leaves
+its lifecycle to the application. It does not start, stop, or replace the
+camera instance.
+
 Raw application frames and browser preview JPEGs use separate publication
 paths. `camera.latest_frame()` returns the newest raw `Frame`, while
 `camera.latest_jpeg()` returns the newest encoded preview image. For

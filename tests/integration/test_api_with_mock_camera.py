@@ -64,3 +64,14 @@ def test_unknown_bundled_view_mode_is_rejected() -> None:
     """Invalid view variants must fail during application construction."""
     with pytest.raises(ValueError, match="unknown camera view mode"):
         create_app(MockCamera(), view_mode="unknown")  # type: ignore[arg-type]
+
+
+def test_api_can_leave_an_existing_camera_lifecycle_to_the_application() -> None:
+    """A shared application camera must not be started or stopped by FastAPI."""
+    camera = MockCamera(auto_start=False)
+    application = create_app(camera, manage_camera=False)  # type: ignore[arg-type]
+
+    with TestClient(application):
+        assert camera.running is False
+
+    assert camera.running is False

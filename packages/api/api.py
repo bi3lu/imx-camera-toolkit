@@ -319,12 +319,14 @@ def create_app(
     config_path: str | Path | None = None,
     view_mode: ViewMode = DEFAULT_VIEW_MODE,
     view_path: str | Path | None = None,
+    manage_camera: bool = True,
 ) -> Any:
     """Create a FastAPI application backed by one shared camera instance.
 
-    The camera is started during the FastAPI lifespan startup event and stopped
-    during shutdown. It is deliberately shared by the snapshot and MJPEG
-    endpoints instead of being created once per HTTP request.
+    The camera is deliberately shared by the snapshot and MJPEG endpoints
+    instead of being created once per HTTP request. By default, the FastAPI
+    lifespan owns startup and shutdown. Applications that already own a camera
+    can set ``manage_camera=False``.
 
     Args:
         camera: Camera to expose. When omitted, creates a default ``Camera``.
@@ -332,6 +334,7 @@ def create_app(
         view_mode: Bundled camera view: ``"simple"`` for preview only or
             ``"advanced"`` for preview with runtime control panel.
         view_path: Optional path to the browser camera view template.
+        manage_camera: Whether the API lifespan starts and stops ``camera``.
 
     Returns:
         Configured FastAPI application.
@@ -339,6 +342,9 @@ def create_app(
     Raises:
         RuntimeError: If FastAPI is unavailable in the current environment.
     """
+    if not isinstance(manage_camera, bool):
+        raise ValueError("manage_camera must be a boolean")
+
     shared_camera = (
         camera if camera is not None else Camera(CameraConfig(enable_preview=True))
     )
@@ -353,14 +359,16 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: Any) -> AsyncIterator[None]:
-        """Start the shared camera for the lifetime of the API application."""
-        shared_camera.start()
+        """Optionally manage the shared camera for this application lifespan."""
+        if manage_camera:
+            shared_camera.start()
 
         try:
             yield
 
         finally:
-            shared_camera.stop()
+            if manage_camera:
+                shared_camera.stop()
 
     application = FastAPI(
         title=config.title,
@@ -371,6 +379,7 @@ def create_app(
     application.state.config = config
     application.state.view_mode = view_mode
     application.state.view_path = resolved_view_path
+    application.state.manage_camera = manage_camera
     application.state.camera_controller = camera_controller
 
     @application.get("/", response_class=HTMLResponse, include_in_schema=False)

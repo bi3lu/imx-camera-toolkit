@@ -196,6 +196,25 @@ The FastAPI API and `MJPEGStream` retain one shared `Camera` instance, so
 multiple browser or streaming clients do not start additional capture
 pipelines.
 
+An application that already owns capture for inference or another processing
+pipeline can attach the browser preview to that same instance:
+
+```python
+from imx_camera_toolkit import Camera, CameraConfig
+from imx_camera_toolkit.preview import create_preview_app
+
+camera = Camera(CameraConfig(enable_preview=False))
+app = create_preview_app(camera)
+
+with camera:
+    run_my_pipeline(camera)
+```
+
+`create_preview_app()` enables JPEG preview on the supplied camera but does
+not start or stop it. The enclosing application remains responsible for the
+camera lifecycle, and FastAPI snapshots, MJPEG, diagnostics, and inference all
+use the same capture pipeline.
+
 ## JPEG preview API
 
 ```python
