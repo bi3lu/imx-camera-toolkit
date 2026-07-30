@@ -6,6 +6,7 @@ import importlib
 import logging
 from typing import Any
 
+from ..errors import CameraDependencyError, CameraOpenError
 from .base import CaptureBackend
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ class GStreamerCaptureBackend(CaptureBackend):
     def open(self) -> None:
         """Parse, start, and validate the configured GStreamer pipeline."""
         if Gst is None or np_module is None:
-            raise RuntimeError("PyGObject GStreamer and NumPy are unavailable")
+            raise CameraDependencyError("PyGObject GStreamer and NumPy are unavailable")
 
         try:
             pipeline = Gst.parse_launch(self._pipeline_description)
@@ -59,27 +60,27 @@ class GStreamerCaptureBackend(CaptureBackend):
 
             if source is None or sink is None:
                 pipeline.set_state(Gst.State.NULL)
-                raise RuntimeError(
+                raise CameraOpenError(
                     "GStreamer pipeline is missing a named camera element"
                 )
 
             if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
                 pipeline.set_state(Gst.State.NULL)
-                raise RuntimeError("Could not start the IMX GStreamer pipeline")
+                raise CameraOpenError("Could not start the IMX GStreamer pipeline")
 
             _, state, _ = pipeline.get_state(5 * Gst.SECOND)
 
             if state != Gst.State.PLAYING:
                 pipeline.set_state(Gst.State.NULL)
-                raise RuntimeError(
+                raise CameraOpenError(
                     "IMX GStreamer pipeline did not enter the playing state"
                 )
 
         except Exception as error:
-            if isinstance(error, RuntimeError):
+            if isinstance(error, (CameraDependencyError, CameraOpenError)):
                 raise
 
-            raise RuntimeError(
+            raise CameraOpenError(
                 f"Could not create the IMX GStreamer pipeline: {error}"
             ) from error
 

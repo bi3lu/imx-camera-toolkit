@@ -10,11 +10,16 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
-import yaml
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
-from packages.camera.camera import Camera
+try:
+    import yaml
+
+except ImportError:
+    yaml = None
+
+from packages.camera.camera import Camera, CameraConfig
 from packages.camera_control.camera_control import (
     CameraController,
     ProfileNotFoundError,
@@ -49,7 +54,7 @@ class APIConfig:
 
     title: str = "IMX Camera API"
     description: str = "Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera."
-    version: str = "0.3.1"
+    version: str = "0.4.0"
     snapshot_timeout: float = 2.0
 
 
@@ -139,6 +144,10 @@ def load_api_config(config_path: str | Path | None = None) -> APIConfig:
 
     except OSError as error:
         logger.warning("Could not read API configuration %s: %s", path, error)
+        return DEFAULT_API_CONFIG
+
+    if yaml is None:
+        logger.warning("PyYAML is unavailable; using built-in API defaults")
         return DEFAULT_API_CONFIG
 
     try:
@@ -269,9 +278,10 @@ def _camera_status(camera: Camera) -> dict[str, object]:
         Health status, frame availability, capture metrics, and the last
         background capture error when one exists.
     """
+    diagnostics = camera.stats()
     last_error = str(camera.last_error) if camera.last_error is not None else None
 
-    if camera.running:
+    if diagnostics.running:
         status = "ok"
 
     elif last_error is not None:
@@ -282,15 +292,19 @@ def _camera_status(camera: Camera) -> dict[str, object]:
 
     return {
         "status": status,
-        "camera_running": camera.running,
+        "camera_running": diagnostics.running,
         "frame_available": camera.frame_available,
         "frame_number": camera.frame_number,
-        "frames_captured": camera.frames_captured,
+        "frames_captured": diagnostics.captured_frames,
+        "dropped_frames": diagnostics.dropped_frames,
+        "capture_fps": diagnostics.capture_fps,
+        "last_frame_timestamp_ns": diagnostics.last_frame_timestamp_ns,
         "frames_encoded": camera.frames_encoded,
         "last_frame_time": camera.last_frame_time,
         "last_error": last_error,
         "recovery_attempts": camera.recovery_attempts,
-        "recoveries": camera.recoveries,
+        "recoveries": diagnostics.recovery_count,
+        "consecutive_failures": diagnostics.consecutive_failures,
         "last_recovery_error": (
             str(camera.last_recovery_error)
             if camera.last_recovery_error is not None
@@ -305,12 +319,14 @@ def create_app(
     config_path: str | Path | None = None,
     view_mode: ViewMode = DEFAULT_VIEW_MODE,
     view_path: str | Path | None = None,
+    manage_camera: bool = True,
 ) -> Any:
     """Create a FastAPI application backed by one shared camera instance.
 
-    The camera is started during the FastAPI lifespan startup event and stopped
-    during shutdown. It is deliberately shared by the snapshot and MJPEG
-    endpoints instead of being created once per HTTP request.
+    The camera is deliberately shared by the snapshot and MJPEG endpoints
+    instead of being created once per HTTP request. By default, the FastAPI
+    lifespan owns startup and shutdown. Applications that already own a camera
+    can set ``manage_camera=False``.
 
     Args:
         camera: Camera to expose. When omitted, creates a default ``Camera``.
@@ -318,6 +334,7 @@ def create_app(
         view_mode: Bundled camera view: ``"simple"`` for preview only or
             ``"advanced"`` for preview with runtime control panel.
         view_path: Optional path to the browser camera view template.
+        manage_camera: Whether the API lifespan starts and stops ``camera``.
 
     Returns:
         Configured FastAPI application.
@@ -325,7 +342,12 @@ def create_app(
     Raises:
         RuntimeError: If FastAPI is unavailable in the current environment.
     """
-    shared_camera = camera if camera is not None else Camera()
+    if not isinstance(manage_camera, bool):
+        raise ValueError("manage_camera must be a boolean")
+
+    shared_camera = (
+        camera if camera is not None else Camera(CameraConfig(enable_preview=True))
+    )
     camera_controller = CameraController(
         runtime_handler=lambda update: shared_camera.apply_argus_properties(
             update.source_properties,
@@ -337,14 +359,16 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: Any) -> AsyncIterator[None]:
-        """Start the shared camera for the lifetime of the API application."""
-        shared_camera.start()
+        """Optionally manage the shared camera for this application lifespan."""
+        if manage_camera:
+            shared_camera.start()
 
         try:
             yield
 
         finally:
-            shared_camera.stop()
+            if manage_camera:
+                shared_camera.stop()
 
     application = FastAPI(
         title=config.title,
@@ -355,6 +379,7 @@ def create_app(
     application.state.config = config
     application.state.view_mode = view_mode
     application.state.view_path = resolved_view_path
+    application.state.manage_camera = manage_camera
     application.state.camera_controller = camera_controller
 
     @application.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -395,7 +420,7 @@ def create_app(
             JSON-ready control state, available source properties, and profiles.
         """
         state = camera_controller.get_runtime_state()
-        state["capture_fps"] = shared_camera.config.capture_fps
+        state["capture_fps"] = shared_camera.config.fps
         state["software_hdr"] = shared_camera.software_hdr_state
         return state
 

@@ -1,0 +1,125 @@
+"""Tests for the public camera-preview facade."""
+
+from __future__ import annotations
+
+import importlib
+from typing import Any
+
+import pytest
+
+from imx_camera_toolkit import Camera, CameraPreview, preview
+
+preview_module = importlib.import_module("imx_camera_toolkit.preview")
+
+
+def test_camera_preview_composes_camera_api_and_uvicorn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preview facade must configure existing components without hardware."""
+    captured: dict[str, Any] = {}
+    application = object()
+
+    class FakeCamera:
+        """Record camera construction without opening a real backend."""
+
+        def __init__(self, **kwargs: object) -> None:
+            """Store facade-provided camera configuration."""
+            captured["camera"] = kwargs
+
+    def fake_create_app(camera: object, *, view_mode: str) -> object:
+        """Record API composition and return an opaque application."""
+        captured["api"] = {"camera": camera, "view_mode": view_mode}
+        return application
+
+    def fake_run(server_app: object, *, host: str, port: int) -> None:
+        """Record server launch instead of blocking on Uvicorn."""
+        captured["server"] = {"app": server_app, "host": host, "port": port}
+
+    monkeypatch.setattr(preview_module, "Camera", FakeCamera)
+    monkeypatch.setattr(preview_module, "create_app", fake_create_app)
+    monkeypatch.setattr(preview_module.uvicorn, "run", fake_run)
+
+    preview(sensor_id=1, width=1920, height=1080, fps=30, port=9000)
+
+    config = captured["camera"]["config"]
+    assert config.sensor_id == 1
+    assert config.capture_width == 1920
+    assert config.capture_height == 1080
+    assert config.output_width == 1920
+    assert config.output_height == 1080
+    assert config.fps == 30
+    assert config.max_fps == 30.0
+    assert config.enable_preview is True
+    assert captured["api"]["view_mode"] == "simple"
+    assert isinstance(captured["api"]["camera"], FakeCamera)
+    assert captured["server"] == {
+        "app": application,
+        "host": "0.0.0.0",
+        "port": 9000,
+    }
+
+
+def test_camera_preview_uses_documented_defaults() -> None:
+    """Default facade configuration must match the public API contract."""
+    assert CameraPreview() == CameraPreview(
+        sensor_id=0,
+        width=1280,
+        height=720,
+        fps=30,
+        host="0.0.0.0",
+        port=8000,
+    )
+
+
+def test_create_preview_app_reuses_camera_without_taking_its_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Existing capture must be reused by preview, not replaced or managed."""
+    camera = Camera()
+    pipeline = camera.pipeline
+    application = object()
+    captured: dict[str, Any] = {}
+
+    def fake_create_app(camera_arg: Camera, **kwargs: object) -> object:
+        """Record the supplied camera and API ownership configuration."""
+        captured["camera"] = camera_arg
+        captured["kwargs"] = kwargs
+        return application
+
+    monkeypatch.setattr(preview_module, "create_app", fake_create_app)
+
+    result = preview_module.create_preview_app(camera)
+
+    assert result is application
+    assert captured["camera"] is camera
+    assert captured["kwargs"]["manage_camera"] is False
+    assert camera.preview_enabled is True
+    assert camera.config.enable_preview is True
+    assert camera.pipeline == pipeline
+
+
+def test_create_preview_app_requires_a_camera_instance() -> None:
+    """The shared-preview helper must reject an incompatible capture object."""
+    with pytest.raises(TypeError, match="Camera instance"):
+        preview_module.create_preview_app(object())
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"sensor_id": -1}, "sensor_id"),
+        ({"width": 0}, "width"),
+        ({"height": 0}, "height"),
+        ({"fps": 0}, "fps"),
+        ({"host": ""}, "host"),
+        ({"port": 0}, "port"),
+        ({"port": 65536}, "port"),
+    ],
+)
+def test_camera_preview_rejects_invalid_configuration(
+    kwargs: dict[str, Any],
+    message: str,
+) -> None:
+    """Invalid facade configuration must fail before a camera is constructed."""
+    with pytest.raises(ValueError, match=message):
+        CameraPreview(**kwargs)

@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+try:
+    import yaml
+
+except ImportError:
+    yaml = None
 
 from ..capabilities import DEFAULT_CAPABILITIES
 from ..controls import build_argus_control_properties
@@ -178,6 +182,12 @@ def load_camera_control_config(
             "Could not read camera-control configuration %s: %s",
             path,
             error,
+        )
+        return DEFAULT_CAMERA_CONTROL_CONFIG
+
+    if yaml is None:
+        logger.warning(
+            "PyYAML is unavailable; using built-in camera-control defaults"
         )
         return DEFAULT_CAMERA_CONTROL_CONFIG
 

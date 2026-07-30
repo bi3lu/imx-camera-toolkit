@@ -18,6 +18,10 @@ def test_health_and_snapshot_with_mock_camera() -> None:
         health = client.get("/api/health")
         assert health.status_code == 200
         assert health.json()["camera_running"] is True
+        assert health.json()["dropped_frames"] == 0
+        assert health.json()["capture_fps"] == 0.0
+        assert health.json()["last_frame_timestamp_ns"] is None
+        assert health.json()["consecutive_failures"] == 0
 
         camera.publish_jpeg(b"\xff\xd8mock\xff\xd9")
         snapshot = client.get("/api/camera/snapshot")
@@ -60,3 +64,14 @@ def test_unknown_bundled_view_mode_is_rejected() -> None:
     """Invalid view variants must fail during application construction."""
     with pytest.raises(ValueError, match="unknown camera view mode"):
         create_app(MockCamera(), view_mode="unknown")  # type: ignore[arg-type]
+
+
+def test_api_can_leave_an_existing_camera_lifecycle_to_the_application() -> None:
+    """A shared application camera must not be started or stopped by FastAPI."""
+    camera = MockCamera(auto_start=False)
+    application = create_app(camera, manage_camera=False)  # type: ignore[arg-type]
+
+    with TestClient(application):
+        assert camera.running is False
+
+    assert camera.running is False

@@ -15,6 +15,8 @@ def test_mock_camera_publishes_and_waits_for_jpeg() -> None:
     assert camera.wait_for_jpeg(0, timeout=0) == (1, b"jpeg")
     assert camera.frames_captured == 1
     assert camera.frames_encoded == 1
+    assert camera.stats().captured_frames == 1
+    assert camera.stats().last_frame_timestamp_ns is not None
 
 
 def test_mock_camera_rejects_publication_after_stop() -> None:

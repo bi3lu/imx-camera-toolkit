@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
+from ..errors import CameraDependencyError, CameraOpenError
 from .base import CaptureBackend
 
 try:
@@ -25,9 +26,8 @@ class OpenCVCaptureBackend(CaptureBackend):
     def open(self) -> None:
         """Open the configured GStreamer pipeline with OpenCV."""
         if cv2_module is None:
-            raise RuntimeError(
-                "OpenCV is not available. Use the JetPack-provided Python/OpenCV "
-                "environment with GStreamer support."
+            raise CameraDependencyError(
+                "System OpenCV with GStreamer support is required."
             )
 
         capture = cv2_module.VideoCapture(
@@ -37,7 +37,7 @@ class OpenCVCaptureBackend(CaptureBackend):
         if not capture.isOpened():
             capture.release()
 
-            raise RuntimeError(
+            raise CameraOpenError(
                 "Could not open the IMX camera. Check CSI connection, sensor-id, "
                 "and that nvarguscamerasrc is available."
             )

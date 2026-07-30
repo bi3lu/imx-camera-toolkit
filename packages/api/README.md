@@ -10,11 +10,11 @@ the framework-neutral MJPEG iterator from the `stream` package.
 - Project dependencies installed through `uv`:
 
   ```bash
-  uv sync
+  uv sync --extra preview
   ```
 
-- Uvicorn, included in the project dependencies, to expose the application
-  over HTTP.
+- FastAPI and Uvicorn, installed through the optional `preview` dependency
+  group, to expose the application over HTTP.
 
 ## Application lifecycle
 
@@ -22,6 +22,24 @@ The module exports `create_app()`, a FastAPI application factory. Its lifespan
 handler starts one shared `Camera` during application startup and stops it
 during shutdown. Endpoints share that camera; the API does not create a camera
 per request or per connected MJPEG client.
+
+Applications that already own a camera for inference or another pipeline can
+attach a preview without creating or managing another capture lifecycle:
+
+```python
+from imx_camera_toolkit import Camera
+from imx_camera_toolkit.preview import create_preview_app
+
+camera = Camera()
+app = create_preview_app(camera)
+
+with camera:
+    run_my_pipeline(camera)
+```
+
+The helper enables JPEG preview on the supplied `Camera` and builds the FastAPI
+application with `manage_camera=False`. The application remains responsible
+for starting and stopping the camera.
 
 For a local camera preview, run:
 
@@ -112,9 +130,9 @@ use the factory:
 
 ```python
 from imx_camera_toolkit.api import create_app
-from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 
-camera = Camera(sensor_id=1)
+camera = Camera(CameraConfig(sensor_id=1, enable_preview=True))
 app = create_app(
     camera,
     config_path="/etc/imx-camera/api.yml",

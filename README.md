@@ -13,6 +13,15 @@ separation keeps hardware-specific code isolated and allows alternative
 processing or transport layers to be introduced without coupling them to the
 camera capture loop.
 
+## What this project is not
+
+IMX Camera Toolkit is a camera-capture and image-transport foundation. It does
+not provide inference models, model loaders, trackers, batching, CUDA-stream
+management, DeepStream pipelines, ROS 2 integration, multi-camera
+synchronization, or telemetry backends. Applications retain ownership of those
+policies and receive an opaque raw `Frame.image` payload for their own chosen
+vision stack.
+
 ## System architecture
 
 ```text
@@ -22,8 +31,8 @@ CSI IMX sensor
 Camera package <--- runtime controls --- Camera Control package
 Argus + GStreamer capture, BGR conversion, software HDR, JPEG encoding
       |
-      +----> Vision package
-      |      Latest-frame inference, structured results, and overlays
+      +----> Frames package
+      |      Minimal raw-frame source contract for external pipelines
       v
 Stream package
 MJPEG multipart framing
@@ -47,7 +56,7 @@ intermediate frames.
 | --- | --- |
 | [`packages/camera`](packages/camera/README.md) | CSI camera acquisition through `nvarguscamerasrc`, frame conversion, JPEG encoding, and frame synchronization. |
 | [`packages/camera_control`](packages/camera_control/README.md) | Validated runtime exposure, gain, white-balance, denoise, sensor-mode, and HDR control for NVIDIA Argus cameras. |
-| [`packages/vision`](packages/vision/README.md) | Latest-frame AI Vision pipeline, raw-camera adapter, inference contracts, overlays, events, file playback, and synthetic sources. |
+| [`packages/frames`](packages/frames/README.md) | Minimal `FrameSource` protocol and adapter from the toolkit camera to external processing pipelines. |
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
 | [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
@@ -58,7 +67,7 @@ intermediate frames.
 
 - NVIDIA Jetson Orin Nano or a compatible Jetson platform.
 - A supported CSI-connected IMX camera sensor.
-- JetPack with NVIDIA Argus, `nvarguscamerasrc`, and GStreamer support.
+- JetPack 6.2.2 with NVIDIA Argus, `nvarguscamerasrc`, and GStreamer support.
 - System OpenCV with GStreamer support. On JetPack this is normally supplied by
   the `python3-opencv` system package.
 - Python 3.10 or newer.
@@ -68,7 +77,33 @@ intermediate frames.
 OpenCV is intentionally not installed from PyPI. The JetPack-provided build is
 required because it integrates with NVIDIA's camera and GStreamer stack.
 
+## Compatibility matrix
+
+| JetPack | Jetson | Camera module | Profile / Argus mode | Capture | Output | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 6.2.2 | Orin Nano | IMX219-77 | `imx219-1080p` / 2 | 1920×1080 at 30 FPS | 1280×720 | tested |
+| 6.2.2 | Orin Nano | IMX477 | — | — | — | planned |
+
+Only the first row has been verified on the stated hardware. “Planned” is not
+a support claim and must not be treated as a working profile.
+
 ## Installation
+
+Install the core package when the application only needs camera capture and
+raw-frame integration:
+
+```bash
+uv add imx-camera-toolkit
+```
+
+The core package has no PyPI runtime dependencies. JetPack supplies the system
+OpenCV build with GStreamer support required for camera capture.
+
+Install the optional browser preview stack when FastAPI and Uvicorn are needed:
+
+```bash
+uv add "imx-camera-toolkit[preview]"
+```
 
 Clone the repository and create a virtual environment that can access the
 system OpenCV installation:
@@ -76,6 +111,12 @@ system OpenCV installation:
 ```bash
 uv venv --system-site-packages
 uv sync
+```
+
+For local browser preview development, include the preview extra:
+
+```bash
+uv sync --extra preview
 ```
 
 If a project virtual environment already exists without system package access,
@@ -99,7 +140,7 @@ Add the stable branch to the consuming project's `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.3.1"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.4.0"
 ]
 ```
 
@@ -114,6 +155,15 @@ On Jetson, create the consuming project's environment with
 build remains available. For reproducible production deployments, pin a
 release tag or commit rather than a moving branch.
 
+To consume the Git dependency with the browser-preview extra, declare it as:
+
+```toml
+[project]
+dependencies = [
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.4.0"
+]
+```
+
 ## Public Python namespace
 
 External applications should import from `imx_camera_toolkit`. The repository
@@ -121,24 +171,154 @@ internal `packages` namespace remains an implementation detail and should not
 be used by new projects.
 
 ```python
-from imx_camera_toolkit.camera import Camera
-from imx_camera_toolkit.vision import CameraFrameSource, VisionPipeline
+from imx_camera_toolkit import Camera, CameraConfig
+from imx_camera_toolkit.frames import CameraFrameSource
 
-camera = Camera()
-pipeline = VisionPipeline(CameraFrameSource(camera), processor)
+with Camera(CameraConfig(enable_preview=False)) as camera:
+    source = CameraFrameSource(camera)
+    frame = source.read(timeout=1.0)
 ```
 
-The public namespace also provides `api`, `camera_control`, and `stream`:
+The public namespace also provides `api`, `camera_control`, `controls`,
+`stream`, and deterministic test doubles:
 
 ```python
 from imx_camera_toolkit.camera_control import CameraController
+from imx_camera_toolkit.controls import CameraControls, ExposureConfig
 from imx_camera_toolkit.stream import MJPEGStream
+from imx_camera_toolkit.testing import MockCamera
+```
+
+For direct integration with an external AI or image-processing pipeline, use
+the stable raw-frame API:
+
+```python
+from imx_camera_toolkit import Camera, CameraConfig
+
+with Camera(CameraConfig()) as camera:
+    frame = camera.read(timeout=1.0, copy=False)
+
+    if frame is not None:
+        result = my_tensor_rt_engine(frame.image)
+```
+
+`read()` returns a formal `Frame` with an opaque `image`, monotonic `sequence`,
+nanosecond `timestamp_ns`, optional hardware `capture_timestamp_ns`, dimensions,
+and pixel `format`. It retains only the newest BGR frame, may skip stale frames,
+and never performs JPEG encoding or inference. The default `copy=True` gives
+the caller an independent image buffer; `copy=False` returns a read-only shared
+payload for zero-copy-oriented pipelines.
+
+### Diagnostics
+
+`camera.stats()` exposes a typed, immutable `CameraStats` snapshot for external
+health endpoints, monitoring adapters, watchdogs, dashboards, telemetry, and
+alerting without requiring log parsing or adding telemetry dependencies to the
+toolkit core.
+
+```python
+stats = camera.stats()
+
+if stats.consecutive_failures:
+    notify_watchdog(stats)
+```
+
+The FastAPI health endpoint also exposes these capture diagnostics in JSON.
+
+### Camera error contract
+
+The public camera API exposes stable exceptions so integrations never need to
+parse logs or match backend-specific messages:
+
+| Exception | Meaning |
+| --- | --- |
+| `CameraDependencyError` | Required JetPack runtime dependency, such as system OpenCV or GStreamer support, is unavailable. |
+| `CameraConfigurationError` | A camera setting, pipeline property, or API option is invalid. It also subclasses `ValueError` for compatibility. |
+| `CameraOpenError` | The selected capture backend cannot open the configured camera. |
+| `CameraReadError` | A frame cannot be read safely, including calling `read()` before startup. |
+| `CameraTimeoutError` | An operation that requires a frame reaches its deadline, for example the hardware benchmark or snapshot command. |
+| `CameraRecoveryError` | Capture recovery is exhausted or a capture worker cannot stop safely. |
+
+`Camera.read(timeout=...)` intentionally retains its lightweight polling
+contract: it returns `None` when no newer raw frame arrives in time. This is
+appropriate for latest-frame processing loops that do not want exceptions on a
+normal temporary absence of frames.
+
+### Reusing one camera for inference and preview
+
+The browser preview can attach to an existing camera instead of constructing a
+second capture pipeline. This lets raw-frame inference, snapshots, MJPEG,
+diagnostics, and browser preview share the same source:
+
+```python
+from imx_camera_toolkit import Camera
+from imx_camera_toolkit.preview import create_preview_app
+
+camera = Camera()
+app = create_preview_app(camera)
+
+with camera:
+    run_my_pipeline(camera)
+```
+
+`create_preview_app()` enables JPEG preview on the provided camera but leaves
+its lifecycle to the application. It does not start, stop, or replace the
+camera instance.
+
+For a transport-only preview backed by any existing latest-frame source, use
+`serve()`. It does not create a second capture pipeline or own the source
+lifecycle:
+
+```python
+from imx_camera_toolkit import Camera
+from imx_camera_toolkit.preview import serve
+
+with Camera() as camera:
+    serve(camera, port=8000)
+```
+
+### Generic processed-image preview
+
+`PreviewServer` is a model-agnostic image transport. It does not define or
+interpret detections, bounding boxes, labels, masks, segmentation, or tracking
+metadata. An external application may publish any image it has already drawn:
+
+```python
+from imx_camera_toolkit.preview import PreviewServer
+
+preview = PreviewServer()
+app = preview.create_app()
+
+frame = camera.read()
+result = model(frame.image)
+annotated = draw_results(frame.image, result)
+preview.publish(annotated)
+```
+
+It can also forward the latest raw frame from an existing source without
+creating another camera capture pipeline:
+
+```python
+camera_preview = PreviewServer(source=camera)
+processed_preview = PreviewServer(source=processed_frame_buffer)
+```
+
+`PreviewServer` owns only its JPEG transport worker. It never starts, stops, or
+otherwise owns the supplied source.
+
+Raw application frames and browser preview JPEGs use separate publication
+paths. `camera.latest_frame()` returns the newest raw `Frame`, while
+`camera.latest_jpeg()` returns the newest encoded preview image. For
+processing-only deployments, disable JPEG work entirely:
+
+```python
+camera = Camera(CameraConfig(enable_preview=False))
 ```
 
 For development, install the additional test, lint, and type-checking tools:
 
 ```bash
-uv sync --group dev
+uv sync --extra preview --group dev
 ```
 
 ## Packaging
@@ -150,8 +330,9 @@ distributions. Build artifacts are written to `dist/`:
 uv build
 ```
 
-The installed package provides the `imx-camera-toolkit` console command. It is
-also available inside the project environment through `uv run`.
+The installed package provides the `imx-camera` console command. The legacy
+`imx-camera-toolkit` command remains available as a compatibility alias. Both
+are available inside the project environment through `uv run`.
 
 ## Development quality checks
 
@@ -163,7 +344,7 @@ sensor or a Jetson camera stack.
 Install development dependencies and run the standard quality gate:
 
 ```bash
-uv sync --group dev
+uv sync --extra preview --group dev
 uv run ruff check .
 uv run mypy imx_camera_toolkit packages tests
 uv run pytest -m "not benchmark"
@@ -171,11 +352,15 @@ uv run pytest -m "not benchmark"
 
 Deterministic capture and MJPEG framing benchmarks are deliberately separate
 from the normal test suite. They measure toolkit overhead only; they do not
-represent sensor, ISP, JPEG encoder, network, or browser performance.
+represent sensor, ISP, JPEG encoder, network, or browser performance. A
+separate, explicit hardware benchmark compares capture with JPEG preview
+disabled and enabled, reports dropped source frames, and records mean raw-frame
+delivery latency.
 
 ```bash
 uv run pytest -m benchmark
-uv run imx-camera-toolkit benchmark all --frames 1000 --json
+uv run imx-camera benchmark all --frames 1000 --json
+uv run imx-camera benchmark camera --frames 300
 ```
 
 GitHub Actions runs linting and strict type checking in a dedicated job, unit
@@ -185,28 +370,87 @@ failures immediately distinguishable in CI.
 
 ## Command-line interface and diagnostics
 
-The installed `imx-camera-toolkit` command provides non-destructive deployment
-checks and deterministic benchmarks:
+The installed `imx-camera` command provides deployment checks, physical-camera
+smoke testing, snapshots, browser preview, and benchmarks:
 
 ```bash
-uv run imx-camera-toolkit diagnose --json
-uv run imx-camera-toolkit diagnose --hardware
-uv run imx-camera-toolkit benchmark capture --frames 1000
-uv run imx-camera-toolkit serve --host 0.0.0.0 --port 8000
+uv run imx-camera info --json
+uv run imx-camera diagnose --hardware
+uv run imx-camera test --frames 30 --timeout 5
+uv run imx-camera snapshot snapshot.jpg
+uv run imx-camera preview --host 0.0.0.0 --port 8000
+uv run imx-camera benchmark capture --frames 1000
+uv run imx-camera benchmark camera --frames 300
 ```
 
 `diagnose --hardware` checks for the locally installed Argus GStreamer element
-and V4L2 command-line utility. It does not alter sensor settings or open a
-camera stream.
+and V4L2 command-line utility. `test` is the explicit physical-camera check: it
+opens the configured sensor, waits for the first frame, measures a sequence of
+distinct frames, and verifies that the backend is released. It may access the
+camera and should therefore not run concurrently with another camera process.
 
-The `benchmark` commands use `MockCamera`, so they are repeatable on both
-Jetson and non-Jetson development machines. They characterize Python-side
-capture publication and multipart framing overhead, rather than end-to-end
-camera or network throughput.
+The `capture`, `streaming`, and `all` benchmark targets use `MockCamera`, so
+they are repeatable on both Jetson and non-Jetson development machines. The
+`camera` target is an explicit physical-camera benchmark. It compares raw
+capture with and without JPEG preview, and reports local capture throughput,
+dropped frames, and mean frame-delivery latency. Neither benchmark measures
+network or browser throughput.
+
+## Examples
+
+The runnable examples are intentionally small and use only public imports:
+
+- [`examples/capture_frames.py`](examples/capture_frames.py) reads raw latest
+  frames for an external processing pipeline.
+- [`examples/browser_preview.py`](examples/browser_preview.py) starts the
+  simple preview facade.
+- [`examples/shared_preview.py`](examples/shared_preview.py) attaches generic
+  browser transport to one existing camera instance.
 
 ## Running the local preview
 
-Start the API server from the repository root:
+Install the optional preview dependencies before starting a browser server:
+
+```bash
+uv sync --extra preview
+```
+
+For the simplest Python integration, start a preview through the public facade:
+
+```python
+from imx_camera_toolkit import preview
+
+preview()
+```
+
+The facade starts a simple browser view and releases camera resources during
+server shutdown. Its defaults are sensor `0`, `1280x720`, `30` FPS,
+`0.0.0.0`, and port `8000`.
+
+Configure the camera and server explicitly when needed:
+
+```python
+from imx_camera_toolkit import preview
+
+preview(
+    sensor_id=0,
+    width=1920,
+    height=1080,
+    fps=30,
+    port=8000,
+)
+```
+
+For reusable configuration, use the object-oriented variant:
+
+```python
+from imx_camera_toolkit import CameraPreview
+
+camera_preview = CameraPreview()
+camera_preview.run()
+```
+
+To start the repository's local launcher directly:
 
 ```bash
 uv run python main.py
@@ -303,8 +547,52 @@ built-in defaults.
 | [`packages/stream/config.yml`](packages/stream/config.yml) | MJPEG multipart boundary and frame wait timeout. |
 | [`packages/api/config.yml`](packages/api/config.yml) | FastAPI metadata and snapshot wait timeout. |
 
-Constructor arguments take precedence over the relevant YAML values. For
-example, a different CSI sensor can be selected with `Camera(sensor_id=1)`.
+`CameraConfig` is the preferred immutable contract for passing and comparing
+camera settings between components. It contains the sensor, capture/output
+dimensions, `fps`, flip method, optional sensor mode, and preview setting:
+
+```python
+from imx_camera_toolkit import Camera, CameraConfig
+
+camera = Camera(
+    CameraConfig(
+        sensor_id=1,
+        capture_width=1920,
+        capture_height=1080,
+        output_width=1280,
+        output_height=720,
+        fps=30,
+        enable_preview=False,
+    )
+)
+```
+
+Constructor arguments remain available for backwards compatibility and take
+precedence over the relevant YAML or explicit configuration values.
+
+### Hardware profiles
+
+`CameraConfig.from_profile()` selects a curated static hardware profile. The
+profile catalogue reports an explicit verification status and never treats an
+unverified sensor mode as fully supported.
+
+```python
+from imx_camera_toolkit import Camera, CameraConfig, get_camera_profile
+
+profile = get_camera_profile("imx219-1080p")
+assert profile.status.value == "tested"
+
+with Camera(CameraConfig.from_profile("imx219-1080p")) as camera:
+    frame = camera.read()
+```
+
+The current supported profile is `imx219-1080p` for the tested IMX219-77
+camera module: Argus sensor mode 2, 1920×1080 capture at 30 FPS, and 1280×720
+output. `community-tested` and `experimental` are defined status levels for
+future entries; no unverified profiles are currently advertised.
+
+PyYAML is not a core dependency. When it is unavailable, the corresponding
+component ignores its YAML file and uses validated built-in defaults instead.
 
 ## Browser view customization
 
@@ -341,10 +629,10 @@ an explicit path:
 
 ```python
 from imx_camera_toolkit.api import create_app
-from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 
 app = create_app(
-    Camera(sensor_id=1),
+    Camera(CameraConfig(sensor_id=1, enable_preview=True)),
     view_mode="simple",
     view_path="/etc/imx-camera/index.html",
 )
@@ -374,11 +662,11 @@ its own template while retaining the same API factory.
 
 | Symptom | Likely cause and corrective action |
 | --- | --- |
-| `OpenCV is not available` | Recreate `.venv` with `uv venv --system-site-packages --allow-existing .venv`, then run `uv sync`. |
+| `CameraDependencyError: System OpenCV with GStreamer support is required` | Recreate `.venv` with `uv venv --system-site-packages --allow-existing .venv`, then run `uv sync`. |
 | Camera cannot open | Verify the CSI connection, `sensor_id`, JetPack installation, and availability of `nvarguscamerasrc`. |
 | Argus cannot connect | Confirm that `nvargus-daemon` is running and that the process has access to the Jetson camera stack. Containers additionally require the Argus socket and relevant device access. |
 | No image at the preview endpoint | Inspect `/api/health` for `last_error`, camera state, and frame counters. |
-| Intermittent camera failures | Inspect `/api/health` for recovery counters and `last_recovery_error`. Run `uv run imx-camera-toolkit diagnose --hardware` to verify Argus and V4L2 prerequisites. |
+| Intermittent camera failures | Inspect `/api/health` for recovery counters and `last_recovery_error`. Run `uv run imx-camera diagnose --hardware` to verify Argus and V4L2 prerequisites. |
 | Runtime control is rejected | Inspect `GET /api/camera/control` and declare only properties and sensor modes supported by the installed `nvarguscamerasrc` driver. |
 | Software HDR cannot start | Confirm that manual sensor exposure control is available. Disable software HDR before applying external manual exposure or gain settings. |
 | Remote browser cannot connect | Confirm network reachability to port `8000` and review host firewall or reverse-proxy configuration. |

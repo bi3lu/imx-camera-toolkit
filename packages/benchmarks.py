@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
+from .camera.camera import Camera, CameraConfig, CameraTimeoutError
 from .stream.stream import MJPEGStream
 from .testing.mock_camera import MockCamera
 
@@ -22,6 +23,29 @@ class BenchmarkResult:
 
     def as_dict(self) -> dict[str, float | int | str]:
         """Return a JSON-ready benchmark result."""
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class CameraBenchmarkResult:
+    """End-to-end physical-camera capture benchmark result.
+
+    Unlike :class:`BenchmarkResult`, this records the actual connected camera's
+    capture counters and frame latency. It is intentionally opt-in and must not
+    be interpreted as a benchmark of a different Jetson, sensor, network, or
+    browser configuration.
+    """
+
+    name: str
+    frames: int
+    duration_seconds: float
+    frames_per_second: float
+    captured_frames: int
+    dropped_frames: int
+    mean_latency_ms: float
+
+    def as_dict(self) -> dict[str, float | int | str]:
+        """Return a JSON-ready physical-camera benchmark result."""
         return asdict(self)
 
 
@@ -76,3 +100,88 @@ def benchmark_streaming(frames: int = 1_000) -> BenchmarkResult:
         next(iterator)
 
     return _result("streaming", frames, started_at)
+
+
+def benchmark_camera_capture(
+    frames: int = 300,
+    *,
+    preview: bool = False,
+    timeout: float = 5.0,
+    config: CameraConfig | None = None,
+) -> CameraBenchmarkResult:
+    """Measure raw capture from a connected CSI camera.
+
+    The benchmark opens one camera, waits for distinct latest raw frames, and
+    closes it before returning. Run it once with ``preview=False`` and once
+    with ``preview=True`` to quantify the local JPEG preview cost. It measures
+    raw capture throughput, source read failures, and publication-to-consumer
+    latency; it does not measure network or browser performance.
+
+    Args:
+        frames: Number of distinct raw frames to observe.
+        preview: Whether to enable the independent JPEG preview path.
+        timeout: Maximum wait for each raw frame in seconds.
+        config: Optional base camera configuration for the tested sensor.
+
+    Returns:
+        End-to-end result for the current local Jetson and sensor setup.
+
+    Raises:
+        CameraTimeoutError: If the camera does not produce a required frame.
+        ValueError: If benchmark arguments are invalid.
+    """
+    if frames <= 0:
+        raise ValueError("frames must be greater than zero")
+
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than zero")
+
+    if not isinstance(preview, bool):
+        raise ValueError("preview must be a boolean")
+
+    resolved_config = replace(
+        config or CameraConfig(),
+        enable_preview=preview,
+    )
+    camera = Camera(resolved_config)
+    previous_frame_number = -1
+    latencies_ns: list[int] = []
+
+    with camera:
+        initial_stats = camera.stats()
+        started_at = time.monotonic()
+
+        for _ in range(frames):
+            frame_number, image = camera.wait_for_raw_frame(
+                previous_frame_number,
+                timeout=timeout,
+            )
+
+            if image is None or frame_number == previous_frame_number:
+                raise CameraTimeoutError(
+                    f"camera did not provide a frame within {timeout:.1f}s"
+                )
+
+            previous_frame_number = frame_number
+            frame = camera.latest_frame(copy=False)
+
+            if frame is None:
+                raise CameraTimeoutError(
+                    "camera published a frame without raw metadata"
+                )
+
+            latencies_ns.append(max(time.monotonic_ns() - frame.timestamp_ns, 0))
+
+        final_stats = camera.stats()
+        duration = max(time.monotonic() - started_at, 1e-9)
+
+    mean_latency_ms = sum(latencies_ns) / len(latencies_ns) / 1_000_000
+    return CameraBenchmarkResult(
+        name="camera-preview" if preview else "camera-raw",
+        frames=frames,
+        duration_seconds=duration,
+        frames_per_second=frames / duration,
+        captured_frames=final_stats.captured_frames - initial_stats.captured_frames,
+        dropped_frames=final_stats.dropped_frames - initial_stats.dropped_frames,
+        mean_latency_ms=mean_latency_ms,
+    )
