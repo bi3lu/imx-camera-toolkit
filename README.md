@@ -7,9 +7,10 @@ live video from CSI-connected IMX image sensors on NVIDIA Jetson systems. It is
 designed for NVIDIA Jetson Orin Nano deployments using the JetPack software
 stack, NVIDIA Argus, GStreamer, and the system-provided OpenCV build.
 
-The project separates sensor acquisition, MJPEG framing, and HTTP delivery into
-independent packages. This separation allows image processing, camera controls,
-and alternative transport layers to be introduced without coupling them to the
+The project separates sensor acquisition, image processing, runtime camera
+controls, MJPEG framing, and HTTP delivery into independent packages. This
+separation keeps hardware-specific code isolated and allows alternative
+processing or transport layers to be introduced without coupling them to the
 camera capture loop.
 
 ## System architecture
@@ -18,8 +19,8 @@ camera capture loop.
 CSI IMX sensor
       |
       v
-Camera package
-Argus + GStreamer capture, BGR conversion, JPEG encoding
+Camera package <--- runtime controls --- Camera Control package
+Argus + GStreamer capture, BGR conversion, software HDR, JPEG encoding
       |
       v
 Stream package
@@ -43,8 +44,10 @@ intermediate frames.
 | Package | Responsibility |
 | --- | --- |
 | [`packages/camera`](packages/camera/README.md) | CSI camera acquisition through `nvarguscamerasrc`, frame conversion, JPEG encoding, and frame synchronization. |
+| [`packages/camera_control`](packages/camera_control/README.md) | Validated runtime exposure, gain, white-balance, denoise, sensor-mode, and HDR control for NVIDIA Argus cameras. |
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
+| [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
 | [`view/index.html`](view/index.html) | Customizable browser-facing HTML and CSS template for the live preview. |
 
 ## Platform requirements
@@ -85,6 +88,24 @@ Verify that the project environment can see JetPack OpenCV:
 uv run python -c "import cv2; print(cv2.__version__)"
 ```
 
+For development, install the additional test, lint, and type-checking tools:
+
+```bash
+uv sync --group dev
+```
+
+## Packaging
+
+The project uses Hatchling and produces standard Python source and wheel
+distributions. Build artifacts are written to `dist/`:
+
+```bash
+uv build
+```
+
+The installed package provides the `imx-camera-toolkit` console command. It is
+also available inside the project environment through `uv run`.
+
 ## Development quality checks
 
 The project uses Ruff for linting and import hygiene, and mypy in strict mode
@@ -110,9 +131,10 @@ uv run pytest -m benchmark
 uv run imx-camera-toolkit benchmark all --frames 1000 --json
 ```
 
-GitHub Actions runs linting and type checking in a dedicated job, unit and
-integration tests in a separate job, and verifies that source and wheel
-distributions can be built.
+GitHub Actions runs linting and strict type checking in a dedicated job, unit
+and integration tests in a separate job, and verifies that source and wheel
+distributions can be built. This separation makes static-analysis and runtime
+failures immediately distinguishable in CI.
 
 ## Command-line interface and diagnostics
 
@@ -129,6 +151,11 @@ uv run imx-camera-toolkit serve --host 0.0.0.0 --port 8000
 `diagnose --hardware` checks for the locally installed Argus GStreamer element
 and V4L2 command-line utility. It does not alter sensor settings or open a
 camera stream.
+
+The `benchmark` commands use `MockCamera`, so they are repeatable on both
+Jetson and non-Jetson development machines. They characterize Python-side
+capture publication and multipart framing overhead, rather than end-to-end
+camera or network throughput.
 
 ## Running the local preview
 
@@ -160,6 +187,14 @@ reverse proxy before exposing it beyond a trusted network.
 | --- | --- | --- |
 | `GET /` | `text/html` | Customizable browser preview containing the live camera feed. |
 | `GET /api/health` | `application/json` | Camera state, frame availability, counters, timestamps, and background capture errors. |
+| `GET /api/camera/control` | `application/json` | Current runtime controls, declared capabilities, sensor modes, and software-HDR state. |
+| `PATCH /api/camera/control` | `application/json` | Applies a validated partial update to exposure, gain, AWB, denoise, sensor mode, or native HDR. |
+| `GET /api/camera/control/profiles` | `application/json` | Lists process-local runtime-control profiles. |
+| `PUT /api/camera/control/profiles/{name}` | `application/json` | Stores the current runtime controls under a name. |
+| `POST /api/camera/control/profiles/{name}/apply` | `application/json` | Applies a stored runtime-control profile. |
+| `DELETE /api/camera/control/profiles/{name}` | No content | Deletes a stored runtime-control profile. |
+| `GET /api/camera/software-hdr` | `application/json` | Current software-HDR configuration and resolved exposure brackets. |
+| `PUT /api/camera/software-hdr` | `application/json` | Enables, disables, or configures Jetson-side three-exposure HDR fusion. |
 | `GET /api/camera/snapshot` | `image/jpeg` | Most recent JPEG frame. Supports the optional `after` frame-number parameter. |
 | `GET /api/camera/mjpeg` | `multipart/x-mixed-replace` | Continuous MJPEG stream suitable for a browser image element or another HTTP client. |
 | `GET /docs` | `text/html` | Interactive OpenAPI documentation supplied by FastAPI. |
@@ -167,6 +202,46 @@ reverse proxy before exposing it beyond a trusted network.
 The snapshot endpoint returns `204 No Content` when the frame specified by
 `after` remains current after the configured wait period. It returns `503` when
 the camera has not supplied an image.
+
+### Runtime camera controls
+
+Runtime controls are applied through a partial JSON update. Omitted fields
+preserve their current values. Set `exposure_us` or `gain` to `null` to restore
+automatic control where it is supported.
+
+```bash
+curl -X PATCH http://localhost:8000/api/camera/control \
+  -H 'Content-Type: application/json' \
+  -d '{"exposure_us": 5000, "gain": 2.0, "awb_mode": "daylight"}'
+```
+
+Supported values are determined by `packages/camera_control/config.yml` and by
+the active JetPack driver. Exposure and gain are expressed in microseconds and
+linear gain respectively. The API rejects unsupported properties and malformed
+values with `422 Unprocessable Entity`.
+
+Changing sensor mode, switching native sensor HDR, or restoring automatic
+exposure/gain may require a capture-pipeline restart. On supported JetPack 6
+configurations, manual exposure and gain are applied live through V4L2 to avoid
+an Argus dynamic-range update limitation.
+
+### Native and software HDR
+
+Native HDR is available only when the connected sensor driver publishes a
+configured HDR sensor mode. It is selected through the standard runtime
+control endpoint.
+
+Software HDR is intended for sensors without native HDR. It captures a
+three-exposure bracket on the Jetson and fuses the images before JPEG encoding:
+
+```bash
+curl -X PUT http://localhost:8000/api/camera/software-hdr \
+  -H 'Content-Type: application/json' \
+  -d '{"enabled": true, "base_exposure_us": 5000, "settle_frames": 2}'
+```
+
+Software HDR changes sensor exposure during capture. Do not combine it with
+manual exposure or gain changes from another client while it is enabled.
 
 ## Configuration
 
@@ -177,6 +252,7 @@ built-in defaults.
 | File | Scope |
 | --- | --- |
 | [`packages/camera/config.yml`](packages/camera/config.yml) | Sensor ID, capture/output dimensions, frame rates, JPEG quality, and image transformation. |
+| [`packages/camera_control/config.yml`](packages/camera_control/config.yml) | Supported Argus properties, optional native HDR sensor modes, and initial runtime-control values. |
 | [`packages/stream/config.yml`](packages/stream/config.yml) | MJPEG multipart boundary and frame wait timeout. |
 | [`packages/api/config.yml`](packages/api/config.yml) | FastAPI metadata and snapshot wait timeout. |
 
@@ -220,8 +296,14 @@ app = create_app(
 - `MJPEGStream` does not own the camera lifecycle, allowing multiple clients to
   share the same camera instance.
 - The API disables HTTP caching for snapshots and MJPEG responses.
-- Camera startup failures are surfaced through the FastAPI lifespan and capture
-  failures are reported by the health endpoint.
+- Camera startup failures are surfaced through the FastAPI lifespan.
+- A running camera attempts backend recovery after unexpected backend errors or
+  sustained failed reads. The default policy makes three attempts with
+  exponential backoff.
+- `/api/health` exposes `recovery_attempts`, `recoveries`, and
+  `last_recovery_error`, in addition to capture counters and `last_error`.
+- If recovery is exhausted, capture stops cleanly and the final error remains
+  observable through the health endpoint.
 
 ## Troubleshooting
 
@@ -231,6 +313,9 @@ app = create_app(
 | Camera cannot open | Verify the CSI connection, `sensor_id`, JetPack installation, and availability of `nvarguscamerasrc`. |
 | Argus cannot connect | Confirm that `nvargus-daemon` is running and that the process has access to the Jetson camera stack. Containers additionally require the Argus socket and relevant device access. |
 | No image at the preview endpoint | Inspect `/api/health` for `last_error`, camera state, and frame counters. |
+| Intermittent camera failures | Inspect `/api/health` for recovery counters and `last_recovery_error`. Run `uv run imx-camera-toolkit diagnose --hardware` to verify Argus and V4L2 prerequisites. |
+| Runtime control is rejected | Inspect `GET /api/camera/control` and declare only properties and sensor modes supported by the installed `nvarguscamerasrc` driver. |
+| Software HDR cannot start | Confirm that manual sensor exposure control is available. Disable software HDR before applying external manual exposure or gain settings. |
 | Remote browser cannot connect | Confirm network reachability to port `8000` and review host firewall or reverse-proxy configuration. |
 
 ## Security considerations
