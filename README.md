@@ -98,7 +98,7 @@ Add the development branch to the consuming project's `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@develop"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.3.0"
 ]
 ```
 
