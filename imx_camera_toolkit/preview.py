@@ -8,7 +8,7 @@ from typing import Any
 import uvicorn
 
 from .api import create_app
-from .camera import Camera
+from .camera import Camera, CameraConfig
 
 
 @dataclass(frozen=True)
@@ -66,13 +66,16 @@ class CameraPreview:
             FastAPI application that owns this preview's camera lifecycle.
         """
         camera = Camera(
-            sensor_id=self.sensor_id,
-            capture_width=self.width,
-            capture_height=self.height,
-            output_width=self.width,
-            output_height=self.height,
-            capture_fps=self.fps,
-            max_fps=float(self.fps),
+            config=CameraConfig(
+                sensor_id=self.sensor_id,
+                capture_width=self.width,
+                capture_height=self.height,
+                output_width=self.width,
+                output_height=self.height,
+                fps=self.fps,
+                max_fps=float(self.fps),
+                enable_preview=True,
+            )
         )
         return create_app(camera, view_mode="simple")
 

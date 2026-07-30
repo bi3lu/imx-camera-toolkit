@@ -152,10 +152,10 @@ internal `packages` namespace remains an implementation detail and should not
 be used by new projects.
 
 ```python
-from imx_camera_toolkit import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 from imx_camera_toolkit.frames import CameraFrameSource
 
-with Camera(enable_preview=False) as camera:
+with Camera(CameraConfig(enable_preview=False)) as camera:
     source = CameraFrameSource(camera)
     frame = source.read(timeout=1.0)
 ```
@@ -171,9 +171,9 @@ For direct integration with an external AI or image-processing pipeline, use
 the stable raw-frame API:
 
 ```python
-from imx_camera_toolkit import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 
-with Camera() as camera:
+with Camera(CameraConfig()) as camera:
     frame = camera.read(timeout=1.0, copy=False)
 
     if frame is not None:
@@ -193,7 +193,7 @@ paths. `camera.latest_frame()` returns the newest raw `Frame`, while
 processing-only deployments, disable JPEG work entirely:
 
 ```python
-camera = Camera(enable_preview=False)
+camera = Camera(CameraConfig(enable_preview=False))
 ```
 
 For development, install the additional test, lint, and type-checking tools:
@@ -405,8 +405,28 @@ built-in defaults.
 | [`packages/stream/config.yml`](packages/stream/config.yml) | MJPEG multipart boundary and frame wait timeout. |
 | [`packages/api/config.yml`](packages/api/config.yml) | FastAPI metadata and snapshot wait timeout. |
 
-Constructor arguments take precedence over the relevant YAML values. For
-example, a different CSI sensor can be selected with `Camera(sensor_id=1)`.
+`CameraConfig` is the preferred immutable contract for passing and comparing
+camera settings between components. It contains the sensor, capture/output
+dimensions, `fps`, flip method, optional sensor mode, and preview setting:
+
+```python
+from imx_camera_toolkit import Camera, CameraConfig
+
+camera = Camera(
+    CameraConfig(
+        sensor_id=1,
+        capture_width=1920,
+        capture_height=1080,
+        output_width=1280,
+        output_height=720,
+        fps=30,
+        enable_preview=False,
+    )
+)
+```
+
+Constructor arguments remain available for backwards compatibility and take
+precedence over the relevant YAML or explicit configuration values.
 
 PyYAML is not a core dependency. When it is unavailable, the corresponding
 component ignores its YAML file and uses validated built-in defaults instead.
@@ -446,10 +466,10 @@ an explicit path:
 
 ```python
 from imx_camera_toolkit.api import create_app
-from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 
 app = create_app(
-    Camera(sensor_id=1),
+    Camera(CameraConfig(sensor_id=1, enable_preview=True)),
     view_mode="simple",
     view_path="/etc/imx-camera/index.html",
 )

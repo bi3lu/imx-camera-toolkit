@@ -41,15 +41,15 @@ def test_camera_preview_composes_camera_api_and_uvicorn(
 
     preview(sensor_id=1, width=1920, height=1080, fps=30, port=9000)
 
-    assert captured["camera"] == {
-        "sensor_id": 1,
-        "capture_width": 1920,
-        "capture_height": 1080,
-        "output_width": 1920,
-        "output_height": 1080,
-        "capture_fps": 30,
-        "max_fps": 30.0,
-    }
+    config = captured["camera"]["config"]
+    assert config.sensor_id == 1
+    assert config.capture_width == 1920
+    assert config.capture_height == 1080
+    assert config.output_width == 1920
+    assert config.output_height == 1080
+    assert config.fps == 30
+    assert config.max_fps == 30.0
+    assert config.enable_preview is True
     assert captured["api"]["view_mode"] == "simple"
     assert isinstance(captured["api"]["camera"], FakeCamera)
     assert captured["server"] == {

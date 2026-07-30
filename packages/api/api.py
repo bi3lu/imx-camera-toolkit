@@ -19,7 +19,7 @@ try:
 except ImportError:
     yaml = None
 
-from packages.camera.camera import Camera
+from packages.camera.camera import Camera, CameraConfig
 from packages.camera_control.camera_control import (
     CameraController,
     ProfileNotFoundError,
@@ -334,7 +334,9 @@ def create_app(
     Raises:
         RuntimeError: If FastAPI is unavailable in the current environment.
     """
-    shared_camera = camera if camera is not None else Camera()
+    shared_camera = (
+        camera if camera is not None else Camera(CameraConfig(enable_preview=True))
+    )
     camera_controller = CameraController(
         runtime_handler=lambda update: shared_camera.apply_argus_properties(
             update.source_properties,
@@ -404,7 +406,7 @@ def create_app(
             JSON-ready control state, available source properties, and profiles.
         """
         state = camera_controller.get_runtime_state()
-        state["capture_fps"] = shared_camera.config.capture_fps
+        state["capture_fps"] = shared_camera.config.fps
         state["software_hdr"] = shared_camera.software_hdr_state
         return state
 

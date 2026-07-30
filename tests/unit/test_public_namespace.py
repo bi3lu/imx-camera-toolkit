@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from imx_camera_toolkit import Camera as RootCamera
 from imx_camera_toolkit import (
+    CameraConfig,
     CameraDependencyError,
     CameraFrame,
     CameraPreview,
@@ -18,6 +19,7 @@ from imx_camera_toolkit.frames import CameraFrameSource, FrameSource
 from imx_camera_toolkit.stream import MJPEGStream
 from packages.api.api import create_app as InternalCreateApp
 from packages.camera.camera import Camera as InternalCamera
+from packages.camera.config import CameraConfig as InternalCameraConfig
 from packages.camera.errors import CameraDependencyError as InternalDependencyError
 from packages.camera.models import CameraFrame as InternalCameraFrame
 from packages.camera.models import Frame as InternalFrame
@@ -37,6 +39,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert create_app is InternalCreateApp
     assert RootCamera is InternalCamera
     assert Camera is InternalCamera
+    assert CameraConfig is InternalCameraConfig
     assert CameraDependencyError is InternalDependencyError
     assert CameraFrame is InternalCameraFrame
     assert Frame is InternalFrame

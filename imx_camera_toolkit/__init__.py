@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .camera import Camera, CameraDependencyError, CameraFrame, Frame
+from .camera import Camera, CameraConfig, CameraDependencyError, CameraFrame, Frame
 
 if TYPE_CHECKING:
     from .preview import CameraPreview as CameraPreview
@@ -18,6 +18,7 @@ __version__ = "0.3.1"
 
 __all__ = [
     "Camera",
+    "CameraConfig",
     "CameraDependencyError",
     "CameraFrame",
     "Frame",

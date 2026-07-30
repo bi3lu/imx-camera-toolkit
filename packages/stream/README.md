@@ -23,10 +23,10 @@ Start the camera once in your application lifecycle, then create a stream for a
 consumer:
 
 ```python
-from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 from imx_camera_toolkit.stream import MJPEGStream
 
-camera = Camera()
+camera = Camera(CameraConfig(enable_preview=True))
 camera.start()
 
 try:

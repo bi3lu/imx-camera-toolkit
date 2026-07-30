@@ -112,9 +112,9 @@ use the factory:
 
 ```python
 from imx_camera_toolkit.api import create_app
-from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 
-camera = Camera(sensor_id=1)
+camera = Camera(CameraConfig(sensor_id=1, enable_preview=True))
 app = create_app(
     camera,
     config_path="/etc/imx-camera/api.yml",

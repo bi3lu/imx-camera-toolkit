@@ -78,9 +78,18 @@ pipelines. It returns a `Frame` containing an opaque processed BGR image and
 metadata. It does not encode JPEG data and does not perform inference.
 
 ```python
-from imx_camera_toolkit import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 
-with Camera() as camera:
+config = CameraConfig(
+    sensor_id=0,
+    capture_width=1920,
+    capture_height=1080,
+    output_width=1280,
+    output_height=720,
+    fps=30,
+)
+
+with Camera(config) as camera:
     frame = camera.read()
 
     if frame is not None:
@@ -147,7 +156,7 @@ Applications that do not need a browser preview or MJPEG output can remove JPEG
 encoding from the capture loop:
 
 ```python
-camera = Camera(enable_preview=False)
+camera = Camera(CameraConfig(enable_preview=False))
 ```
 
 Raw frames remain available through `read()` and `latest_frame()`, while
@@ -159,9 +168,9 @@ pipelines.
 ## JPEG preview API
 
 ```python
-from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 
-with Camera() as camera:
+with Camera(CameraConfig(enable_preview=True)) as camera:
     frame_number, jpeg = camera.wait_for_jpeg(0, timeout=2.0)
 
     if jpeg is not None:
@@ -173,9 +182,9 @@ with Camera() as camera:
 effect. Always call `stop()` when not using the context manager.
 
 ```python
-from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit import Camera, CameraConfig
 
-camera = Camera()
+camera = Camera(CameraConfig(enable_preview=True))
 camera.start()
 
 try:
@@ -187,15 +196,37 @@ finally:
 
 ## Configuration
 
-Default settings live in [config.yml](config.yml) and are loaded when
-`Camera()` is created. The file controls the CSI sensor ID, capture and output
-resolution, frame rates, JPEG quality, and `nvvidconv` flip method.
+`CameraConfig` is the preferred explicit configuration contract. It is a frozen
+and slotted dataclass, so it is safe to compare, serialize with
+`dataclasses.asdict`, and pass between application components. It controls the
+CSI sensor ID, capture and output resolution, frame rate, sensor mode,
+`nvvidconv` flip method, and optional JPEG preview.
+
+```python
+from imx_camera_toolkit import Camera, CameraConfig
+
+config = CameraConfig(
+    sensor_id=1,
+    capture_width=1920,
+    capture_height=1080,
+    output_width=1280,
+    output_height=720,
+    fps=30,
+    flip_method=0,
+    enable_preview=False,
+)
+camera = Camera(config)
+```
+
+Default settings live in [config.yml](config.yml) and are loaded only when
+`Camera()` is created without an explicit `CameraConfig`.
 
 If the file is missing, unreadable, malformed, or contains invalid values, the
 camera uses its built-in defaults. The entire configuration falls back to those
 defaults to avoid starting a camera with a partially invalid setup.
 
-Constructor arguments override values loaded from YAML:
+Legacy constructor arguments remain supported and override YAML or an explicit
+configuration during migration:
 
 ```python
 from imx_camera_toolkit.camera import Camera

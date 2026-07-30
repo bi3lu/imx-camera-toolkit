@@ -7,7 +7,7 @@ import threading
 import time
 from collections.abc import Sequence
 from copy import copy as copy_image
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path
 from typing import Any
@@ -82,7 +82,9 @@ class Camera:
     preview and streaming consumers.
 
     Args:
-        quality: JPEG quality from 0 to 100. Overrides ``config.yml``.
+        config: Immutable static camera configuration. When omitted, settings
+            are loaded from ``config.yml`` with built-in defaults as fallback.
+        quality: JPEG quality from 0 to 100. Legacy override for ``config``.
         max_fps: Maximum JPEG encoding rate in frames per second. Overrides
             ``config.yml``.
         config_path: Optional path to a YAML configuration file.
@@ -92,15 +94,18 @@ class Camera:
         capture_height: Height captured directly from the sensor, in pixels.
         output_width: Width delivered to capture backends, in pixels.
         output_height: Height delivered to capture backends, in pixels.
-        capture_fps: Camera capture rate, in frames per second.
+        fps: Camera capture rate, in frames per second.
+        capture_fps: Deprecated alias for ``fps``.
         flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
         argus_properties: Initial validated ``nvarguscamerasrc`` properties.
-        enable_preview: Whether to encode JPEG frames for preview and streaming.
+        enable_preview: Legacy override for JPEG preview encoding. Prefer
+            :attr:`CameraConfig.enable_preview` for new code.
     """
 
     def __init__(
         self,
-        quality: int | None = None,
+        config: CameraConfig | int | None = None,
+        quality: int | float | None = None,
         max_fps: float | None = None,
         *,
         config_path: str | Path | None = None,
@@ -109,54 +114,101 @@ class Camera:
         capture_height: int | None = None,
         output_width: int | None = None,
         output_height: int | None = None,
+        fps: int | None = None,
         capture_fps: int | None = None,
         flip_method: int | None = None,
         argus_properties: Sequence[str] = (),
         recovery_policy: CameraRecoveryPolicy | None = None,
-        enable_preview: bool = True,
+        enable_preview: bool | None = None,
     ) -> None:
         """Initialize a camera without opening the capture source."""
-        if not isinstance(enable_preview, bool):
+        if enable_preview is not None and not isinstance(enable_preview, bool):
             raise ValueError("enable_preview must be a boolean")
 
-        loaded_config = load_camera_config(config_path)
-        config = CameraConfig(
-            quality=loaded_config.quality if quality is None else quality,
-            max_fps=loaded_config.max_fps if max_fps is None else max_fps,
-            sensor_id=loaded_config.sensor_id if sensor_id is None else sensor_id,
+        if fps is not None and capture_fps is not None:
+            raise ValueError("use either fps or legacy capture_fps, not both")
+
+        if isinstance(config, int) and not isinstance(config, bool):
+            if quality is None:
+                quality = config
+            else:
+                max_fps = quality
+                quality = config
+            config = None
+
+        if quality is not None and (
+            isinstance(quality, bool) or not isinstance(quality, int)
+        ):
+            raise ValueError("quality must be an integer")
+
+        if config is not None and not isinstance(config, CameraConfig):
+            raise TypeError("config must be a CameraConfig or None")
+
+        if config is not None and config_path is not None:
+            raise ValueError("config and config_path cannot be used together")
+
+        base_config = config if config is not None else load_camera_config(config_path)
+        resolved_fps = fps if fps is not None else capture_fps
+        resolved_config = replace(
+            base_config,
+            quality=base_config.quality if quality is None else quality,
+            max_fps=base_config.max_fps if max_fps is None else max_fps,
+            sensor_id=base_config.sensor_id if sensor_id is None else sensor_id,
             capture_width=(
-                loaded_config.capture_width if capture_width is None else capture_width
+                base_config.capture_width if capture_width is None else capture_width
             ),
             capture_height=(
-                loaded_config.capture_height
+                base_config.capture_height
                 if capture_height is None
                 else capture_height
             ),
             output_width=(
-                loaded_config.output_width if output_width is None else output_width
+                base_config.output_width if output_width is None else output_width
             ),
             output_height=(
-                loaded_config.output_height
+                base_config.output_height
                 if output_height is None
                 else output_height
             ),
-            capture_fps=(
-                loaded_config.capture_fps if capture_fps is None else capture_fps
-            ),
+            fps=base_config.fps if resolved_fps is None else resolved_fps,
             flip_method=(
-                loaded_config.flip_method if flip_method is None else flip_method
+                base_config.flip_method if flip_method is None else flip_method
+            ),
+            enable_preview=(
+                base_config.enable_preview
+                if enable_preview is None
+                else enable_preview
             ),
         )
-        validate_camera_config(config)
+        validate_camera_config(resolved_config)
 
-        self._config = config
-        self._enable_preview = enable_preview
+        self._config = resolved_config
+        self._enable_preview = resolved_config.enable_preview
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
-        self._argus_properties = normalize_argus_properties(argus_properties)
+        if resolved_config.sensor_mode is not None and any(
+            property_value.startswith("sensor-mode=")
+            for property_value in argus_properties
+        ):
+            raise ValueError(
+                "CameraConfig.sensor_mode cannot be combined with an "
+                "argus_properties sensor-mode setting"
+            )
+
+        config_properties = (
+            ()
+            if resolved_config.sensor_mode is None
+            else (f"sensor-mode={resolved_config.sensor_mode}",)
+        )
+        self._argus_properties = normalize_argus_properties(
+            (*config_properties, *argus_properties)
+        )
         self._pipeline = self._build_pipeline(self._argus_properties)
-        self._publisher = JPEGPublisher(config.quality, config.max_fps)
+        self._publisher = JPEGPublisher(
+            resolved_config.quality,
+            resolved_config.preview_fps,
+        )
         self._raw_publisher = RawFramePublisher()
-        self._v4l2_controls = V4L2Controls(config.sensor_id)
+        self._v4l2_controls = V4L2Controls(resolved_config.sensor_id)
         self._software_hdr_settings = SoftwareHDRSettings()
         self._software_hdr_processor: SoftwareHDRProcessor | None = None
         self._software_hdr_lock = threading.RLock()
@@ -180,7 +232,7 @@ class Camera:
             capture_height=self._config.capture_height,
             output_width=self._config.output_width,
             output_height=self._config.output_height,
-            framerate=self._config.capture_fps,
+            framerate=self._config.fps,
             flip_method=self._config.flip_method,
             argus_properties=argus_properties,
         )
@@ -728,7 +780,7 @@ class Camera:
     ) -> SoftwareHDRProcessor:
         """Create a processor whose longest bracket fits the capture period."""
         resolved_settings = settings or self._software_hdr_settings
-        max_exposure_us = max(100, 1_000_000 // self._config.capture_fps)
+        max_exposure_us = max(100, 1_000_000 // self._config.fps)
         return SoftwareHDRProcessor(resolved_settings, max_exposure_us)
 
     def reconfigure_argus_properties(self, properties: Sequence[str]) -> None:
