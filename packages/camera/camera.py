@@ -6,7 +6,9 @@ import logging
 import threading
 import time
 from collections.abc import Sequence
+from copy import copy as copy_image
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ from .controls import (
     manual_control_properties,
     non_manual_control_properties,
 )
+from .models import CameraFrame
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
@@ -70,11 +73,12 @@ class CameraRecoveryPolicy:
 
 
 class Camera:
-    """Coordinate one CSI camera pipeline and publish its newest JPEG frame.
+    """Coordinate one CSI camera pipeline and publish its newest BGR frame.
 
     ``Camera`` owns the lifecycle of exactly one capture backend. It reads BGR
-    frames, optionally passes them through software HDR, and delegates JPEG
-    encoding and consumer synchronization to :class:`JPEGPublisher`.
+    frames, optionally passes them through software HDR, then publishes one
+    newest raw frame for external consumers and optionally encodes JPEG for
+    preview and streaming consumers.
 
     Args:
         quality: JPEG quality from 0 to 100. Overrides ``config.yml``.
@@ -334,12 +338,13 @@ class Camera:
 
                 consecutive_read_failures = 0
                 self.frames_captured += 1
+                captured_at = time.monotonic()
                 processed_frame = self._process_frame(frame)
 
                 if processed_frame is None:
                     continue
 
-                self._raw_publisher.publish(processed_frame)
+                self._raw_publisher.publish(processed_frame, captured_at=captured_at)
                 self._publisher.publish(processed_frame)
 
             except Exception as error:
@@ -458,6 +463,72 @@ class Camera:
             previous_frame_number,
             timeout,
             lambda: self.running,
+        )
+
+    def read(self, timeout: float = 2.0, copy: bool = True) -> CameraFrame | None:
+        """Return the newest available processed BGR frame.
+
+        The camera retains exactly one raw frame. This method never creates a
+        consumer queue, so a caller may receive a newer frame than one observed
+        by another consumer and older frames may be skipped. It neither encodes
+        JPEG data nor invokes image inference.
+
+        By default, the BGR image is copied and the caller exclusively owns the
+        returned image buffer. With ``copy=False``, the returned image is the
+        publisher's shared BGR payload and must be treated as read-only. The
+        shared form avoids a copy for external TensorRT, DeepStream, OpenCV, or
+        CUDA pipelines.
+
+        Args:
+            timeout: Maximum wait for the first available raw frame, in seconds.
+            copy: Whether to return an independent image copy.
+
+        Returns:
+            The newest available raw frame, or ``None`` when no frame arrives
+            before the timeout or capture stops while waiting.
+
+        Raises:
+            RuntimeError: If the camera is not running.
+            ValueError: If ``timeout`` or ``copy`` is invalid, or the image
+                payload cannot be copied.
+        """
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise ValueError("timeout must be a finite non-negative number")
+
+        if not isfinite(timeout) or timeout < 0:
+            raise ValueError("timeout must be a finite non-negative number")
+
+        if not isinstance(copy, bool):
+            raise ValueError("copy must be a boolean")
+
+        if not self.running:
+            raise RuntimeError("camera is not running; call start() before read()")
+
+        frame = self._raw_publisher.wait_for_camera_frame(
+            previous_frame_number=-1,
+            timeout=timeout,
+            is_running=lambda: self.running,
+        )
+
+        if frame is None:
+            return None
+
+        if not copy:
+            return frame
+
+        try:
+            image = copy_image(frame.image)
+
+        except Exception as error:
+            raise ValueError(
+                "camera frame image cannot be copied; use read(copy=False) "
+                "only when the consumer can treat the shared image as read-only"
+            ) from error
+
+        return CameraFrame(
+            sequence=frame.sequence,
+            image=image,
+            captured_at=frame.captured_at,
         )
 
     def apply_argus_properties(
@@ -651,6 +722,7 @@ def get_camera(**kwargs: Any) -> Camera:
 
 __all__ = [
     "Camera",
+    "CameraFrame",
     "CameraConfig",
     "CameraRecoveryPolicy",
     "DEFAULT_CAMERA_CONFIG",

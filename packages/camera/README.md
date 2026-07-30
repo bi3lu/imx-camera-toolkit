@@ -67,7 +67,38 @@ Install the project dependencies with:
 uv sync
 ```
 
-## Quick start
+## Stable raw-frame API
+
+`Camera.read()` is the primary integration API for external image-processing
+pipelines. It returns a `CameraFrame` containing a processed BGR image, a
+monotonic sequence identifier, and capture timestamp. It does not encode JPEG
+data and does not perform inference.
+
+```python
+from imx_camera_toolkit import Camera
+
+with Camera() as camera:
+    frame = camera.read()
+
+    if frame is not None:
+        result = my_tensor_rt_engine(frame.image)
+```
+
+The camera retains exactly one raw frame. `read()` returns the newest available
+frame, never creates an unbounded queue, and may skip older frames when capture
+runs faster than the consumer. It returns `None` when no frame arrives before
+the timeout or capture stops while waiting.
+
+```python
+frame = camera.read(timeout=1.0, copy=False)
+```
+
+By default, `copy=True` returns an independent BGR image copy owned by the
+caller. With `copy=False`, `frame.image` is the camera's shared image payload.
+This avoids a copy for TensorRT, DeepStream, OpenCV, and CUDA pipelines, but
+the caller must treat the shared payload as read-only.
+
+## JPEG preview API
 
 ```python
 from imx_camera_toolkit.camera import Camera

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
+from time import monotonic
+
+from ..models import CameraFrame
 
 
 class RawFramePublisher:
@@ -18,14 +21,14 @@ class RawFramePublisher:
     def __init__(self) -> None:
         """Initialize an empty raw-frame slot."""
         self._condition = threading.Condition()
-        self._frame: object | None = None
+        self._frame: CameraFrame | None = None
         self._frame_number = 0
 
     @property
     def frame(self) -> object | None:
         """object | None: Newest processed BGR frame without a copy."""
         with self._condition:
-            return self._frame
+            return self._frame.image if self._frame is not None else None
 
     @property
     def frame_number(self) -> int:
@@ -33,20 +36,53 @@ class RawFramePublisher:
         with self._condition:
             return self._frame_number
 
-    def publish(self, frame: object) -> int:
+    def publish(self, frame: object, *, captured_at: float | None = None) -> int:
         """Publish a processed BGR frame and wake waiting consumers.
 
         Args:
             frame: Frame payload retained by reference without mutation or copy.
+            captured_at: Monotonic acquisition timestamp. When omitted, records
+                the time at which the frame is published.
 
         Returns:
             Identifier assigned to the published raw frame.
         """
         with self._condition:
-            self._frame = frame
             self._frame_number += 1
+            self._frame = CameraFrame(
+                sequence=self._frame_number,
+                image=frame,
+                captured_at=monotonic() if captured_at is None else captured_at,
+            )
             self._condition.notify_all()
             return self._frame_number
+
+    def wait_for_camera_frame(
+        self,
+        previous_frame_number: int,
+        timeout: float,
+        is_running: Callable[[], bool],
+    ) -> CameraFrame | None:
+        """Wait for a newer frame and return its metadata atomically.
+
+        Args:
+            previous_frame_number: Identifier already consumed by the caller.
+            timeout: Maximum wait time in seconds.
+            is_running: Callable reporting whether camera capture remains active.
+
+        Returns:
+            The newest raw camera frame, or ``None`` when no frame is available.
+        """
+        with self._condition:
+            self._condition.wait_for(
+                lambda: (
+                    self._frame is not None
+                    and self._frame_number != previous_frame_number
+                )
+                or not is_running(),
+                timeout=timeout,
+            )
+            return self._frame
 
     def wait_for_frame(
         self,
@@ -64,13 +100,15 @@ class RawFramePublisher:
         Returns:
             Newest frame identifier and frame payload, when available.
         """
-        with self._condition:
-            self._condition.wait_for(
-                lambda: self._frame_number != previous_frame_number
-                or not is_running(),
-                timeout=timeout,
-            )
-            return self._frame_number, self._frame
+        frame = self.wait_for_camera_frame(
+            previous_frame_number,
+            timeout,
+            is_running,
+        )
+        if frame is None:
+            return self.frame_number, None
+
+        return frame.sequence, frame.image
 
     def notify_waiters(self) -> None:
         """Wake consumers after camera shutdown or a capture failure."""

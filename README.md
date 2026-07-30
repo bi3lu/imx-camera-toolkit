@@ -135,6 +135,24 @@ from imx_camera_toolkit.camera_control import CameraController
 from imx_camera_toolkit.stream import MJPEGStream
 ```
 
+For direct integration with an external AI or image-processing pipeline, use
+the stable raw-frame API:
+
+```python
+from imx_camera_toolkit import Camera
+
+with Camera() as camera:
+    frame = camera.read(timeout=1.0, copy=False)
+
+    if frame is not None:
+        result = my_tensor_rt_engine(frame.image)
+```
+
+`read()` retains only the newest BGR frame, may skip stale frames, and never
+performs JPEG encoding or inference. The default `copy=True` gives the caller
+an independent image buffer; `copy=False` returns a read-only shared payload
+for zero-copy-oriented pipelines.
+
 For development, install the additional test, lint, and type-checking tools:
 
 ```bash

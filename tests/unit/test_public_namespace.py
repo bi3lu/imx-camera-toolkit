@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from imx_camera_toolkit import CameraPreview, __version__, preview
+from imx_camera_toolkit import Camera as RootCamera
+from imx_camera_toolkit import CameraFrame, CameraPreview, __version__, preview
 from imx_camera_toolkit.api import create_app
 from imx_camera_toolkit.camera import Camera
 from imx_camera_toolkit.camera_control import CameraController
@@ -10,6 +11,7 @@ from imx_camera_toolkit.stream import MJPEGStream
 from imx_camera_toolkit.vision import SyntheticFrameSource, VisionPipeline
 from packages.api.api import create_app as InternalCreateApp
 from packages.camera.camera import Camera as InternalCamera
+from packages.camera.models import CameraFrame as InternalCameraFrame
 from packages.camera_control.camera_control import (
     CameraController as InternalController,
 )
@@ -26,7 +28,9 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert CameraPreview.__module__ == "imx_camera_toolkit.preview"
     assert preview.__module__ == "imx_camera_toolkit.preview"
     assert create_app is InternalCreateApp
+    assert RootCamera is InternalCamera
     assert Camera is InternalCamera
+    assert CameraFrame is InternalCameraFrame
     assert CameraController is InternalController
     assert MJPEGStream is InternalMJPEGStream
     assert SyntheticFrameSource is InternalSyntheticFrameSource

@@ -4,6 +4,7 @@ from packages.camera.camera import (
     DEFAULT_CAMERA_CONFIG,
     Camera,
     CameraConfig,
+    CameraFrame,
     CameraRecoveryPolicy,
     SoftwareHDRSettings,
     build_gstreamer_pipeline,
@@ -14,6 +15,7 @@ from packages.camera.camera import (
 __all__ = [
     "Camera",
     "CameraConfig",
+    "CameraFrame",
     "CameraRecoveryPolicy",
     "DEFAULT_CAMERA_CONFIG",
     "SoftwareHDRSettings",
