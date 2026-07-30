@@ -93,7 +93,7 @@ uv run python -c "import cv2; print(cv2.__version__)"
 
 ## Using the toolkit as a Git dependency
 
-Add the development branch to the consuming project's `pyproject.toml`:
+Add the stable branch to the consuming project's `pyproject.toml`:
 
 ```toml
 [project]
