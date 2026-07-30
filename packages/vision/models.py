@@ -1,4 +1,4 @@
-"""Immutable data models exchanged by the vision pipeline."""
+"""Shallowly immutable data models exchanged by the vision pipeline."""
 
 from __future__ import annotations
 
@@ -17,13 +17,14 @@ def _freeze_mapping(values: Mapping[str, object]) -> Mapping[str, object]:
 class Frame:
     """One acquired image and its acquisition metadata.
 
-    The image payload remains intentionally opaque. This keeps the pipeline
-    compatible with NumPy/OpenCV images, CUDA-backed images, tensors, or custom
-    image containers without imposing an AI framework dependency.
+    The image payload remains intentionally opaque and is not copied. This
+    keeps the pipeline compatible with NumPy/OpenCV images, CUDA-backed images,
+    tensors, or custom image containers without imposing an AI framework
+    dependency.
 
     Args:
         sequence: Monotonically increasing identifier assigned by the pipeline.
-        image: Source image payload.
+        image: Source image payload. The pipeline never mutates this payload.
         captured_at: Monotonic timestamp recorded when the frame is acquired.
         metadata: Optional source-specific, JSON-compatible metadata.
     """
@@ -34,7 +35,13 @@ class Frame:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """Validate identifiers and isolate metadata from caller mutation."""
+        """Validate identifiers and isolate metadata from caller mutation.
+
+        ``Frame`` is shallowly immutable: metadata is copied, but ``image`` is
+        retained by reference for zero-copy image processing. Sources and
+        processors must not mutate a published image payload after handing it
+        to the pipeline.
+        """
         if (
             isinstance(self.sequence, bool)
             or not isinstance(self.sequence, int)
@@ -50,13 +57,20 @@ class Frame:
 
 @dataclass(frozen=True, slots=True)
 class BoundingBox:
-    """Pixel-aligned detection rectangle.
+    """Pixel-aligned detection rectangle in original source-frame coordinates.
+
+    Every ``Detection.box`` uses pixels of the original :class:`Frame.image`
+    received by the processor. A processor that resizes, crops, or letterboxes
+    an image for model inference must map model-space coordinates back to this
+    source-frame coordinate system before creating a ``BoundingBox``. Overlay
+    renderers may therefore draw the box directly on the source frame without
+    ambiguity.
 
     Args:
-        x: Left coordinate in pixels.
-        y: Top coordinate in pixels.
-        width: Rectangle width in pixels.
-        height: Rectangle height in pixels.
+        x: Left coordinate in original source-frame pixels.
+        y: Top coordinate in original source-frame pixels.
+        width: Rectangle width in original source-frame pixels.
+        height: Rectangle height in original source-frame pixels.
     """
 
     x: int
@@ -84,7 +98,7 @@ class Detection:
     Args:
         label: Human-readable predicted class.
         confidence: Normalized confidence from 0.0 to 1.0.
-        box: Bounding box in pixels.
+        box: Bounding box in original source-frame pixel coordinates.
         attributes: Additional model-specific values.
     """
 
@@ -130,7 +144,11 @@ class InferenceResult:
     completed_at: float = field(default_factory=time.monotonic)
 
     def __post_init__(self) -> None:
-        """Validate the result identity and isolate its metadata."""
+        """Validate the result identity and isolate its metadata.
+
+        The model is shallowly immutable. ``values`` is copied, while values
+        stored inside that mapping remain owned by the caller.
+        """
         if (
             isinstance(self.frame_sequence, bool)
             or not isinstance(self.frame_sequence, int)

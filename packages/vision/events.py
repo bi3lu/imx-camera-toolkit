@@ -30,6 +30,17 @@ class PipelineEventType(str, Enum):
     STOPPED = "stopped"
 
 
+class EventDispatchMode(str, Enum):
+    """Delivery policy used by :class:`EventBus`.
+
+    ``SYNCHRONOUS`` is the only currently implemented mode. It makes event
+    timing deterministic, but handlers execute on a pipeline worker thread and
+    must only enqueue or signal work rather than perform blocking I/O.
+    """
+
+    SYNCHRONOUS = "synchronous"
+
+
 @dataclass(frozen=True, slots=True)
 class PipelineEvent:
     """A lifecycle, frame, result, or error notification.
@@ -70,12 +81,40 @@ PipelineEventHandler = Callable[[PipelineEvent], None]
 
 
 class EventBus:
-    """Publish events to subscribers while isolating listener failures."""
+    """Publish events to subscribers while isolating listener failures.
 
-    def __init__(self) -> None:
+    Event handlers execute synchronously in the emitting thread. In a vision
+    pipeline, a ``FRAME_CAPTURED`` handler runs on capture and a
+    ``RESULT_AVAILABLE`` handler runs on processing. Handlers must not perform
+    network, disk, or long-running work; enqueue the event for another worker
+    instead.
+
+    Args:
+        mode: Explicit event-dispatch policy. Only ``SYNCHRONOUS`` is currently
+            supported.
+    """
+
+    def __init__(
+        self,
+        mode: EventDispatchMode | str = EventDispatchMode.SYNCHRONOUS,
+    ) -> None:
         """Initialize an empty, thread-safe subscription list."""
+        try:
+            resolved_mode = EventDispatchMode(mode)
+        except ValueError as error:
+            raise ValueError("only synchronous event dispatch is supported") from error
+
+        if resolved_mode is not EventDispatchMode.SYNCHRONOUS:
+            raise ValueError("only synchronous event dispatch is supported")
+
+        self._mode = resolved_mode
         self._handlers: list[PipelineEventHandler] = []
         self._lock = threading.RLock()
+
+    @property
+    def mode(self) -> EventDispatchMode:
+        """EventDispatchMode: Delivery policy selected for this event bus."""
+        return self._mode
 
     def subscribe(self, handler: PipelineEventHandler) -> Callable[[], None]:
         """Register an event handler and return an unsubscribe callback.

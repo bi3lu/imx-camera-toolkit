@@ -16,6 +16,25 @@ class FrameProcessor(Protocol):
         ...
 
 
+@runtime_checkable
+class ManagedFrameProcessor(FrameProcessor, Protocol):
+    """Optional resource lifecycle for model-backed frame processors.
+
+    Implement this protocol only when a processor needs to load an engine,
+    create a CUDA context, allocate buffers, or release external resources.
+    Plain :class:`FrameProcessor` implementations remain valid and require no
+    no-op lifecycle methods.
+    """
+
+    def open(self) -> None:
+        """Allocate processor resources before pipeline capture starts."""
+        ...
+
+    def close(self) -> None:
+        """Release processor resources after pipeline workers stop."""
+        ...
+
+
 class NoopFrameProcessor:
     """Minimal processor useful for pipeline wiring, testing, and benchmarking."""
 

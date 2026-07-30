@@ -25,7 +25,7 @@ from .controls import (
 )
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
-from .publishing import JPEGPublisher, opencv_available
+from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +144,7 @@ class Camera:
         self._argus_properties = normalize_argus_properties(argus_properties)
         self._pipeline = self._build_pipeline(self._argus_properties)
         self._publisher = JPEGPublisher(config.quality, config.max_fps)
+        self._raw_publisher = RawFramePublisher()
         self._v4l2_controls = V4L2Controls(config.sensor_id)
         self._software_hdr_settings = SoftwareHDRSettings()
         self._software_hdr_processor: SoftwareHDRProcessor | None = None
@@ -225,6 +226,20 @@ class Camera:
     def jpeg(self) -> bytes | None:
         """bytes | None: Latest JPEG frame, or ``None`` when unavailable."""
         return self._publisher.jpeg
+
+    @property
+    def raw_frame_number(self) -> int:
+        """int: Identifier of the newest processed raw BGR frame."""
+        return self._raw_publisher.frame_number
+
+    @property
+    def raw_frame(self) -> object | None:
+        """object | None: Newest processed raw BGR frame without a copy.
+
+        Consumers must treat this payload as read-only. It is shared with JPEG
+        encoding and vision consumers to avoid needless image-copy overhead.
+        """
+        return self._raw_publisher.frame
 
     @property
     def frames_encoded(self) -> int:
@@ -324,6 +339,7 @@ class Camera:
                 if processed_frame is None:
                     continue
 
+                self._raw_publisher.publish(processed_frame)
                 self._publisher.publish(processed_frame)
 
             except Exception as error:
@@ -333,6 +349,7 @@ class Camera:
                     self._running.clear()
 
         self._publisher.notify_waiters()
+        self._raw_publisher.notify_waiters()
 
     def _recover_backend(self) -> bool:
         """Reopen the capture backend after a transient capture failure.
@@ -409,6 +426,35 @@ class Camera:
             raise ValueError("timeout must be greater than or equal to zero")
 
         return self._publisher.wait_for_jpeg(
+            previous_frame_number,
+            timeout,
+            lambda: self.running,
+        )
+
+    def wait_for_raw_frame(
+        self,
+        previous_frame_number: int,
+        timeout: float = 2.0,
+    ) -> tuple[int, object | None]:
+        """Wait for a processed BGR frame newer than a known frame number.
+
+        The returned payload is not copied. Treat it as read-only; the camera
+        and Vision Pipeline retain only the most recent raw frame reference.
+
+        Args:
+            previous_frame_number: Frame number already consumed by the caller.
+            timeout: Maximum time to wait in seconds.
+
+        Returns:
+            Newest raw frame number and BGR payload, when available.
+
+        Raises:
+            ValueError: If ``timeout`` is negative.
+        """
+        if timeout < 0:
+            raise ValueError("timeout must be greater than or equal to zero")
+
+        return self._raw_publisher.wait_for_frame(
             previous_frame_number,
             timeout,
             lambda: self.running,
@@ -573,6 +619,7 @@ class Camera:
         with self._lifecycle_lock:
             self._running.clear()
             self._publisher.notify_waiters()
+            self._raw_publisher.notify_waiters()
             thread = self._thread
 
             if thread is not None and thread is not threading.current_thread():
@@ -585,6 +632,7 @@ class Camera:
             self._release_backend()
             self._thread = None
             self._publisher.clear()
+            self._raw_publisher.clear()
 
     def __enter__(self) -> Camera:
         """Open the camera and return this instance."""
