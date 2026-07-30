@@ -70,12 +70,34 @@ required because it integrates with NVIDIA's camera and GStreamer stack.
 
 ## Installation
 
+Install the core package when the application only needs camera capture and
+raw-frame integration:
+
+```bash
+uv add imx-camera-toolkit
+```
+
+The core package has no PyPI runtime dependencies. JetPack supplies the system
+OpenCV build with GStreamer support required for camera capture.
+
+Install the optional browser preview stack when FastAPI and Uvicorn are needed:
+
+```bash
+uv add "imx-camera-toolkit[preview]"
+```
+
 Clone the repository and create a virtual environment that can access the
 system OpenCV installation:
 
 ```bash
 uv venv --system-site-packages
 uv sync
+```
+
+For local browser preview development, include the preview extra:
+
+```bash
+uv sync --extra preview
 ```
 
 If a project virtual environment already exists without system package access,
@@ -114,6 +136,15 @@ On Jetson, create the consuming project's environment with
 build remains available. For reproducible production deployments, pin a
 release tag or commit rather than a moving branch.
 
+To consume the Git dependency with the browser-preview extra, declare it as:
+
+```toml
+[project]
+dependencies = [
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.3.1"
+]
+```
+
 ## Public Python namespace
 
 External applications should import from `imx_camera_toolkit`. The repository
@@ -135,10 +166,39 @@ from imx_camera_toolkit.camera_control import CameraController
 from imx_camera_toolkit.stream import MJPEGStream
 ```
 
+For direct integration with an external AI or image-processing pipeline, use
+the stable raw-frame API:
+
+```python
+from imx_camera_toolkit import Camera
+
+with Camera() as camera:
+    frame = camera.read(timeout=1.0, copy=False)
+
+    if frame is not None:
+        result = my_tensor_rt_engine(frame.image)
+```
+
+`read()` returns a formal `Frame` with an opaque `image`, monotonic `sequence`,
+nanosecond `timestamp_ns`, optional hardware `capture_timestamp_ns`, dimensions,
+and pixel `format`. It retains only the newest BGR frame, may skip stale frames,
+and never performs JPEG encoding or inference. The default `copy=True` gives
+the caller an independent image buffer; `copy=False` returns a read-only shared
+payload for zero-copy-oriented pipelines.
+
+Raw application frames and browser preview JPEGs use separate publication
+paths. `camera.latest_frame()` returns the newest raw `Frame`, while
+`camera.latest_jpeg()` returns the newest encoded preview image. For
+processing-only deployments, disable JPEG work entirely:
+
+```python
+camera = Camera(enable_preview=False)
+```
+
 For development, install the additional test, lint, and type-checking tools:
 
 ```bash
-uv sync --group dev
+uv sync --extra preview --group dev
 ```
 
 ## Packaging
@@ -163,7 +223,7 @@ sensor or a Jetson camera stack.
 Install development dependencies and run the standard quality gate:
 
 ```bash
-uv sync --group dev
+uv sync --extra preview --group dev
 uv run ruff check .
 uv run mypy imx_camera_toolkit packages tests
 uv run pytest -m "not benchmark"
@@ -206,7 +266,48 @@ camera or network throughput.
 
 ## Running the local preview
 
-Start the API server from the repository root:
+Install the optional preview dependencies before starting a browser server:
+
+```bash
+uv sync --extra preview
+```
+
+For the simplest Python integration, start a preview through the public facade:
+
+```python
+from imx_camera_toolkit import preview
+
+preview()
+```
+
+The facade starts a simple browser view and releases camera resources during
+server shutdown. Its defaults are sensor `0`, `1280x720`, `30` FPS,
+`0.0.0.0`, and port `8000`.
+
+Configure the camera and server explicitly when needed:
+
+```python
+from imx_camera_toolkit import preview
+
+preview(
+    sensor_id=0,
+    width=1920,
+    height=1080,
+    fps=30,
+    port=8000,
+)
+```
+
+For reusable configuration, use the object-oriented variant:
+
+```python
+from imx_camera_toolkit import CameraPreview
+
+camera_preview = CameraPreview()
+camera_preview.run()
+```
+
+To start the repository's local launcher directly:
 
 ```bash
 uv run python main.py
@@ -306,6 +407,9 @@ built-in defaults.
 Constructor arguments take precedence over the relevant YAML values. For
 example, a different CSI sensor can be selected with `Camera(sensor_id=1)`.
 
+PyYAML is not a core dependency. When it is unavailable, the corresponding
+component ignores its YAML file and uses validated built-in defaults instead.
+
 ## Browser view customization
 
 The API provides two bundled browser views. `simple` is the default and
@@ -374,7 +478,7 @@ its own template while retaining the same API factory.
 
 | Symptom | Likely cause and corrective action |
 | --- | --- |
-| `OpenCV is not available` | Recreate `.venv` with `uv venv --system-site-packages --allow-existing .venv`, then run `uv sync`. |
+| `CameraDependencyError: System OpenCV with GStreamer support is required` | Recreate `.venv` with `uv venv --system-site-packages --allow-existing .venv`, then run `uv sync`. |
 | Camera cannot open | Verify the CSI connection, `sensor_id`, JetPack installation, and availability of `nvarguscamerasrc`. |
 | Argus cannot connect | Confirm that `nvargus-daemon` is running and that the process has access to the Jetson camera stack. Containers additionally require the Argus socket and relevant device access. |
 | No image at the preview endpoint | Inspect `/api/health` for `last_error`, camera state, and frame counters. |

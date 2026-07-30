@@ -10,11 +10,11 @@ the framework-neutral MJPEG iterator from the `stream` package.
 - Project dependencies installed through `uv`:
 
   ```bash
-  uv sync
+  uv sync --extra preview
   ```
 
-- Uvicorn, included in the project dependencies, to expose the application
-  over HTTP.
+- FastAPI and Uvicorn, installed through the optional `preview` dependency
+  group, to expose the application over HTTP.
 
 ## Application lifecycle
 

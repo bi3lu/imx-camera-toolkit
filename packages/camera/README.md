@@ -61,13 +61,102 @@ The project does not install OpenCV with `pip`. On Jetson, OpenCV is provided
 by JetPack; make sure that `import cv2` works in the Python interpreter used by
 your application.
 
+The core Python package has no PyPI runtime dependencies. YAML configuration is
+used when PyYAML is available; otherwise `Camera` safely uses its built-in
+configuration defaults.
+
 Install the project dependencies with:
 
 ```bash
 uv sync
 ```
 
-## Quick start
+## Stable raw-frame API
+
+`Camera.read()` is the primary integration API for external image-processing
+pipelines. It returns a `Frame` containing an opaque processed BGR image and
+metadata. It does not encode JPEG data and does not perform inference.
+
+```python
+from imx_camera_toolkit import Camera
+
+with Camera() as camera:
+    frame = camera.read()
+
+    if frame is not None:
+        result = my_tensor_rt_engine(frame.image)
+```
+
+`Frame` provides the following stable fields:
+
+| Field | Meaning |
+| --- | --- |
+| `image` | Opaque BGR payload; it may be a NumPy array, CUDA buffer, DMA-BUF, or another future backend type. |
+| `sequence` | Monotonically increasing capture identifier. |
+| `timestamp_ns` | Monotonic acquisition timestamp in nanoseconds. |
+| `capture_timestamp_ns` | Optional hardware-provided capture timestamp; currently `None` for the standard backend. |
+| `width`, `height` | Output image dimensions in pixels. |
+| `format` | Pixel format, currently `"BGR"`. |
+
+This enables latency measurements without binding the toolkit to an AI
+framework:
+
+```python
+import time
+
+latency_ns = time.monotonic_ns() - frame.timestamp_ns
+```
+
+The camera retains exactly one raw frame. `read()` returns the newest available
+frame, never creates an unbounded queue, and may skip older frames when capture
+runs faster than the consumer. It returns `None` when no frame arrives before
+the timeout or capture stops while waiting.
+
+```python
+frame = camera.read(timeout=1.0, copy=False)
+```
+
+By default, `copy=True` returns an independent BGR image copy owned by the
+caller. With `copy=False`, `frame.image` is the camera's shared image payload.
+This avoids a copy for TensorRT, DeepStream, OpenCV, and CUDA pipelines, but
+the caller must treat the shared payload as read-only.
+
+`read_image(timeout=..., copy=...)` is available for compatibility-oriented
+code that requires only the image payload. New integrations should use `read()`
+to retain frame sequence, timestamps, dimensions, and format.
+
+## Independent preview path
+
+Raw frame publication and JPEG preview encoding are independent paths:
+
+```text
+Camera capture
+├── raw/latest frame → application processing
+└── JPEG preview     → browser and MJPEG clients
+```
+
+Use `latest_frame()` for an immediate, non-blocking lookup of the most recent
+raw `Frame`. `latest_jpeg()` provides the latest encoded preview image.
+
+```python
+frame = camera.latest_frame(copy=False)
+jpeg = camera.latest_jpeg()
+```
+
+Applications that do not need a browser preview or MJPEG output can remove JPEG
+encoding from the capture loop:
+
+```python
+camera = Camera(enable_preview=False)
+```
+
+Raw frames remain available through `read()` and `latest_frame()`, while
+`latest_jpeg()` returns `None`. This avoids the per-frame JPEG encoding cost.
+The FastAPI API and `MJPEGStream` retain one shared `Camera` instance, so
+multiple browser or streaming clients do not start additional capture
+pipelines.
+
+## JPEG preview API
 
 ```python
 from imx_camera_toolkit.camera import Camera

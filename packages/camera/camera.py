@@ -6,7 +6,9 @@ import logging
 import threading
 import time
 from collections.abc import Sequence
+from copy import copy as copy_image
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,8 @@ from .controls import (
     manual_control_properties,
     non_manual_control_properties,
 )
+from .errors import CameraDependencyError
+from .models import CameraFrame, Frame
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
@@ -70,11 +74,12 @@ class CameraRecoveryPolicy:
 
 
 class Camera:
-    """Coordinate one CSI camera pipeline and publish its newest JPEG frame.
+    """Coordinate one CSI camera pipeline and publish its newest BGR frame.
 
     ``Camera`` owns the lifecycle of exactly one capture backend. It reads BGR
-    frames, optionally passes them through software HDR, and delegates JPEG
-    encoding and consumer synchronization to :class:`JPEGPublisher`.
+    frames, optionally passes them through software HDR, then publishes one
+    newest raw frame for external consumers and optionally encodes JPEG for
+    preview and streaming consumers.
 
     Args:
         quality: JPEG quality from 0 to 100. Overrides ``config.yml``.
@@ -90,6 +95,7 @@ class Camera:
         capture_fps: Camera capture rate, in frames per second.
         flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
         argus_properties: Initial validated ``nvarguscamerasrc`` properties.
+        enable_preview: Whether to encode JPEG frames for preview and streaming.
     """
 
     def __init__(
@@ -107,8 +113,12 @@ class Camera:
         flip_method: int | None = None,
         argus_properties: Sequence[str] = (),
         recovery_policy: CameraRecoveryPolicy | None = None,
+        enable_preview: bool = True,
     ) -> None:
         """Initialize a camera without opening the capture source."""
+        if not isinstance(enable_preview, bool):
+            raise ValueError("enable_preview must be a boolean")
+
         loaded_config = load_camera_config(config_path)
         config = CameraConfig(
             quality=loaded_config.quality if quality is None else quality,
@@ -140,6 +150,7 @@ class Camera:
         validate_camera_config(config)
 
         self._config = config
+        self._enable_preview = enable_preview
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
         self._argus_properties = normalize_argus_properties(argus_properties)
         self._pipeline = self._build_pipeline(self._argus_properties)
@@ -218,6 +229,11 @@ class Camera:
         return self._publisher.frame_available
 
     @property
+    def preview_enabled(self) -> bool:
+        """bool: Whether JPEG encoding for preview clients is enabled."""
+        return self._enable_preview
+
+    @property
     def frame_number(self) -> int:
         """int: Monotonically increasing identifier of the latest JPEG frame."""
         return self._publisher.frame_number
@@ -241,6 +257,38 @@ class Camera:
         """
         return self._raw_publisher.frame
 
+    def latest_frame(self, copy: bool = True) -> Frame | None:
+        """Return the newest raw frame immediately, without waiting.
+
+        The camera retains a single raw BGR frame. As with :meth:`read`, the
+        default returns an image copy owned by the caller. Set ``copy=False``
+        to receive the shared read-only payload without a copy.
+
+        Args:
+            copy: Whether to return an independent image copy.
+
+        Returns:
+            The newest raw frame, or ``None`` before the first frame or after
+            camera shutdown.
+
+        Raises:
+            ValueError: If ``copy`` is not a boolean or an image cannot be
+                copied.
+        """
+        return self._prepare_frame(self._raw_publisher.latest_frame, copy)
+
+    def latest_jpeg(self) -> bytes | None:
+        """Return the newest preview JPEG without starting a capture pipeline.
+
+        Returns:
+            Latest encoded JPEG data, or ``None`` when preview is disabled or
+            no frame has been encoded.
+        """
+        if not self._enable_preview:
+            return None
+
+        return self._publisher.jpeg
+
     @property
     def frames_encoded(self) -> int:
         """int: Number of frames successfully JPEG-encoded."""
@@ -255,13 +303,20 @@ class Camera:
         """Open the selected backend and start the background capture thread.
 
         Raises:
-            RuntimeError: If OpenCV is unavailable, a previous thread is still
-                stopping, or the Argus camera cannot be opened.
+            RuntimeError: If no capture backend is available, JPEG preview needs
+                unavailable OpenCV support, a previous thread is still stopping,
+                or the Argus camera cannot be opened.
         """
-        if not opencv_available():
-            raise RuntimeError(
-                "OpenCV is not available. Use the JetPack-provided Python/OpenCV "
-                "environment with GStreamer support."
+        if not GStreamerCaptureBackend.available() and not opencv_available():
+            raise CameraDependencyError(
+                "System OpenCV with GStreamer support is required."
+            )
+
+        if self._enable_preview and not opencv_available():
+            raise CameraDependencyError(
+                "System OpenCV with GStreamer support is required for JPEG "
+                "preview. Disable preview with Camera(enable_preview=False) "
+                "for raw-frame-only capture."
             )
 
         with self._lifecycle_lock:
@@ -334,13 +389,13 @@ class Camera:
 
                 consecutive_read_failures = 0
                 self.frames_captured += 1
+                timestamp_ns = time.monotonic_ns()
                 processed_frame = self._process_frame(frame)
 
                 if processed_frame is None:
                     continue
 
-                self._raw_publisher.publish(processed_frame)
-                self._publisher.publish(processed_frame)
+                self._publish_frame(processed_frame, timestamp_ns)
 
             except Exception as error:
                 self.last_error = error
@@ -404,6 +459,18 @@ class Camera:
                 self._v4l2_controls.set_exposure,
             )
 
+    def _publish_frame(self, frame: object, timestamp_ns: int) -> None:
+        """Publish a raw frame and optionally encode it for preview clients."""
+        self._raw_publisher.publish(
+            frame,
+            width=self._config.output_width,
+            height=self._config.output_height,
+            timestamp_ns=timestamp_ns,
+        )
+
+        if self._enable_preview:
+            self._publisher.publish(frame)
+
     def wait_for_jpeg(
         self,
         previous_frame_number: int,
@@ -459,6 +526,103 @@ class Camera:
             timeout,
             lambda: self.running,
         )
+
+    def read(self, timeout: float = 2.0, copy: bool = True) -> Frame | None:
+        """Return the newest available processed BGR frame.
+
+        The camera retains exactly one raw frame. This method never creates a
+        consumer queue, so a caller may receive a newer frame than one observed
+        by another consumer and older frames may be skipped. It neither encodes
+        JPEG data nor invokes image inference.
+
+        By default, the BGR image is copied and the caller exclusively owns the
+        returned image buffer. With ``copy=False``, the returned image is the
+        publisher's shared BGR payload and must be treated as read-only. The
+        shared form avoids a copy for external TensorRT, DeepStream, OpenCV, or
+        CUDA pipelines.
+
+        Args:
+            timeout: Maximum wait for the first available raw frame, in seconds.
+            copy: Whether to return an independent image copy.
+
+        Returns:
+            The newest available raw frame, or ``None`` when no frame arrives
+            before the timeout or capture stops while waiting.
+
+        Raises:
+            RuntimeError: If the camera is not running.
+            ValueError: If ``timeout`` or ``copy`` is invalid, or the image
+                payload cannot be copied.
+        """
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            raise ValueError("timeout must be a finite non-negative number")
+
+        if not isfinite(timeout) or timeout < 0:
+            raise ValueError("timeout must be a finite non-negative number")
+
+        self._validate_copy(copy)
+
+        if not self.running:
+            raise RuntimeError("camera is not running; call start() before read()")
+
+        frame = self._raw_publisher.wait_for_camera_frame(
+            previous_frame_number=-1,
+            timeout=timeout,
+            is_running=lambda: self.running,
+        )
+
+        return self._prepare_frame(frame, copy)
+
+    @staticmethod
+    def _validate_copy(copy: bool) -> None:
+        """Validate a raw-frame image ownership option."""
+        if not isinstance(copy, bool):
+            raise ValueError("copy must be a boolean")
+
+    @staticmethod
+    def _prepare_frame(frame: Frame | None, copy: bool) -> Frame | None:
+        """Return a copied or shared frame according to caller ownership."""
+        Camera._validate_copy(copy)
+
+        if frame is None or not copy:
+            return frame
+
+        try:
+            image = copy_image(frame.image)
+
+        except Exception as error:
+            raise ValueError(
+                "camera frame image cannot be copied; use read(copy=False) "
+                "only when the consumer can treat the shared image as read-only"
+            ) from error
+
+        return Frame(
+            image=image,
+            sequence=frame.sequence,
+            timestamp_ns=frame.timestamp_ns,
+            capture_timestamp_ns=frame.capture_timestamp_ns,
+            width=frame.width,
+            height=frame.height,
+            format=frame.format,
+        )
+
+    def read_image(self, timeout: float = 2.0, copy: bool = True) -> object | None:
+        """Return only the newest BGR image for compatibility-oriented callers.
+
+        This is equivalent to ``camera.read(timeout=timeout, copy=copy)``
+        followed by access to ``Frame.image``. Prefer :meth:`read` in new
+        integrations to retain timestamps, dimensions, pixel format, and frame
+        sequence information.
+
+        Args:
+            timeout: Maximum wait for a raw frame, in seconds.
+            copy: Whether to return an independent image copy.
+
+        Returns:
+            Raw BGR image payload, or ``None`` when no frame is available.
+        """
+        frame = self.read(timeout=timeout, copy=copy)
+        return frame.image if frame is not None else None
 
     def apply_argus_properties(
         self,
@@ -651,6 +815,9 @@ def get_camera(**kwargs: Any) -> Camera:
 
 __all__ = [
     "Camera",
+    "CameraDependencyError",
+    "CameraFrame",
+    "Frame",
     "CameraConfig",
     "CameraRecoveryPolicy",
     "DEFAULT_CAMERA_CONFIG",
