@@ -8,7 +8,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .camera import Camera, CameraConfig, CameraDependencyError, CameraFrame, Frame
+from .camera import (
+    Camera,
+    CameraConfig,
+    CameraDependencyError,
+    CameraFrame,
+    CameraProfile,
+    CameraProfileStatus,
+    Frame,
+    get_camera_profile,
+    list_camera_profiles,
+)
 
 if TYPE_CHECKING:
     from .preview import CameraPreview as CameraPreview
@@ -19,9 +29,13 @@ __version__ = "0.3.1"
 __all__ = [
     "Camera",
     "CameraConfig",
+    "CameraProfile",
+    "CameraProfileStatus",
     "CameraDependencyError",
     "CameraFrame",
     "Frame",
+    "get_camera_profile",
+    "list_camera_profiles",
     "__version__",
 ]
 

@@ -13,10 +13,18 @@ from packages.camera.camera import (
     get_camera,
     load_camera_config,
 )
+from packages.camera.profiles import (
+    CameraProfile,
+    CameraProfileStatus,
+    get_camera_profile,
+    list_camera_profiles,
+)
 
 __all__ = [
     "Camera",
     "CameraConfig",
+    "CameraProfile",
+    "CameraProfileStatus",
     "CameraDependencyError",
     "CameraFrame",
     "Frame",
@@ -25,5 +33,7 @@ __all__ = [
     "SoftwareHDRSettings",
     "build_gstreamer_pipeline",
     "get_camera",
+    "get_camera_profile",
     "load_camera_config",
+    "list_camera_profiles",
 ]

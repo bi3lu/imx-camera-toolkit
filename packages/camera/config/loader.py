@@ -56,6 +56,28 @@ class CameraConfig:
         """float: Resolved maximum rate used by the JPEG preview encoder."""
         return float(self.fps) if self.max_fps is None else float(self.max_fps)
 
+    @classmethod
+    def from_profile(cls, name: str) -> CameraConfig:
+        """Create a configuration from a curated hardware profile.
+
+        Profiles contain only static camera settings. JPEG preview, runtime
+        controls, and other application-level behavior retain the defaults of
+        the profile's ``CameraConfig`` and can be overridden in ``Camera``.
+
+        Args:
+            name: Profile identifier, for example ``"imx219-1080p"``.
+
+        Returns:
+            Validated static configuration for the selected profile.
+
+        Raises:
+            TypeError: If ``name`` is not a string.
+            ValueError: If the requested profile is unavailable.
+        """
+        from ..profiles import get_camera_profile
+
+        return get_camera_profile(name).config
+
 
 def validate_camera_config(config: CameraConfig) -> None:
     """Validate values that are not checked by pipeline construction.

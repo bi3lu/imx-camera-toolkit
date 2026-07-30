@@ -218,6 +218,57 @@ config = CameraConfig(
 camera = Camera(config)
 ```
 
+## Hardware profiles
+
+Curated profiles describe only static hardware and frame-layout settings. They
+do not contain runtime controls, image-processing choices, JPEG quality, or
+application networking settings.
+
+```python
+from imx_camera_toolkit import Camera, CameraConfig, get_camera_profile
+
+profile = get_camera_profile("imx219-1080p")
+config = CameraConfig.from_profile("imx219-1080p")
+
+with Camera(config) as camera:
+    frame = camera.read()
+```
+
+Each profile exposes a verification status. A status is evidence about the
+specific configuration, not a blanket support claim for every operating mode
+of a sensor.
+
+| Profile | Camera module | Status | Capture | Output |
+| --- | --- | --- | --- | --- |
+| `imx219-1080p` | IMX219-77 | `tested` | 1920×1080 at 30 FPS, Argus mode 2 | 1280×720 |
+
+The catalog also defines `community-tested` and `experimental` statuses for
+future profiles. No profiles for unverified sensors or modes are currently
+included. `imx219-77-1080p` is accepted as an alias for the tested profile.
+
+The portable hardware-only representation is available without parsing YAML:
+
+```python
+profile.hardware_settings()
+```
+
+It returns the following structure, which can be serialized as a profile file
+by an application if needed:
+
+```yaml
+sensor_id: 0
+sensor_mode: 2
+
+capture:
+  width: 1920
+  height: 1080
+  fps: 30
+
+output:
+  width: 1280
+  height: 720
+```
+
 Default settings live in [config.yml](config.yml) and are loaded only when
 `Camera()` is created without an explicit `CameraConfig`.
 

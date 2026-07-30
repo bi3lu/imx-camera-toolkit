@@ -428,6 +428,27 @@ camera = Camera(
 Constructor arguments remain available for backwards compatibility and take
 precedence over the relevant YAML or explicit configuration values.
 
+### Hardware profiles
+
+`CameraConfig.from_profile()` selects a curated static hardware profile. The
+profile catalogue reports an explicit verification status and never treats an
+unverified sensor mode as fully supported.
+
+```python
+from imx_camera_toolkit import Camera, CameraConfig, get_camera_profile
+
+profile = get_camera_profile("imx219-1080p")
+assert profile.status.value == "tested"
+
+with Camera(CameraConfig.from_profile("imx219-1080p")) as camera:
+    frame = camera.read()
+```
+
+The current supported profile is `imx219-1080p` for the tested IMX219-77
+camera module: Argus sensor mode 2, 1920×1080 capture at 30 FPS, and 1280×720
+output. `community-tested` and `experimental` are defined status levels for
+future entries; no unverified profiles are currently advertised.
+
 PyYAML is not a core dependency. When it is unavailable, the corresponding
 component ignores its YAML file and uses validated built-in defaults instead.
 

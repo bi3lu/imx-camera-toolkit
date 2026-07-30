@@ -6,7 +6,13 @@ from dataclasses import FrozenInstanceError, asdict
 
 import pytest
 
-from imx_camera_toolkit import Camera, CameraConfig
+from imx_camera_toolkit import (
+    Camera,
+    CameraConfig,
+    CameraProfileStatus,
+    get_camera_profile,
+    list_camera_profiles,
+)
 
 
 def test_camera_config_has_documented_defaults() -> None:
@@ -89,3 +95,54 @@ def test_legacy_positional_quality_and_preview_rate_remain_supported() -> None:
 
     assert camera.config.quality == 80
     assert camera.config.max_fps == 20.0
+
+
+def test_imx219_77_profile_is_explicitly_tested() -> None:
+    """The curated IMX219-77 profile must expose tested hardware settings."""
+    profile = get_camera_profile("imx219-1080p")
+    config = CameraConfig.from_profile("imx219-1080p")
+
+    assert profile.sensor == "IMX219-77"
+    assert profile.status is CameraProfileStatus.TESTED
+    assert config == profile.config
+    assert config.sensor_id == 0
+    assert config.sensor_mode == 2
+    assert config.capture_width == 1920
+    assert config.capture_height == 1080
+    assert config.fps == 30
+    assert config.output_width == 1280
+    assert config.output_height == 720
+
+
+def test_camera_profile_alias_and_hardware_mapping() -> None:
+    """Aliases and portable mappings must resolve to the same hardware mode."""
+    profile = get_camera_profile("imx219-77-1080p")
+
+    assert profile.name == "imx219-1080p"
+    assert profile.hardware_settings() == {
+        "sensor_id": 0,
+        "sensor_mode": 2,
+        "capture": {"width": 1920, "height": 1080, "fps": 30},
+        "output": {"width": 1280, "height": 720},
+    }
+
+
+def test_camera_profile_catalog_contains_only_documented_profiles() -> None:
+    """The stable profile list must not imply unverified sensor support."""
+    assert list_camera_profiles() == (get_camera_profile("imx219-1080p"),)
+
+
+@pytest.mark.parametrize(
+    ("name", "exception"),
+    [
+        ("imx477-720p60", ValueError),
+        (1, TypeError),
+    ],
+)
+def test_camera_profile_lookup_rejects_unavailable_or_invalid_names(
+    name: object,
+    exception: type[Exception],
+) -> None:
+    """Profiles must not make unsupported hardware appear available."""
+    with pytest.raises(exception):
+        CameraConfig.from_profile(name)  # type: ignore[arg-type]

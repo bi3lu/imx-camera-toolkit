@@ -8,8 +8,12 @@ from imx_camera_toolkit import (
     CameraDependencyError,
     CameraFrame,
     CameraPreview,
+    CameraProfile,
+    CameraProfileStatus,
     Frame,
     __version__,
+    get_camera_profile,
+    list_camera_profiles,
     preview,
 )
 from imx_camera_toolkit.api import create_app
@@ -23,6 +27,18 @@ from packages.camera.config import CameraConfig as InternalCameraConfig
 from packages.camera.errors import CameraDependencyError as InternalDependencyError
 from packages.camera.models import CameraFrame as InternalCameraFrame
 from packages.camera.models import Frame as InternalFrame
+from packages.camera.profiles import (
+    CameraProfile as InternalCameraProfile,
+)
+from packages.camera.profiles import (
+    CameraProfileStatus as InternalCameraProfileStatus,
+)
+from packages.camera.profiles import (
+    get_camera_profile as internal_get_camera_profile,
+)
+from packages.camera.profiles import (
+    list_camera_profiles as internal_list_camera_profiles,
+)
 from packages.camera_control.camera_control import (
     CameraController as InternalController,
 )
@@ -40,9 +56,13 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert RootCamera is InternalCamera
     assert Camera is InternalCamera
     assert CameraConfig is InternalCameraConfig
+    assert CameraProfile is InternalCameraProfile
+    assert CameraProfileStatus is InternalCameraProfileStatus
     assert CameraDependencyError is InternalDependencyError
     assert CameraFrame is InternalCameraFrame
     assert Frame is InternalFrame
+    assert get_camera_profile is internal_get_camera_profile
+    assert list_camera_profiles is internal_list_camera_profiles
     assert CameraController is InternalController
     assert CameraFrameSource is InternalCameraFrameSource
     assert FrameSource is InternalFrameSource
