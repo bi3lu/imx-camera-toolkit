@@ -1,6 +1,6 @@
 [project]
 name = "imx-camera-toolkit"
-version = "0.3.0"
+version = "0.3.1"
 description = "CSI IMX camera capture, control, and streaming toolkit for NVIDIA Jetson"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,7 +18,10 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build]
-force-include = { "view/index.html" = "view/index.html" }
+force-include = {
+    "view/advanced.html" = "view/advanced.html",
+    "view/simple.html" = "view/simple.html",
+}
 
 [tool.hatch.build.targets.wheel]
 packages = ["packages", "imx_camera_toolkit"]

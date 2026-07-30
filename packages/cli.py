@@ -88,9 +88,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     import uvicorn
 
-    from packages.api.api import app
+    from packages.api.api import create_app
 
-    uvicorn.run(app, host=arguments.host, port=arguments.port)
+    application = create_app(view_mode="simple")
+    uvicorn.run(application, host=arguments.host, port=arguments.port)
     return 0
 
 

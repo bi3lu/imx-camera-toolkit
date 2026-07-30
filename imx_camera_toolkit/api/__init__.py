@@ -2,10 +2,16 @@
 
 from packages.api.api import (
     APIConfig,
-    app,
+    ViewMode,
     create_app,
     load_api_config,
     load_camera_view,
 )
 
-__all__ = ["APIConfig", "app", "create_app", "load_api_config", "load_camera_view"]
+__all__ = [
+    "APIConfig",
+    "ViewMode",
+    "create_app",
+    "load_api_config",
+    "load_camera_view",
+]
