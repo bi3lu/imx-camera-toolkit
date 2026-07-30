@@ -206,7 +206,42 @@ camera or network throughput.
 
 ## Running the local preview
 
-Start the API server from the repository root:
+For the simplest Python integration, start a preview through the public facade:
+
+```python
+from imx_camera_toolkit import preview
+
+preview()
+```
+
+The facade starts a simple browser view and releases camera resources during
+server shutdown. Its defaults are sensor `0`, `1280x720`, `30` FPS,
+`0.0.0.0`, and port `8000`.
+
+Configure the camera and server explicitly when needed:
+
+```python
+from imx_camera_toolkit import preview
+
+preview(
+    sensor_id=0,
+    width=1920,
+    height=1080,
+    fps=30,
+    port=8000,
+)
+```
+
+For reusable configuration, use the object-oriented variant:
+
+```python
+from imx_camera_toolkit import CameraPreview
+
+camera_preview = CameraPreview()
+camera_preview.run()
+```
+
+To start the repository's local launcher directly:
 
 ```bash
 uv run python main.py

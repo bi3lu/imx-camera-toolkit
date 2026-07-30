@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from imx_camera_toolkit import __version__
+from imx_camera_toolkit import CameraPreview, __version__, preview
 from imx_camera_toolkit.api import create_app
 from imx_camera_toolkit.camera import Camera
 from imx_camera_toolkit.camera_control import CameraController
@@ -23,6 +23,8 @@ from packages.vision import VisionPipeline as InternalVisionPipeline
 def test_public_namespace_reexports_stable_library_types() -> None:
     """External imports must resolve to the existing implementation classes."""
     assert __version__ == "0.3.1"
+    assert CameraPreview.__module__ == "imx_camera_toolkit.preview"
+    assert preview.__module__ == "imx_camera_toolkit.preview"
     assert create_app is InternalCreateApp
     assert Camera is InternalCamera
     assert CameraController is InternalController
