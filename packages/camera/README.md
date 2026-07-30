@@ -14,12 +14,12 @@ thread management, then connects the following focused components:
 
 | Module | Responsibility |
 | --- | --- |
-| [config.py](config.py) | YAML loading, validation, and resolved camera settings. |
-| [pipeline.py](pipeline.py) | Safe construction of the Argus GStreamer pipeline. |
+| [config/](config) | YAML loading, validation, and resolved camera settings. |
+| [pipeline/](pipeline) | Safe construction of the Argus GStreamer pipeline. |
 | [backends/](backends) | PyGObject GStreamer capture with OpenCV GStreamer fallback. |
 | [controls/](controls) | Live Argus properties and V4L2 exposure/gain updates. |
 | [processing/software_hdr.py](processing/software_hdr.py) | Three-exposure software HDR fusion on the Jetson. |
-| [publisher.py](publisher.py) | JPEG encoding, newest-frame retention, and consumer synchronization. |
+| [publishing/](publishing) | JPEG encoding, newest-frame retention, and consumer synchronization. |
 
 This separation keeps capture backends, sensor controls, and image processing
 replaceable without changing the `Camera` API used by applications.

@@ -10,7 +10,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yml")
+DEFAULT_CONFIG_PATH = Path(__file__).parents[1] / "config.yml"
 
 try:
     import yaml

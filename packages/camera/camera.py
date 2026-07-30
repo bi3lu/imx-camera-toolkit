@@ -24,7 +24,7 @@ from .controls import (
 )
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
-from .publisher import JPEGPublisher, opencv_available
+from .publishing import JPEGPublisher, opencv_available
 
 logger = logging.getLogger(__name__)
 
