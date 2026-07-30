@@ -35,7 +35,7 @@ statistics are available through `recovery_attempts`, `recoveries`, and
 Applications can supply a stricter or more tolerant policy:
 
 ```python
-from packages.camera.camera import Camera, CameraRecoveryPolicy
+from imx_camera_toolkit.camera import Camera, CameraRecoveryPolicy
 
 camera = Camera(
     recovery_policy=CameraRecoveryPolicy(
@@ -70,7 +70,7 @@ uv sync
 ## Quick start
 
 ```python
-from packages.camera.camera import Camera
+from imx_camera_toolkit.camera import Camera
 
 with Camera() as camera:
     frame_number, jpeg = camera.wait_for_jpeg(0, timeout=2.0)
@@ -84,7 +84,7 @@ with Camera() as camera:
 effect. Always call `stop()` when not using the context manager.
 
 ```python
-from packages.camera.camera import Camera
+from imx_camera_toolkit.camera import Camera
 
 camera = Camera()
 camera.start()
@@ -109,7 +109,7 @@ defaults to avoid starting a camera with a partially invalid setup.
 Constructor arguments override values loaded from YAML:
 
 ```python
-from packages.camera.camera import Camera
+from imx_camera_toolkit.camera import Camera
 
 camera = Camera(
     sensor_id=1,

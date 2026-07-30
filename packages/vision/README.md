@@ -47,7 +47,7 @@ It also bounds in-memory pending-frame storage to one source image.
 A source supplies opaque image payloads and owns its own resources:
 
 ```python
-from packages.vision import FrameSource
+from imx_camera_toolkit.vision import FrameSource
 
 
 class MySource(FrameSource):
@@ -85,7 +85,7 @@ contract by drawing on an image copy.
 A processor receives a `Frame` and returns an `InferenceResult`:
 
 ```python
-from packages.vision import Frame, FrameProcessor, InferenceResult
+from imx_camera_toolkit.vision import Frame, FrameProcessor, InferenceResult
 
 
 class MyProcessor(FrameProcessor):
@@ -139,7 +139,7 @@ The bundled synthetic source and no-op processor make it possible to exercise
 the lifecycle without a Jetson, camera, OpenCV, or model runtime:
 
 ```python
-from packages.vision import (
+from imx_camera_toolkit.vision import (
     NoopFrameProcessor,
     SyntheticFrameSource,
     VisionPipeline,
@@ -187,7 +187,7 @@ decoder. By default, it yields dictionaries containing an increasing frame
 index. Provide a factory to produce suitable test images or model inputs:
 
 ```python
-from packages.vision import SyntheticFrameSource
+from imx_camera_toolkit.vision import SyntheticFrameSource
 
 source = SyntheticFrameSource(
     frame_factory=lambda index: {"input": index},
@@ -205,7 +205,7 @@ opened for a new pipeline lifecycle.
 OpenCV build:
 
 ```python
-from packages.vision import FileFrameSource
+from imx_camera_toolkit.vision import FileFrameSource
 
 image_source = FileFrameSource("example.jpg")
 video_source = FileFrameSource("example.mp4", loop=True)
@@ -223,7 +223,7 @@ as OpenCV can provide frames. This preserves deterministic benchmark behavior.
 For real-time local playback, pace video output using its declared source FPS:
 
 ```python
-from packages.vision import FileFrameSource, PlaybackMode
+from imx_camera_toolkit.vision import FileFrameSource, PlaybackMode
 
 video_source = FileFrameSource(
     "example.mp4",
@@ -237,11 +237,11 @@ uses unbounded playback. Static images are unaffected by playback policy.
 
 ### Camera source
 
-`CameraFrameSource` is the direct integration with `packages.camera.Camera`:
+`CameraFrameSource` is the direct integration with `Camera`:
 
 ```python
-from packages.camera.camera import Camera
-from packages.vision import CameraFrameSource, VisionPipeline
+from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit.vision import CameraFrameSource, VisionPipeline
 
 camera = Camera()
 source = CameraFrameSource(camera)
@@ -267,7 +267,7 @@ Inference implementations may populate `InferenceResult.detections` with
 `Detection` objects:
 
 ```python
-from packages.vision import BoundingBox, Detection, InferenceResult
+from imx_camera_toolkit.vision import BoundingBox, Detection, InferenceResult
 
 result = InferenceResult(
     frame_sequence=frame.sequence,
@@ -284,7 +284,7 @@ result = InferenceResult(
 `OpenCVOverlay` renders these detections onto a copy of the source image:
 
 ```python
-from packages.vision import OpenCVOverlay, VisionPipeline
+from imx_camera_toolkit.vision import OpenCVOverlay, VisionPipeline
 
 pipeline = VisionPipeline(
     source,
@@ -305,7 +305,7 @@ It is optional, so non-OpenCV inference pipelines can omit it entirely.
 Subscribe to pipeline events before calling `start()`:
 
 ```python
-from packages.vision import PipelineEvent, PipelineEventType
+from imx_camera_toolkit.vision import PipelineEvent, PipelineEventType
 
 
 def on_event(event: PipelineEvent) -> None:
@@ -347,7 +347,7 @@ inference throughput and changes latest-frame drop behavior.
 The currently explicit and supported mode is synchronous dispatch:
 
 ```python
-from packages.vision import EventBus
+from imx_camera_toolkit.vision import EventBus
 
 events = EventBus(mode="synchronous")
 ```
@@ -410,7 +410,7 @@ to allocate an engine, CUDA context, or device buffers may additionally satisfy
 `ManagedFrameProcessor`:
 
 ```python
-from packages.vision import Frame, InferenceResult, ManagedFrameProcessor
+from imx_camera_toolkit.vision import Frame, InferenceResult, ManagedFrameProcessor
 
 
 class TensorRTProcessor(ManagedFrameProcessor):
