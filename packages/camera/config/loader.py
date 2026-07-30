@@ -3,21 +3,15 @@
 from __future__ import annotations
 
 import logging
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(__file__).parents[1] / "config.yml"
-
-try:
-    import yaml
-
-except ImportError:
-    yaml: Any | None = None
-
 
 @dataclass(frozen=True)
 class CameraConfig:
@@ -109,8 +103,6 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
         formatted_keys = ", ".join(sorted(unknown_keys))
         raise ValueError(f"unknown camera configuration key(s): {formatted_keys}")
 
-    values: dict[str, int | float] = {}
-
     for key in valid_keys:
         value = config_data.get(key, getattr(defaults, key))
         default_value = getattr(defaults, key)
@@ -122,9 +114,17 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
         elif isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"{key} must be a number")
 
-        values[key] = value
-
-    config = CameraConfig(**values)
+    config = CameraConfig(
+        quality=config_data.get("quality", defaults.quality),
+        max_fps=config_data.get("max_fps", defaults.max_fps),
+        sensor_id=config_data.get("sensor_id", defaults.sensor_id),
+        capture_width=config_data.get("capture_width", defaults.capture_width),
+        capture_height=config_data.get("capture_height", defaults.capture_height),
+        output_width=config_data.get("output_width", defaults.output_width),
+        output_height=config_data.get("output_height", defaults.output_height),
+        capture_fps=config_data.get("capture_fps", defaults.capture_fps),
+        flip_method=config_data.get("flip_method", defaults.flip_method),
+    )
     validate_camera_config(config)
     return config
 
@@ -150,12 +150,6 @@ def load_camera_config(config_path: str | Path | None = None) -> CameraConfig:
 
     except OSError as error:
         logger.warning("Could not read camera configuration %s: %s", path, error)
-        return DEFAULT_CAMERA_CONFIG
-
-    if yaml is None:
-        logger.warning(
-            "PyYAML is unavailable; using built-in camera configuration defaults"
-        )
         return DEFAULT_CAMERA_CONFIG
 
     try:

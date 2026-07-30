@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import math
 import subprocess
-
-from typing import Sequence
+from collections.abc import Sequence
 
 from .argus import parse_argus_property
 
@@ -34,17 +33,18 @@ class V4L2Controls:
 
         exposure_range = requested_values.get("exposuretimerange")
 
-        if exposure_range != current_values.get("exposuretimerange"):
-            if exposure_range is not None:
-                exposure_ns = int(str(exposure_range).split()[0])
-                controls.append(f"exposure={exposure_ns // 1_000}")
+        if (
+            exposure_range != current_values.get("exposuretimerange")
+            and exposure_range is not None
+        ):
+            exposure_ns = int(str(exposure_range).split()[0])
+            controls.append(f"exposure={exposure_ns // 1_000}")
 
         gain_range = requested_values.get("gainrange")
 
-        if gain_range != current_values.get("gainrange"):
-            if gain_range is not None:
-                gain = float(str(gain_range).split()[0])
-                controls.append(f"gain={round(200 * math.log10(gain))}")
+        if gain_range != current_values.get("gainrange") and gain_range is not None:
+            gain = float(str(gain_range).split()[0])
+            controls.append(f"gain={round(200 * math.log10(gain))}")
 
         self.set_controls(controls)
 
@@ -77,7 +77,9 @@ class V4L2Controls:
             )
 
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise RuntimeError(f"Could not apply V4L2 camera controls: {error}") from error
+            raise RuntimeError(
+                f"Could not apply V4L2 camera controls: {error}"
+            ) from error
 
         if result.returncode != 0:
             message = result.stderr.strip() or result.stdout.strip()

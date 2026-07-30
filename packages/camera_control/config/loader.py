@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..controls import build_argus_control_properties
+import yaml
+
 from ..capabilities import DEFAULT_CAPABILITIES
+from ..controls import build_argus_control_properties
 from ..models import (
     CameraCapabilities,
     CameraSettings,
@@ -21,13 +22,6 @@ from ..models import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(__file__).parents[1] / "config.yml"
-
-try:
-    import yaml
-
-except ImportError:
-    yaml: Any | None = None
-
 
 @dataclass(frozen=True)
 class CameraControlConfig:
@@ -125,7 +119,9 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraControlConfig:
 
     if unknown_keys:
         formatted_keys = ", ".join(sorted(unknown_keys))
-        raise ValueError(f"unknown camera-control configuration key(s): {formatted_keys}")
+        raise ValueError(
+            f"unknown camera-control configuration key(s): {formatted_keys}"
+        )
 
     defaults = DEFAULT_CAMERA_CONTROL_CONFIG
     model = config_data.get("model", defaults.capabilities.model)
@@ -178,12 +174,10 @@ def load_camera_control_config(
         return DEFAULT_CAMERA_CONTROL_CONFIG
 
     except OSError as error:
-        logger.warning("Could not read camera-control configuration %s: %s", path, error)
-        return DEFAULT_CAMERA_CONTROL_CONFIG
-
-    if yaml is None:
         logger.warning(
-            "PyYAML is unavailable; using built-in camera-control configuration defaults"
+            "Could not read camera-control configuration %s: %s",
+            path,
+            error,
         )
         return DEFAULT_CAMERA_CONTROL_CONFIG
 

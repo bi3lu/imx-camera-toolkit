@@ -5,14 +5,15 @@ from __future__ import annotations
 import logging
 import threading
 import time
-
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from .backends import CaptureBackend, GStreamerCaptureBackend, OpenCVCaptureBackend
 from .config import (
-    CameraConfig,
     DEFAULT_CAMERA_CONFIG,
+    CameraConfig,
     load_camera_config,
     validate_camera_config,
 )
@@ -27,6 +28,45 @@ from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, opencv_available
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class CameraRecoveryPolicy:
+    """Validated policy used to recover from transient capture failures.
+
+    Args:
+        max_attempts: Number of backend reopen attempts after a capture error.
+        initial_backoff: Delay before the first reopen attempt, in seconds.
+        max_consecutive_read_failures: Unsuccessful reads tolerated before a
+            backend recovery is attempted.
+    """
+
+    max_attempts: int = 3
+    initial_backoff: float = 0.25
+    max_consecutive_read_failures: int = 20
+
+    def __post_init__(self) -> None:
+        """Validate recovery policy values."""
+        if (
+            isinstance(self.max_attempts, bool)
+            or not isinstance(self.max_attempts, int)
+            or self.max_attempts < 0
+        ):
+            raise ValueError("max_attempts must be a non-negative integer")
+
+        if (
+            isinstance(self.initial_backoff, bool)
+            or not isinstance(self.initial_backoff, (int, float))
+            or self.initial_backoff < 0
+        ):
+            raise ValueError("initial_backoff must be a non-negative number")
+
+        if (
+            isinstance(self.max_consecutive_read_failures, bool)
+            or not isinstance(self.max_consecutive_read_failures, int)
+            or self.max_consecutive_read_failures <= 0
+        ):
+            raise ValueError("max_consecutive_read_failures must be positive")
 
 
 class Camera:
@@ -66,6 +106,7 @@ class Camera:
         capture_fps: int | None = None,
         flip_method: int | None = None,
         argus_properties: Sequence[str] = (),
+        recovery_policy: CameraRecoveryPolicy | None = None,
     ) -> None:
         """Initialize a camera without opening the capture source."""
         loaded_config = load_camera_config(config_path)
@@ -99,6 +140,7 @@ class Camera:
         validate_camera_config(config)
 
         self._config = config
+        self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
         self._argus_properties = normalize_argus_properties(argus_properties)
         self._pipeline = self._build_pipeline(self._argus_properties)
         self._publisher = JPEGPublisher(config.quality, config.max_fps)
@@ -114,6 +156,9 @@ class Camera:
 
         self.frames_captured = 0
         self.last_error: Exception | None = None
+        self.recovery_attempts = 0
+        self.recoveries = 0
+        self.last_recovery_error: Exception | None = None
 
     def _build_pipeline(self, argus_properties: Sequence[str]) -> str:
         """Build a pipeline using this camera's resolved static configuration."""
@@ -252,8 +297,9 @@ class Camera:
 
     def _capture_loop(self) -> None:
         """Read, process, and publish frames until capture stops."""
-        try:
-            while self.running:
+        consecutive_read_failures = 0
+        while self.running:
+            try:
                 backend = self._backend
 
                 if backend is None:
@@ -262,9 +308,16 @@ class Camera:
                 success, frame = backend.read()
 
                 if not success:
+                    consecutive_read_failures += 1
+                    if (
+                        consecutive_read_failures
+                        >= self._recovery_policy.max_consecutive_read_failures
+                    ):
+                        raise RuntimeError("camera backend stopped producing frames")
                     time.sleep(0.02)
                     continue
 
+                consecutive_read_failures = 0
                 self.frames_captured += 1
                 processed_frame = self._process_frame(frame)
 
@@ -273,13 +326,55 @@ class Camera:
 
                 self._publisher.publish(processed_frame)
 
-        except Exception as error:
-            self.last_error = error
-            logger.exception("IMX camera capture failed")
+            except Exception as error:
+                self.last_error = error
+                logger.exception("IMX camera capture failed")
+                if not self._recover_backend():
+                    self._running.clear()
 
-        finally:
-            self._running.clear()
-            self._publisher.notify_waiters()
+        self._publisher.notify_waiters()
+
+    def _recover_backend(self) -> bool:
+        """Reopen the capture backend after a transient capture failure.
+
+        Returns:
+            ``True`` when a new backend is opened and capture may continue.
+        """
+        for attempt in range(self._recovery_policy.max_attempts):
+            if not self.running:
+                return False
+
+            if attempt:
+                time.sleep(self._recovery_policy.initial_backoff * (2**attempt))
+
+            self.recovery_attempts += 1
+
+            with self._lifecycle_lock:
+                if not self.running:
+                    return False
+                try:
+                    self._release_backend()
+                    backend = self._create_backend()
+                    backend.open()
+                    self._backend = backend
+
+                except Exception as error:
+                    self.last_recovery_error = error
+                    logger.warning(
+                        "Camera recovery attempt %s/%s failed: %s",
+                        attempt + 1,
+                        self._recovery_policy.max_attempts,
+                        error,
+                    )
+                    continue
+
+            self.recoveries += 1
+            self.last_recovery_error = None
+            self.last_error = None
+            logger.info("Camera capture recovered on attempt %s", attempt + 1)
+            return True
+
+        return False
 
     def _process_frame(self, frame: Any) -> Any | None:
         """Run the active optional image processor for one BGR frame."""
@@ -509,6 +604,7 @@ def get_camera(**kwargs: Any) -> Camera:
 __all__ = [
     "Camera",
     "CameraConfig",
+    "CameraRecoveryPolicy",
     "DEFAULT_CAMERA_CONFIG",
     "SoftwareHDRSettings",
     "build_gstreamer_pipeline",

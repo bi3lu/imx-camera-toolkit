@@ -2,27 +2,27 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
-
 from typing import Any
 
 from .base import CaptureBackend
 
 logger = logging.getLogger(__name__)
 
+Gst: Any | None
+np_module: Any | None
+
 try:
-    import gi
-    import numpy as np
-
-    gi.require_version("Gst", "1.0")
-
-    from gi.repository import Gst
-
+    gi_module = importlib.import_module("gi")
+    gi_module.require_version("Gst", "1.0")
+    Gst = importlib.import_module("gi.repository.Gst")
+    np_module = importlib.import_module("numpy")
     Gst.init(None)
 
 except (ImportError, ValueError):
-    Gst: Any | None = None
-    np: Any | None = None
+    Gst = None
+    np_module = None
 
 
 class GStreamerCaptureBackend(CaptureBackend):
@@ -40,7 +40,7 @@ class GStreamerCaptureBackend(CaptureBackend):
     @classmethod
     def available(cls) -> bool:
         """Return whether PyGObject GStreamer and NumPy are available."""
-        return Gst is not None and np is not None
+        return Gst is not None and np_module is not None
 
     @property
     def argus_source(self) -> Any | None:
@@ -49,7 +49,7 @@ class GStreamerCaptureBackend(CaptureBackend):
 
     def open(self) -> None:
         """Parse, start, and validate the configured GStreamer pipeline."""
-        if not self.available():
+        if Gst is None or np_module is None:
             raise RuntimeError("PyGObject GStreamer and NumPy are unavailable")
 
         try:
@@ -59,7 +59,9 @@ class GStreamerCaptureBackend(CaptureBackend):
 
             if source is None or sink is None:
                 pipeline.set_state(Gst.State.NULL)
-                raise RuntimeError("GStreamer pipeline is missing a named camera element")
+                raise RuntimeError(
+                    "GStreamer pipeline is missing a named camera element"
+                )
 
             if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
                 pipeline.set_state(Gst.State.NULL)
@@ -69,13 +71,17 @@ class GStreamerCaptureBackend(CaptureBackend):
 
             if state != Gst.State.PLAYING:
                 pipeline.set_state(Gst.State.NULL)
-                raise RuntimeError("IMX GStreamer pipeline did not enter the playing state")
+                raise RuntimeError(
+                    "IMX GStreamer pipeline did not enter the playing state"
+                )
 
         except Exception as error:
             if isinstance(error, RuntimeError):
                 raise
 
-            raise RuntimeError(f"Could not create the IMX GStreamer pipeline: {error}") from error
+            raise RuntimeError(
+                f"Could not create the IMX GStreamer pipeline: {error}"
+            ) from error
 
         self._pipeline = pipeline
         self._source = source
@@ -83,7 +89,7 @@ class GStreamerCaptureBackend(CaptureBackend):
 
     def read(self) -> tuple[bool, Any | None]:
         """Pull one owned BGR frame from the configured appsink."""
-        if self._sink is None:
+        if self._sink is None or Gst is None or np_module is None:
             return False, None
 
         sample = self._sink.emit("try-pull-sample", Gst.SECOND // 5)
@@ -104,15 +110,23 @@ class GStreamerCaptureBackend(CaptureBackend):
                 logger.warning("GStreamer camera frame is smaller than expected")
                 return False, None
 
-            frame = np.frombuffer(map_info.data, dtype=np.uint8, count=frame_size)
-            return True, frame.reshape(self._output_height, self._output_width, 3).copy()
+            frame = np_module.frombuffer(
+                map_info.data,
+                dtype=np_module.uint8,
+                count=frame_size,
+            )
+            return True, frame.reshape(
+                self._output_height,
+                self._output_width,
+                3,
+            ).copy()
 
         finally:
             buffer.unmap(map_info)
 
     def close(self) -> None:
         """Stop the pipeline and discard retained GStreamer elements."""
-        if self._pipeline is not None:
+        if self._pipeline is not None and Gst is not None:
             self._pipeline.set_state(Gst.State.NULL)
 
         self._pipeline = None

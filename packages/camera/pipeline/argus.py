@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import re
-
-from typing import Sequence
+from collections.abc import Sequence
 
 
 def normalize_argus_properties(properties: Sequence[str]) -> tuple[str, ...]:
@@ -27,6 +26,7 @@ def normalize_argus_properties(properties: Sequence[str]) -> tuple[str, ...]:
     property_pattern = re.compile(
         r'[A-Za-z][A-Za-z0-9-]*=(?:[A-Za-z0-9_.-]+|"[A-Za-z0-9_. -]+")'
     )
+
     for property_value in properties:
         if not isinstance(property_value, str):
             raise ValueError("each Argus property must be a string")

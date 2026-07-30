@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import threading
-
 from dataclasses import replace
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
-from ..controls import build_argus_control_properties, coerce_enum
 from ..config import load_camera_control_config
+from ..controls import build_argus_control_properties, coerce_enum
 from ..models import (
     CameraCapabilities,
     CameraControlUpdate,
@@ -116,35 +115,56 @@ class CameraController:
         hdr_enabled: bool | object = UNSET,
     ) -> CameraControlUpdate:
         """Apply one atomic settings update through the runtime handler."""
-        values: dict[str, object] = {}
-        for field_name, value in {
-            "exposure_us": exposure_us,
-            "gain": gain,
-            "awb_mode": awb_mode,
-            "awb_locked": awb_locked,
-            "denoise_mode": denoise_mode,
-            "denoise_strength": denoise_strength,
-            "sensor_mode": sensor_mode,
-            "hdr_enabled": hdr_enabled,
-        }.items():
-            if value is not UNSET:
-                values[field_name] = value
-
-        if "awb_mode" in values:
-            values["awb_mode"] = coerce_enum(
-                WhiteBalanceMode,
-                values["awb_mode"],
-                "awb_mode",
-            )
-        if "denoise_mode" in values:
-            values["denoise_mode"] = coerce_enum(
-                DenoiseMode,
-                values["denoise_mode"],
-                "denoise_mode",
-            )
-
         with self._lock:
-            return self._commit(replace(self._settings, **values))
+            settings = CameraSettings(
+                exposure_us=(
+                    self._settings.exposure_us
+                    if exposure_us is UNSET
+                    else cast(int | None, exposure_us)
+                ),
+                gain=(
+                    self._settings.gain
+                    if gain is UNSET
+                    else cast(float | None, gain)
+                ),
+                awb_mode=(
+                    self._settings.awb_mode
+                    if awb_mode is UNSET
+                    else cast(
+                        WhiteBalanceMode,
+                        coerce_enum(WhiteBalanceMode, awb_mode, "awb_mode"),
+                    )
+                ),
+                awb_locked=(
+                    self._settings.awb_locked
+                    if awb_locked is UNSET
+                    else cast(bool, awb_locked)
+                ),
+                denoise_mode=(
+                    self._settings.denoise_mode
+                    if denoise_mode is UNSET
+                    else cast(
+                        DenoiseMode,
+                        coerce_enum(DenoiseMode, denoise_mode, "denoise_mode"),
+                    )
+                ),
+                denoise_strength=(
+                    self._settings.denoise_strength
+                    if denoise_strength is UNSET
+                    else cast(float | None, denoise_strength)
+                ),
+                sensor_mode=(
+                    self._settings.sensor_mode
+                    if sensor_mode is UNSET
+                    else cast(int | None, sensor_mode)
+                ),
+                hdr_enabled=(
+                    self._settings.hdr_enabled
+                    if hdr_enabled is UNSET
+                    else cast(bool, hdr_enabled)
+                ),
+            )
+            return self._commit(settings)
 
     def set_exposure(self, exposure_us: int | None) -> CameraControlUpdate:
         """Set a fixed exposure or return exposure to Argus automatic control."""

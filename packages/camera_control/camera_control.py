@@ -4,19 +4,18 @@ The implementation is split into focused modules. Existing applications may
 continue importing all public symbols from this module.
 """
 
-from .controls import build_argus_control_properties
 from .capabilities import (
     ARGUS_CONTROL_PROPERTIES,
     DEFAULT_CAPABILITIES,
     discover_argus_capabilities,
 )
 from .config import (
-    CameraControlConfig,
     DEFAULT_CAMERA_CONTROL_CONFIG,
     DEFAULT_CONFIG_PATH,
+    CameraControlConfig,
     load_camera_control_config,
 )
-from .runtime import CameraController, UNSET
+from .controls import build_argus_control_properties
 from .models import (
     CameraCapabilities,
     CameraControlUpdate,
@@ -29,6 +28,7 @@ from .models import (
     UnsupportedControlError,
     WhiteBalanceMode,
 )
+from .runtime import UNSET, CameraController
 
 __all__ = [
     "ARGUS_CONTROL_PROPERTIES",
