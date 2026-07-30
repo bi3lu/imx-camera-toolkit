@@ -7,6 +7,48 @@ keeps only the latest JPEG frame in memory.
 This design is intended for live previews and streaming: a slow consumer gets
 the newest available frame instead of accumulating a queue of stale frames.
 
+## Internal architecture
+
+The public `Camera` class is a coordinator. It owns lifecycle and capture
+thread management, then connects the following focused components:
+
+| Module | Responsibility |
+| --- | --- |
+| [config/](config) | YAML loading, validation, and resolved camera settings. |
+| [pipeline/](pipeline) | Safe construction of the Argus GStreamer pipeline. |
+| [backends/](backends) | PyGObject GStreamer capture with OpenCV GStreamer fallback. |
+| [controls/](controls) | Live Argus properties and V4L2 exposure/gain updates. |
+| [processing/software_hdr.py](processing/software_hdr.py) | Three-exposure software HDR fusion on the Jetson. |
+| [publishing/](publishing) | JPEG encoding, newest-frame retention, and consumer synchronization. |
+
+This separation keeps capture backends, sensor controls, and image processing
+replaceable without changing the `Camera` API used by applications.
+
+## Capture recovery
+
+`Camera` automatically attempts to reopen its capture backend after an
+unexpected backend exception or a sustained sequence of failed reads. The
+default policy uses up to three retries with exponential backoff. Recovery
+statistics are available through `recovery_attempts`, `recoveries`, and
+`last_recovery_error`; the FastAPI health endpoint exposes the same values.
+
+Applications can supply a stricter or more tolerant policy:
+
+```python
+from packages.camera.camera import Camera, CameraRecoveryPolicy
+
+camera = Camera(
+    recovery_policy=CameraRecoveryPolicy(
+        max_attempts=5,
+        initial_backoff=0.5,
+        max_consecutive_read_failures=30,
+    )
+)
+```
+
+If every recovery attempt fails, capture stops cleanly and the final exception
+remains available through `camera.last_error` and the API health endpoint.
+
 ## Requirements
 
 - NVIDIA Jetson with JetPack and a connected CSI IMX camera.

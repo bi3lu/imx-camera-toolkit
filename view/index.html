@@ -58,6 +58,132 @@
             max-height: calc(100vh - 150px);
             object-fit: contain;
         }
+
+        .controls {
+            display: grid;
+            gap: 16px;
+            margin-top: 24px;
+            padding: 20px;
+            border: 1px solid #303846;
+            border-radius: 16px;
+            background: #171b22;
+        }
+
+        .controls h2 {
+            margin: 0;
+            font-size: 1.125rem;
+        }
+
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 14px;
+            align-items: start;
+        }
+
+        .control-field {
+            display: grid;
+            gap: 6px;
+            color: #c7d0dc;
+            font-size: 0.875rem;
+        }
+
+        .control-field input,
+        .control-field select {
+            box-sizing: border-box;
+            width: 100%;
+            padding: 9px 10px;
+            border: 1px solid #435064;
+            border-radius: 8px;
+            background: #101216;
+            color: inherit;
+            font: inherit;
+        }
+
+        .check-field {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-height: 22px;
+            padding: 0;
+        }
+
+        .control-field input[type="checkbox"],
+        .check-field input[type="checkbox"] {
+            box-sizing: border-box;
+            flex: 0 0 auto;
+            width: 18px;
+            height: 18px;
+            margin: 0;
+            padding: 0;
+            border: 0;
+            border-radius: 4px;
+            background: transparent;
+            accent-color: #74b6f7;
+        }
+
+        .control-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 32px;
+            padding-top: 20px;
+            border-top: 1px solid #303846;
+        }
+
+        .control-actions button {
+            padding: 9px 14px;
+            border: 1px solid #526882;
+            border-radius: 8px;
+            background: #26374c;
+            color: #f4f7fb;
+            cursor: pointer;
+            font: inherit;
+        }
+
+        .control-actions button:hover {
+            background: #344e6c;
+        }
+
+        .control-actions button:disabled,
+        input:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+
+        .range-value {
+            color: #8fc5ff;
+            font-variant-numeric: tabular-nums;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            padding: 0;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            accent-color: #74b6f7;
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 16px;
+            }
+
+            .control-actions {
+                grid-template-columns: 1fr;
+            }
+
+            .control-actions button {
+                width: 100%;
+            }
+        }
+
+        .control-status {
+            margin: 0;
+            color: #9aa4b2;
+            font-size: 0.875rem;
+        }
     </style>
 </head>
 
@@ -76,11 +202,95 @@
             -->
             <img data-camera-stream src="{{ camera_stream_url }}" alt="Live IMX camera feed">
         </section>
+
+        <section class="controls" aria-labelledby="controls-title">
+            <h2 id="controls-title">Camera controls</h2>
+            <form id="camera-controls">
+                <div class="control-grid">
+                    <div class="control-field">
+                        <label for="exposure-us">Exposure: <output class="range-value"
+                                id="exposure-value"></output></label>
+                        <input id="exposure-us" type="range" min="100" max="22000"
+                            step="100" value="10000">
+                    </div>
+                    <div class="control-field">
+                        <label for="gain">Analog gain: <output class="range-value"
+                                id="gain-value"></output></label>
+                        <input id="gain" type="range" min="1" max="8" step="0.1" value="1">
+                    </div>
+                    <label class="control-field">
+                        White balance
+                        <select id="awb-mode">
+                            <option value="auto">Auto</option>
+                            <option value="off">Off</option>
+                            <option value="incandescent">Incandescent</option>
+                            <option value="fluorescent">Fluorescent</option>
+                            <option value="warm-fluorescent">Warm fluorescent</option>
+                            <option value="daylight">Daylight</option>
+                            <option value="cloudy-daylight">Cloudy daylight</option>
+                            <option value="twilight">Twilight</option>
+                            <option value="shade">Shade</option>
+                            <option value="manual">Manual</option>
+                        </select>
+                    </label>
+                    <label class="control-field">
+                        Denoise
+                        <select id="denoise-mode">
+                            <option value="off">Off</option>
+                            <option value="fast">Fast</option>
+                            <option value="high_quality">High quality</option>
+                        </select>
+                    </label>
+                    <div class="control-field">
+                        <label for="denoise-strength">Denoise strength: <output class="range-value"
+                                id="denoise-strength-value"></output></label>
+                        <input id="denoise-strength" type="range" min="0" max="1"
+                            step="0.05" value="0.5">
+                        <label class="check-field" for="default-denoise-strength">
+                            <input id="default-denoise-strength" type="checkbox">
+                            Driver default
+                        </label>
+                    </div>
+                    <label class="control-field">
+                        Sensor mode
+                        <input id="sensor-mode" type="number" min="0" max="255" step="1" placeholder="Argus automatic">
+                    </label>
+                    <label class="check-field">
+                        <input id="awb-locked" type="checkbox">
+                        Lock AWB
+                    </label>
+                    <label class="check-field">
+                        <input id="hdr-enabled" type="checkbox">
+                        HDR sensor mode
+                    </label>
+                    <div class="control-field">
+                        <label class="check-field" for="software-hdr-enabled">
+                            <input id="software-hdr-enabled" type="checkbox">
+                            Software HDR fusion
+                        </label>
+                        <label for="software-hdr-exposure">HDR base exposure: <output class="range-value"
+                                id="software-hdr-exposure-value"></output></label>
+                        <input id="software-hdr-exposure" type="range" min="100" max="22000"
+                            step="100" value="5000">
+                    </div>
+                </div>
+                <div class="control-actions">
+                    <button type="submit">Apply controls</button>
+                    <button id="reset-exposure" type="button">Use automatic exposure and gain</button>
+                    <button id="apply-software-hdr" type="button">Apply software HDR</button>
+                </div>
+            </form>
+            <p class="control-status" id="control-status">Loading camera controls</p>
+        </section>
     </main>
     <script>
         const image = document.querySelector("[data-camera-stream]");
         const status = document.getElementById("stream-status");
         const snapshotUrl = "/api/camera/snapshot";
+        const controlUrl = "/api/camera/control";
+        const softwareHdrUrl = "/api/camera/software-hdr";
+        const controlsForm = document.getElementById("camera-controls");
+        const controlStatus = document.getElementById("control-status");
 
         let lastFrameNumber = -1;
         let objectUrl = null;
@@ -143,7 +353,264 @@
             }
         }
 
+        function optionalNumber(element, integer = false) {
+            return integer ? Number.parseInt(element.value, 10) : Number(element.value);
+        }
+
+        function setControlStatus(message, isError = false) {
+            controlStatus.textContent = message;
+            controlStatus.style.color = isError ? "#ff9b9b" : "#9aa4b2";
+        }
+
+        function setControls(settings, capabilities, captureFps = null, softwareHdr = null) {
+            const exposure = document.getElementById("exposure-us");
+            const gain = document.getElementById("gain");
+            const denoiseStrength = document.getElementById("denoise-strength");
+            const defaultDenoiseStrength = document.getElementById("default-denoise-strength");
+
+            defaultDenoiseStrength.checked = settings.denoise_strength === null;
+            denoiseStrength.disabled = defaultDenoiseStrength.checked;
+            if (captureFps !== null) {
+                exposure.max = Math.max(100, Math.floor(1000000 / captureFps));
+            }
+            setRangeValue(exposure, settings.exposure_us);
+            setRangeValue(gain, settings.gain);
+            document.getElementById("awb-mode").value = settings.awb_mode;
+            document.getElementById("awb-locked").checked = settings.awb_locked;
+            document.getElementById("denoise-mode").value = settings.denoise_mode;
+            setRangeValue(denoiseStrength, settings.denoise_strength);
+            document.getElementById("sensor-mode").value = settings.sensor_mode ?? "";
+            document.getElementById("hdr-enabled").checked = settings.hdr_enabled;
+            document.getElementById("hdr-enabled").disabled = !capabilities.hdr_supported;
+            document.getElementById("hdr-enabled").title = capabilities.hdr_supported
+                ? ""
+                : "This sensor does not declare an HDR mode.";
+            if (softwareHdr !== null) {
+                setSoftwareHdr(softwareHdr, captureFps);
+            }
+            updateRangeValues();
+        }
+
+        function setSoftwareHdr(softwareHdr, captureFps = null) {
+            const enabled = document.getElementById("software-hdr-enabled");
+            const baseExposure = document.getElementById("software-hdr-exposure");
+
+            if (captureFps !== null) {
+                baseExposure.max = Math.max(100, Math.floor(1000000 / captureFps));
+            }
+            enabled.checked = softwareHdr.enabled;
+            setRangeValue(baseExposure, softwareHdr.base_exposure_us);
+            baseExposure.disabled = !softwareHdr.enabled;
+            document.getElementById("exposure-us").disabled = softwareHdr.enabled;
+            document.getElementById("gain").disabled = softwareHdr.enabled;
+            document.getElementById("reset-exposure").disabled = softwareHdr.enabled;
+            updateRangeValues();
+        }
+
+        function setRangeValue(range, value) {
+            if (value === null) {
+                return;
+            }
+
+            const numericValue = Number(value);
+            if (numericValue < Number(range.min)) {
+                range.min = numericValue;
+            }
+            if (numericValue > Number(range.max)) {
+                range.max = numericValue;
+            }
+            range.value = numericValue;
+        }
+
+        function updateRangeValues() {
+            const exposure = document.getElementById("exposure-us");
+            const gain = document.getElementById("gain");
+            const denoiseStrength = document.getElementById("denoise-strength");
+
+            document.getElementById("exposure-value").textContent =
+                `${Number(exposure.value).toLocaleString()} µs`;
+            document.getElementById("gain-value").textContent =
+                `${Number(gain.value).toFixed(1)}×`;
+            document.getElementById("denoise-strength-value").textContent =
+                Number(denoiseStrength.value).toFixed(2);
+            document.getElementById("software-hdr-exposure-value").textContent =
+                `${Number(document.getElementById("software-hdr-exposure").value).toLocaleString()} µs`;
+        }
+
+        async function readError(response) {
+            const payload = await response.json().catch(() => ({}));
+            return payload.detail || `Camera control returned HTTP ${response.status}`;
+        }
+
+        async function loadControls() {
+            try {
+                const response = await fetch(controlUrl, { cache: "no-store" });
+                if (!response.ok) {
+                    throw new Error(await readError(response));
+                }
+
+                const state = await response.json();
+                setControls(
+                    state.settings,
+                    state.capabilities,
+                    state.capture_fps,
+                    state.software_hdr,
+                );
+                setControlStatus("Camera controls ready");
+            } catch (error) {
+                setControlStatus(error.message, true);
+            }
+        }
+
+        async function applyControls() {
+            const payload = {
+                exposure_us: optionalNumber(document.getElementById("exposure-us"), true),
+                gain: optionalNumber(document.getElementById("gain")),
+                awb_mode: document.getElementById("awb-mode").value,
+                awb_locked: document.getElementById("awb-locked").checked,
+                denoise_mode: document.getElementById("denoise-mode").value,
+                denoise_strength: document.getElementById("default-denoise-strength").checked
+                    ? null
+                    : optionalNumber(document.getElementById("denoise-strength")),
+                sensor_mode: optionalNumber(document.getElementById("sensor-mode"), true),
+                hdr_enabled: document.getElementById("hdr-enabled").checked,
+            };
+            setControlStatus("Applying camera controls");
+
+            const response = await fetch(controlUrl, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+
+            if (!response.ok) {
+                throw new Error(await readError(response));
+            }
+
+            const update = await response.json();
+            const state = await getControlState();
+            setControls(
+                update.settings,
+                state.capabilities,
+                state.capture_fps,
+                state.software_hdr,
+            );
+            setControlStatus(
+                update.restart_required
+                    ? "Sensor mode applied; camera pipeline restarted"
+                    : update.changed_fields.length
+                    ? "Camera controls applied immediately"
+                    : "Camera controls are already current",
+            );
+        }
+
+        async function getControlState() {
+            const response = await fetch(controlUrl, { cache: "no-store" });
+
+            if (!response.ok) {
+                throw new Error(await readError(response));
+            }
+
+            return response.json();
+        }
+
+        async function applySoftwareHdr() {
+            const enabled = document.getElementById("software-hdr-enabled").checked;
+            const baseExposure = optionalNumber(
+                document.getElementById("software-hdr-exposure"),
+                true,
+            );
+            setControlStatus(enabled ? "Starting software HDR fusion" : "Stopping software HDR fusion");
+
+            const response = await fetch(softwareHdrUrl, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled, base_exposure_us: baseExposure }),
+            });
+
+            if (!response.ok) {
+                throw new Error(await readError(response));
+            }
+
+            const softwareHdr = await response.json();
+            const state = await getControlState();
+            setControls(
+                state.settings,
+                state.capabilities,
+                state.capture_fps,
+                softwareHdr,
+            );
+            setControlStatus(
+                softwareHdr.enabled
+                    ? `Software HDR active (${softwareHdr.exposures_us.join(", ")} µs)`
+                    : "Software HDR stopped",
+            );
+        }
+
+        controlsForm.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            try {
+                await applyControls();
+            } catch (error) {
+                setControlStatus(error.message, true);
+            }
+        });
+
+        document.getElementById("reset-exposure").addEventListener("click", async () => {
+            setControlStatus("Restoring automatic exposure and gain");
+
+            try {
+                const response = await fetch(controlUrl, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ exposure_us: null, gain: null }),
+                });
+
+                if (!response.ok) {
+                    throw new Error(await readError(response));
+                }
+
+                const update = await response.json();
+                const state = await getControlState();
+                setControls(
+                    update.settings,
+                    state.capabilities,
+                    state.capture_fps,
+                    state.software_hdr,
+                );
+                setControlStatus("Automatic exposure and gain restored");
+            } catch (error) {
+                setControlStatus(error.message, true);
+            }
+        });
+
+        document.getElementById("apply-software-hdr").addEventListener("click", async () => {
+            try {
+                await applySoftwareHdr();
+            } catch (error) {
+                setControlStatus(error.message, true);
+            }
+        });
+
+        document.getElementById("software-hdr-enabled").addEventListener("change", (event) => {
+            document.getElementById("software-hdr-exposure").disabled = !event.target.checked;
+        });
+
+        for (const range of document.querySelectorAll('input[type="range"]')) {
+            range.addEventListener("input", updateRangeValues);
+        }
+
+        for (const [checkboxId, rangeId] of [
+            ["default-denoise-strength", "denoise-strength"],
+        ]) {
+            document.getElementById(checkboxId).addEventListener("change", (event) => {
+                document.getElementById(rangeId).disabled = event.target.checked;
+            });
+        }
+
         showCamera();
+        loadControls();
     </script>
 </body>
 

@@ -1,257 +1,80 @@
-"""Capture JPEG frames from IMX CSI cameras on NVIDIA Jetson devices."""
+"""High-level coordination of capture, processing, controls, and publishing."""
 
 from __future__ import annotations
 
 import logging
 import threading
 import time
-
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .backends import CaptureBackend, GStreamerCaptureBackend, OpenCVCaptureBackend
+from .config import (
+    DEFAULT_CAMERA_CONFIG,
+    CameraConfig,
+    load_camera_config,
+    validate_camera_config,
+)
+from .controls import (
+    V4L2Controls,
+    apply_live_properties,
+    manual_control_properties,
+    non_manual_control_properties,
+)
+from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
+from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
+from .publishing import JPEGPublisher, opencv_available
+
 logger = logging.getLogger(__name__)
-
-try:
-    import cv2  # NOTE: OpenCV is supplied by JetPack 6.2.2.
-
-except ImportError:
-    cv2: Any | None = None
-
-try:
-    import yaml
-
-except ImportError:
-    yaml: Any | None = None
-
-DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yml")
 
 
 @dataclass(frozen=True)
-class CameraConfig:
-    """Validated settings used to create an IMX camera pipeline.
-
-    Attributes:
-        quality: JPEG quality from 0 to 100.
-        max_fps: Maximum JPEG encoding rate in frames per second.
-        sensor_id: Zero-based CSI sensor identifier used by Argus.
-        capture_width: Width captured directly from the sensor, in pixels.
-        capture_height: Height captured directly from the sensor, in pixels.
-        output_width: Width of frames delivered to OpenCV, in pixels.
-        output_height: Height of frames delivered to OpenCV, in pixels.
-        capture_fps: Camera capture rate, in frames per second.
-        flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
-    """
-
-    quality: int = 65
-    max_fps: float = 45.0
-    sensor_id: int = 0
-    capture_width: int = 1280
-    capture_height: int = 720
-    output_width: int = 640
-    output_height: int = 360
-    capture_fps: int = 45
-    flip_method: int = 0
-
-
-DEFAULT_CAMERA_CONFIG = CameraConfig()
-
-
-def build_gstreamer_pipeline(
-    sensor_id: int = 0,
-    capture_width: int = 1280,
-    capture_height: int = 720,
-    output_width: int = 640,
-    output_height: int = 360,
-    framerate: int = 30,
-    flip_method: int = 0,
-) -> str:
-    """Build an OpenCV-compatible Argus pipeline for a CSI camera.
+class CameraRecoveryPolicy:
+    """Validated policy used to recover from transient capture failures.
 
     Args:
-        sensor_id: Zero-based CSI sensor identifier used by Argus.
-        capture_width: Width captured directly from the sensor, in pixels.
-        capture_height: Height captured directly from the sensor, in pixels.
-        output_width: Width of frames delivered to OpenCV, in pixels.
-        output_height: Height of frames delivered to OpenCV, in pixels.
-        framerate: Camera capture rate, in frames per second.
-        flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
-
-    Returns:
-        A GStreamer pipeline string suitable for ``cv2.VideoCapture``.
-
-    Raises:
-        ValueError: If an identifier, dimension, frame rate, or flip method is
-            outside its supported range.
+        max_attempts: Number of backend reopen attempts after a capture error.
+        initial_backoff: Delay before the first reopen attempt, in seconds.
+        max_consecutive_read_failures: Unsuccessful reads tolerated before a
+            backend recovery is attempted.
     """
-    if sensor_id < 0:
-        raise ValueError("sensor_id must be greater than or equal to zero")
 
-    if min(capture_width, capture_height, output_width, output_height, framerate) <= 0:
-        raise ValueError("frame dimensions and framerate must be greater than zero")
+    max_attempts: int = 3
+    initial_backoff: float = 0.25
+    max_consecutive_read_failures: int = 20
 
-    if not 0 <= flip_method <= 7:
-        raise ValueError("flip_method must be between 0 and 7")
+    def __post_init__(self) -> None:
+        """Validate recovery policy values."""
+        if (
+            isinstance(self.max_attempts, bool)
+            or not isinstance(self.max_attempts, int)
+            or self.max_attempts < 0
+        ):
+            raise ValueError("max_attempts must be a non-negative integer")
 
-    return (
-        f"nvarguscamerasrc sensor-id={sensor_id} ! "
-        "video/x-raw(memory:NVMM), "
-        f"width=(int){capture_width}, "
-        f"height=(int){capture_height}, "
-        "format=(string)NV12, "
-        f"framerate=(fraction){framerate}/1 ! "
-        f"nvvidconv flip-method={flip_method} ! "
-        "video/x-raw, "
-        f"width=(int){output_width}, "
-        f"height=(int){output_height}, "
-        "format=(string)BGRx ! "
-        "videoconvert ! "
-        "video/x-raw, format=(string)BGR ! "
-        "appsink max-buffers=1 drop=true sync=false"
-    )
+        if (
+            isinstance(self.initial_backoff, bool)
+            or not isinstance(self.initial_backoff, (int, float))
+            or self.initial_backoff < 0
+        ):
+            raise ValueError("initial_backoff must be a non-negative number")
 
-
-def _validate_config(config: CameraConfig) -> None:
-    """Validate values that are not checked by the GStreamer pipeline builder.
-
-    Args:
-        config: Configuration to validate.
-
-    Raises:
-        ValueError: If JPEG quality or encoding rate is invalid.
-    """
-    integer_fields = (
-        "quality",
-        "sensor_id",
-        "capture_width",
-        "capture_height",
-        "output_width",
-        "output_height",
-        "capture_fps",
-        "flip_method",
-    )
-    for field_name in integer_fields:
-        value = getattr(config, field_name)
-
-        if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"{field_name} must be an integer")
-
-    if isinstance(config.max_fps, bool) or not isinstance(config.max_fps, (int, float)):
-        raise ValueError("max_fps must be a number")
-
-    if not 0 <= config.quality <= 100:
-        raise ValueError("quality must be between 0 and 100")
-
-    if config.max_fps <= 0:
-        raise ValueError("max_fps must be greater than zero")
-
-    if config.sensor_id < 0:
-        raise ValueError("sensor_id must be greater than or equal to zero")
-    if min(
-        config.capture_width,
-        config.capture_height,
-        config.output_width,
-        config.output_height,
-        config.capture_fps,
-    ) <= 0:
-        raise ValueError("frame dimensions and framerate must be greater than zero")
-    if not 0 <= config.flip_method <= 7:
-        raise ValueError("flip_method must be between 0 and 7")
-
-
-def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
-    """Convert a parsed YAML mapping into a validated configuration.
-
-    Args:
-        config_data: Mapping stored under ``camera_config`` in the YAML file.
-
-    Returns:
-        Validated camera configuration.
-
-    Raises:
-        ValueError: If keys are unknown or values have invalid types or ranges.
-    """
-    defaults = DEFAULT_CAMERA_CONFIG
-    valid_keys = set(defaults.__dataclass_fields__)
-    unknown_keys = set(config_data) - valid_keys
-
-    if unknown_keys:
-        formatted_keys = ", ".join(sorted(unknown_keys))
-        raise ValueError(f"unknown camera configuration key(s): {formatted_keys}")
-
-    values: dict[str, int | float] = {}
-
-    for key in valid_keys:
-        value = config_data.get(key, getattr(defaults, key))
-        default_value = getattr(defaults, key)
-
-        if isinstance(default_value, int):
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(f"{key} must be an integer")
-
-        elif isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"{key} must be a number")
-
-        values[key] = value
-
-    config = CameraConfig(**values)
-    _validate_config(config)
-    return config
-
-
-def load_camera_config(config_path: str | Path | None = None) -> CameraConfig:
-    """Load camera settings from YAML, falling back to built-in defaults.
-
-    Args:
-        config_path: Path to a YAML file. When omitted, uses the ``config.yml``
-            located next to this module.
-
-    Returns:
-        A validated configuration. Built-in defaults are returned when the file
-        is missing, cannot be read, is malformed, or contains invalid values.
-    """
-    path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
-
-    try:
-        raw_config = path.read_text(encoding="utf-8")
-
-    except FileNotFoundError:
-        return DEFAULT_CAMERA_CONFIG
-
-    except OSError as error:
-        logger.warning("Could not read camera configuration %s: %s", path, error)
-        return DEFAULT_CAMERA_CONFIG
-
-    if yaml is None:
-        logger.warning(
-            "PyYAML is unavailable; using built-in camera configuration defaults"
-        )
-        return DEFAULT_CAMERA_CONFIG
-
-    try:
-        parsed_config = yaml.safe_load(raw_config)
-
-        if not isinstance(parsed_config, dict):
-            raise ValueError("the YAML document must be a mapping")
-
-        config_data = parsed_config.get("camera_config")
-
-        if not isinstance(config_data, dict):
-            raise ValueError("camera_config must be a mapping")
-
-        return _read_config_values(config_data)
-
-    except (ValueError, yaml.YAMLError) as error:
-        logger.warning("Invalid camera configuration %s: %s", path, error)
-        return DEFAULT_CAMERA_CONFIG
+        if (
+            isinstance(self.max_consecutive_read_failures, bool)
+            or not isinstance(self.max_consecutive_read_failures, int)
+            or self.max_consecutive_read_failures <= 0
+        ):
+            raise ValueError("max_consecutive_read_failures must be positive")
 
 
 class Camera:
-    """Capture and JPEG-encode the latest image from one CSI sensor.
+    """Coordinate one CSI camera pipeline and publish its newest JPEG frame.
 
-    Only the most recent encoded frame is retained in memory. This makes the
-    class appropriate for live previews and streaming, where stale frames are
-    less useful than current ones.
+    ``Camera`` owns the lifecycle of exactly one capture backend. It reads BGR
+    frames, optionally passes them through software HDR, and delegates JPEG
+    encoding and consumer synchronization to :class:`JPEGPublisher`.
 
     Args:
         quality: JPEG quality from 0 to 100. Overrides ``config.yml``.
@@ -261,23 +84,12 @@ class Camera:
         sensor_id: Zero-based CSI sensor identifier used by Argus. Overrides
             ``config.yml``.
         capture_width: Width captured directly from the sensor, in pixels.
-            Overrides ``config.yml``.
         capture_height: Height captured directly from the sensor, in pixels.
-            Overrides ``config.yml``.
-        output_width: Width of frames delivered to OpenCV, in pixels. Overrides
-            ``config.yml``.
-        output_height: Height of frames delivered to OpenCV, in pixels.
-            Overrides ``config.yml``.
-        capture_fps: Camera capture rate, in frames per second. Overrides
-            ``config.yml``.
+        output_width: Width delivered to capture backends, in pixels.
+        output_height: Height delivered to capture backends, in pixels.
+        capture_fps: Camera capture rate, in frames per second.
         flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
-            Overrides ``config.yml``.
-
-    Attributes:
-        frames_captured: Number of frames read from the camera.
-        frames_encoded: Number of frames successfully JPEG-encoded.
-        last_frame_time: Unix timestamp of the latest encoded frame, if any.
-        last_error: Most recent background capture exception, if any.
+        argus_properties: Initial validated ``nvarguscamerasrc`` properties.
     """
 
     def __init__(
@@ -293,13 +105,10 @@ class Camera:
         output_height: int | None = None,
         capture_fps: int | None = None,
         flip_method: int | None = None,
+        argus_properties: Sequence[str] = (),
+        recovery_policy: CameraRecoveryPolicy | None = None,
     ) -> None:
-        """Initialize a camera without opening its capture device.
-
-        Raises:
-            ValueError: If JPEG quality or encoding rate is invalid, or if a
-                pipeline configuration argument is invalid.
-        """
+        """Initialize a camera without opening the capture source."""
         loaded_config = load_camera_config(config_path)
         config = CameraConfig(
             quality=loaded_config.quality if quality is None else quality,
@@ -309,52 +118,93 @@ class Camera:
                 loaded_config.capture_width if capture_width is None else capture_width
             ),
             capture_height=(
-                loaded_config.capture_height if capture_height is None else capture_height
+                loaded_config.capture_height
+                if capture_height is None
+                else capture_height
             ),
-            output_width=(loaded_config.output_width if output_width is None else output_width),
+            output_width=(
+                loaded_config.output_width if output_width is None else output_width
+            ),
             output_height=(
-                loaded_config.output_height if output_height is None else output_height
+                loaded_config.output_height
+                if output_height is None
+                else output_height
             ),
-            capture_fps=loaded_config.capture_fps if capture_fps is None else capture_fps,
-            flip_method=loaded_config.flip_method if flip_method is None else flip_method,
+            capture_fps=(
+                loaded_config.capture_fps if capture_fps is None else capture_fps
+            ),
+            flip_method=(
+                loaded_config.flip_method if flip_method is None else flip_method
+            ),
         )
-        _validate_config(config)
+        validate_camera_config(config)
 
-        self._pipeline = build_gstreamer_pipeline(
-            sensor_id=config.sensor_id,
-            capture_width=config.capture_width,
-            capture_height=config.capture_height,
-            output_width=config.output_width,
-            output_height=config.output_height,
-            framerate=config.capture_fps,
-            flip_method=config.flip_method,
-        )
         self._config = config
-        self._jpeg_quality = config.quality
-        self._jpeg_interval = 1.0 / config.max_fps
+        self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
+        self._argus_properties = normalize_argus_properties(argus_properties)
+        self._pipeline = self._build_pipeline(self._argus_properties)
+        self._publisher = JPEGPublisher(config.quality, config.max_fps)
+        self._v4l2_controls = V4L2Controls(config.sensor_id)
+        self._software_hdr_settings = SoftwareHDRSettings()
+        self._software_hdr_processor: SoftwareHDRProcessor | None = None
+        self._software_hdr_lock = threading.RLock()
 
-        self._capture: Any | None = None
+        self._backend: CaptureBackend | None = None
         self._thread: threading.Thread | None = None
         self._running = threading.Event()
-        self._lifecycle_lock = threading.Lock()
-        self._condition = threading.Condition()
-        self._jpeg: bytes | None = None
-        self._frame_number = 0
+        self._lifecycle_lock = threading.RLock()
 
         self.frames_captured = 0
-        self.frames_encoded = 0
-        self.last_frame_time: float | None = None
         self.last_error: Exception | None = None
+        self.recovery_attempts = 0
+        self.recoveries = 0
+        self.last_recovery_error: Exception | None = None
+
+    def _build_pipeline(self, argus_properties: Sequence[str]) -> str:
+        """Build a pipeline using this camera's resolved static configuration."""
+        return build_gstreamer_pipeline(
+            sensor_id=self._config.sensor_id,
+            capture_width=self._config.capture_width,
+            capture_height=self._config.capture_height,
+            output_width=self._config.output_width,
+            output_height=self._config.output_height,
+            framerate=self._config.capture_fps,
+            flip_method=self._config.flip_method,
+            argus_properties=argus_properties,
+        )
 
     @property
     def pipeline(self) -> str:
-        """str: GStreamer pipeline used when :meth:`start` is called."""
+        """str: GStreamer pipeline used by the next capture open operation."""
         return self._pipeline
+
+    @property
+    def argus_properties(self) -> tuple[str, ...]:
+        """tuple[str, ...]: Current Argus source property assignments."""
+        with self._lifecycle_lock:
+            return self._argus_properties
 
     @property
     def config(self) -> CameraConfig:
         """CameraConfig: Resolved configuration used by this camera instance."""
         return self._config
+
+    @property
+    def software_hdr_state(self) -> dict[str, object]:
+        """Return the active software HDR configuration and bracket exposures."""
+        with self._software_hdr_lock:
+            exposures_us: list[int] = []
+
+            if self._software_hdr_processor is not None:
+                exposures_us = list(self._software_hdr_processor.exposures_us)
+
+            return {
+                "enabled": self._software_hdr_settings.enabled,
+                "base_exposure_us": self._software_hdr_settings.base_exposure_us,
+                "settle_frames": self._software_hdr_settings.settle_frames,
+                "bracket_ev": list(SoftwareHDRProcessor.bracket_ev),
+                "exposures_us": exposures_us,
+            }
 
     @property
     def running(self) -> bool:
@@ -364,31 +214,36 @@ class Camera:
     @property
     def frame_available(self) -> bool:
         """bool: Whether at least one JPEG frame is currently available."""
-        with self._condition:
-            return self._jpeg is not None
+        return self._publisher.frame_available
 
     @property
     def frame_number(self) -> int:
         """int: Monotonically increasing identifier of the latest JPEG frame."""
-        with self._condition:
-            return self._frame_number
+        return self._publisher.frame_number
 
     @property
     def jpeg(self) -> bytes | None:
         """bytes | None: Latest JPEG frame, or ``None`` when unavailable."""
-        with self._condition:
-            return self._jpeg
+        return self._publisher.jpeg
+
+    @property
+    def frames_encoded(self) -> int:
+        """int: Number of frames successfully JPEG-encoded."""
+        return self._publisher.frames_encoded
+
+    @property
+    def last_frame_time(self) -> float | None:
+        """float | None: Unix timestamp of the latest encoded JPEG frame."""
+        return self._publisher.last_frame_time
 
     def start(self) -> None:
-        """Open the camera and start the background capture thread.
-
-        Calling this method while capture is already active has no effect.
+        """Open the selected backend and start the background capture thread.
 
         Raises:
-            RuntimeError: If OpenCV is unavailable, the previous capture thread
-                has not stopped, or the Argus camera cannot be opened.
+            RuntimeError: If OpenCV is unavailable, a previous thread is still
+                stopping, or the Argus camera cannot be opened.
         """
-        if cv2 is None:
+        if not opencv_available():
             raise RuntimeError(
                 "OpenCV is not available. Use the JetPack-provided Python/OpenCV "
                 "environment with GStreamer support."
@@ -399,16 +254,14 @@ class Camera:
                 return
 
             self._release_finished_capture()
-            capture = cv2.VideoCapture(self._pipeline, cv2.CAP_GSTREAMER)
+            self._backend = self._create_backend()
+            self._backend.open()
 
-            if not capture.isOpened():
-                capture.release()
-                raise RuntimeError(
-                    "Could not open the IMX camera. Check CSI connection, sensor-id, "
-                    "and that nvarguscamerasrc is available."
-                )
+            with self._software_hdr_lock:
+                if self._software_hdr_settings.enabled:
+                    self._software_hdr_processor = self._create_software_hdr_processor()
+                    self._software_hdr_processor.start(self._v4l2_controls.set_exposure)
 
-            self._capture = capture
             self.last_error = None
             self._running.set()
             self._thread = threading.Thread(
@@ -418,73 +271,126 @@ class Camera:
             )
             self._thread.start()
 
-    def _release_finished_capture(self) -> None:
-        """Release resources retained after an unexpectedly ended capture loop.
+    def _create_backend(self) -> CaptureBackend:
+        """Create the preferred backend for the current Python environment."""
+        if GStreamerCaptureBackend.available():
+            return GStreamerCaptureBackend(
+                self._pipeline,
+                self._config.output_width,
+                self._config.output_height,
+            )
+        return OpenCVCaptureBackend(self._pipeline)
 
-        Raises:
-            RuntimeError: If the previous capture thread is still alive.
-        """
+    def _release_finished_capture(self) -> None:
+        """Release resources retained after an unexpectedly stopped loop."""
         if self._thread is not None and self._thread.is_alive():
             raise RuntimeError("camera capture thread is still stopping")
 
-        if self._capture is not None:
-            self._capture.release()
-
+        self._release_backend()
         self._thread = None
-        self._capture = None
+
+    def _release_backend(self) -> None:
+        """Close and discard the active capture backend."""
+        if self._backend is not None:
+            self._backend.close()
+        self._backend = None
 
     def _capture_loop(self) -> None:
-        """Read frames, rate-limit JPEG encoding, and publish the latest frame."""
-        last_encode_time = 0.0
+        """Read, process, and publish frames until capture stops."""
+        consecutive_read_failures = 0
+        while self.running:
+            try:
+                backend = self._backend
 
-        try:
-            while self.running:
-                capture = self._capture
-
-                if capture is None:
+                if backend is None:
                     break
 
-                success, frame = capture.read()
+                success, frame = backend.read()
 
                 if not success:
+                    consecutive_read_failures += 1
+                    if (
+                        consecutive_read_failures
+                        >= self._recovery_policy.max_consecutive_read_failures
+                    ):
+                        raise RuntimeError("camera backend stopped producing frames")
                     time.sleep(0.02)
                     continue
 
+                consecutive_read_failures = 0
                 self.frames_captured += 1
-                now = time.monotonic()
+                processed_frame = self._process_frame(frame)
 
-                if now - last_encode_time < self._jpeg_interval:
+                if processed_frame is None:
                     continue
 
-                last_encode_time = now
+                self._publisher.publish(processed_frame)
 
-                success, encoded = cv2.imencode(
-                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality]
-                )
+            except Exception as error:
+                self.last_error = error
+                logger.exception("IMX camera capture failed")
+                if not self._recover_backend():
+                    self._running.clear()
 
-                if not success:
+        self._publisher.notify_waiters()
+
+    def _recover_backend(self) -> bool:
+        """Reopen the capture backend after a transient capture failure.
+
+        Returns:
+            ``True`` when a new backend is opened and capture may continue.
+        """
+        for attempt in range(self._recovery_policy.max_attempts):
+            if not self.running:
+                return False
+
+            if attempt:
+                time.sleep(self._recovery_policy.initial_backoff * (2**attempt))
+
+            self.recovery_attempts += 1
+
+            with self._lifecycle_lock:
+                if not self.running:
+                    return False
+                try:
+                    self._release_backend()
+                    backend = self._create_backend()
+                    backend.open()
+                    self._backend = backend
+
+                except Exception as error:
+                    self.last_recovery_error = error
+                    logger.warning(
+                        "Camera recovery attempt %s/%s failed: %s",
+                        attempt + 1,
+                        self._recovery_policy.max_attempts,
+                        error,
+                    )
                     continue
 
-                with self._condition:
-                    self._jpeg = encoded.tobytes()
-                    self._frame_number += 1
-                    self._condition.notify_all()
+            self.recoveries += 1
+            self.last_recovery_error = None
+            self.last_error = None
+            logger.info("Camera capture recovered on attempt %s", attempt + 1)
+            return True
 
-                self.frames_encoded += 1
-                self.last_frame_time = time.time()
+        return False
 
-        except Exception as error:
-            self.last_error = error
-            logger.exception("IMX camera capture failed")
+    def _process_frame(self, frame: Any) -> Any | None:
+        """Run the active optional image processor for one BGR frame."""
+        with self._software_hdr_lock:
+            if self._software_hdr_processor is None:
+                return frame
 
-        finally:
-            self._running.clear()
-
-            with self._condition:
-                self._condition.notify_all()
+            return self._software_hdr_processor.process(
+                frame,
+                self._v4l2_controls.set_exposure,
+            )
 
     def wait_for_jpeg(
-        self, previous_frame_number: int, timeout: float = 2.0
+        self,
+        previous_frame_number: int,
+        timeout: float = 2.0,
     ) -> tuple[int, bytes | None]:
         """Wait for a JPEG frame newer than a known frame number.
 
@@ -493,8 +399,8 @@ class Camera:
             timeout: Maximum time to wait, in seconds.
 
         Returns:
-            A pair containing the latest frame number and JPEG bytes. The bytes
-            are ``None`` until the first frame is encoded.
+            The newest frame number and JPEG bytes. The bytes are ``None``
+            until the first frame is encoded.
 
         Raises:
             ValueError: If ``timeout`` is negative.
@@ -502,25 +408,171 @@ class Camera:
         if timeout < 0:
             raise ValueError("timeout must be greater than or equal to zero")
 
-        with self._condition:
-            self._condition.wait_for(
-                lambda: self._frame_number != previous_frame_number or not self.running,
-                timeout=timeout,
+        return self._publisher.wait_for_jpeg(
+            previous_frame_number,
+            timeout,
+            lambda: self.running,
+        )
+
+    def apply_argus_properties(
+        self,
+        properties: Sequence[str],
+        *,
+        restart_required: bool = False,
+    ) -> None:
+        """Apply Argus controls live when safe, otherwise rebuild capture.
+
+        Manual exposure and gain use V4L2 to avoid the JetPack 6 Argus dynamic
+        range issue. Non-manual controls are applied to the live Argus GObject.
+
+        Args:
+            properties: Valid ``nvarguscamerasrc`` property assignments.
+            restart_required: Whether the requested controls change sensor mode.
+        """
+        normalized = normalize_argus_properties(properties)
+        new_pipeline = self._build_pipeline(normalized)
+
+        with self._lifecycle_lock:
+            if normalized == self._argus_properties:
+                return
+
+            with self._software_hdr_lock:
+                if self._software_hdr_settings.enabled and (
+                    manual_control_properties(normalized)
+                    != manual_control_properties(self._argus_properties)
+                ):
+                    raise RuntimeError(
+                        "Disable software HDR before changing exposure or gain controls"
+                    )
+
+            backend = self._backend
+            source = backend.argus_source if backend is not None else None
+
+            if self.running and source is not None and not restart_required:
+                self._v4l2_controls.apply_manual_controls(
+                    manual_control_properties(self._argus_properties),
+                    manual_control_properties(normalized),
+                )
+
+                apply_live_properties(
+                    source,
+                    non_manual_control_properties(self._argus_properties),
+                    non_manual_control_properties(normalized),
+                )
+
+                self._argus_properties = normalized
+                self._pipeline = new_pipeline
+                return
+
+        self.reconfigure_argus_properties(normalized)
+
+    def configure_software_hdr(
+        self,
+        *,
+        enabled: bool,
+        base_exposure_us: int | None = None,
+        settle_frames: int | None = None,
+    ) -> dict[str, object]:
+        """Enable or configure Jetson-side three-exposure HDR fusion.
+
+        Args:
+            enabled: Whether to enable software HDR.
+            base_exposure_us: Middle exposure in microseconds. When omitted,
+                retains the previous value.
+            settle_frames: Frames discarded after each exposure change. When
+                omitted, retains the previous value.
+
+        Returns:
+            JSON-ready software HDR state including resolved bracket exposures.
+        """
+        with self._lifecycle_lock, self._software_hdr_lock:
+            current = self._software_hdr_settings
+            settings = SoftwareHDRSettings(
+                enabled=enabled,
+                base_exposure_us=(
+                    current.base_exposure_us
+                    if base_exposure_us is None
+                    else base_exposure_us
+                ),
+                settle_frames=(
+                    current.settle_frames if settle_frames is None else settle_frames
+                ),
             )
-            return self._frame_number, self._jpeg
+            if not settings.enabled:
+                self._software_hdr_settings = settings
+                self._software_hdr_processor = None
+                return self.software_hdr_state
+
+            processor = self._create_software_hdr_processor(settings)
+
+            if self.running:
+                processor.start(self._v4l2_controls.set_exposure)
+
+            self._software_hdr_settings = settings
+            self._software_hdr_processor = processor
+            return self.software_hdr_state
+
+    def _create_software_hdr_processor(
+        self,
+        settings: SoftwareHDRSettings | None = None,
+    ) -> SoftwareHDRProcessor:
+        """Create a processor whose longest bracket fits the capture period."""
+        resolved_settings = settings or self._software_hdr_settings
+        max_exposure_us = max(100, 1_000_000 // self._config.capture_fps)
+        return SoftwareHDRProcessor(resolved_settings, max_exposure_us)
+
+    def reconfigure_argus_properties(self, properties: Sequence[str]) -> None:
+        """Rebuild capture with new Argus source properties.
+
+        Args:
+            properties: Valid ``nvarguscamerasrc`` property assignments.
+
+        Raises:
+            RuntimeError: If the running capture cannot stop or restart.
+            ValueError: If a source property is malformed.
+        """
+        normalized = normalize_argus_properties(properties)
+        new_pipeline = self._build_pipeline(normalized)
+
+        with self._lifecycle_lock:
+            if normalized == self._argus_properties:
+                return
+
+            old_properties = self._argus_properties
+            old_pipeline = self._pipeline
+            was_running = self.running
+
+            if was_running:
+                self.stop()
+                if self._backend is not None:
+                    raise RuntimeError("camera capture thread did not stop")
+
+            self._argus_properties = normalized
+            self._pipeline = new_pipeline
+
+            if not was_running:
+                return
+
+            try:
+                self.start()
+
+            except Exception:
+                self._argus_properties = old_properties
+                self._pipeline = old_pipeline
+
+                try:
+                    self.start()
+
+                except Exception:
+                    logger.exception("Could not restore the previous IMX pipeline")
+
+                raise
 
     def stop(self) -> None:
-        """Stop capture, release the camera handle, and discard the last frame.
-
-        If the capture thread does not end within three seconds, the camera
-        handle remains open and a warning is logged.
-        """
+        """Stop capture, release its backend, and discard the latest JPEG."""
         with self._lifecycle_lock:
             self._running.clear()
-
-            with self._condition:
-                self._condition.notify_all()
-
+            self._publisher.notify_waiters()
             thread = self._thread
 
             if thread is not None and thread is not threading.current_thread():
@@ -530,21 +582,12 @@ class Camera:
                     logger.warning("IMX camera thread did not stop within 3 seconds")
                     return
 
-            if self._capture is not None:
-                self._capture.release()
-
-            self._capture = None
+            self._release_backend()
             self._thread = None
-
-            with self._condition:
-                self._jpeg = None
+            self._publisher.clear()
 
     def __enter__(self) -> Camera:
-        """Open the camera and return this instance.
-
-        Returns:
-            The started camera instance.
-        """
+        """Open the camera and return this instance."""
         self.start()
         return self
 
@@ -554,12 +597,17 @@ class Camera:
 
 
 def get_camera(**kwargs: Any) -> Camera:
-    """Create a camera instance.
-
-    Args:
-        **kwargs: Keyword arguments accepted by :class:`Camera`.
-
-    Returns:
-        A configured but not yet started camera instance.
-    """
+    """Create a configured but not yet started camera instance."""
     return Camera(**kwargs)
+
+
+__all__ = [
+    "Camera",
+    "CameraConfig",
+    "CameraRecoveryPolicy",
+    "DEFAULT_CAMERA_CONFIG",
+    "SoftwareHDRSettings",
+    "build_gstreamer_pipeline",
+    "get_camera",
+    "load_camera_config",
+]
