@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import yaml
 from fastapi import Body, FastAPI, HTTPException, Query
@@ -25,7 +25,13 @@ from packages.stream.stream import MJPEGStream
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yml")
-DEFAULT_VIEW_PATH = Path(__file__).parents[2] / "view" / "index.html"
+ViewMode: TypeAlias = Literal["simple", "advanced"]
+DEFAULT_VIEW_MODE: ViewMode = "simple"
+DEFAULT_VIEW_PATHS: dict[ViewMode, Path] = {
+    "simple": Path(__file__).parents[2] / "view" / "simple.html",
+    "advanced": Path(__file__).parents[2] / "view" / "advanced.html",
+}
+DEFAULT_VIEW_PATH = DEFAULT_VIEW_PATHS[DEFAULT_VIEW_MODE]
 CAMERA_STREAM_PATH = "/api/camera/mjpeg"
 CAMERA_STREAM_TEMPLATE = "{{ camera_stream_url }}"
 
@@ -43,7 +49,7 @@ class APIConfig:
 
     title: str = "IMX Camera API"
     description: str = "Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera."
-    version: str = "0.3.0"
+    version: str = "0.3.1"
     snapshot_timeout: float = 2.0
 
 
@@ -180,7 +186,39 @@ class _CameraStreamImageParser(HTMLParser):
             self.has_stream_image = True
 
 
-def load_camera_view(view_path: str | Path | None = None) -> str:
+def _resolve_view_path(
+    view_mode: ViewMode,
+    view_path: str | Path | None,
+) -> Path:
+    """Resolve a bundled view mode or an explicit custom template path.
+
+    Args:
+        view_mode: Bundled view variant selected when ``view_path`` is omitted.
+        view_path: Explicit user-provided template path.
+
+    Returns:
+        Resolved path to the selected HTML template.
+
+    Raises:
+        ValueError: If ``view_mode`` is not a supported bundled variant.
+    """
+    if view_path is not None:
+        return Path(view_path)
+
+    if view_mode not in DEFAULT_VIEW_PATHS:
+        supported_modes = ", ".join(DEFAULT_VIEW_PATHS)
+        raise ValueError(
+            f"unknown camera view mode {view_mode!r}; use one of: {supported_modes}"
+        )
+
+    return DEFAULT_VIEW_PATHS[view_mode]
+
+
+def load_camera_view(
+    view_path: str | Path | None = None,
+    *,
+    view_mode: ViewMode = DEFAULT_VIEW_MODE,
+) -> str:
     """Load a camera view template and insert the MJPEG stream URL.
 
     The template must include an ``img`` tag with both
@@ -188,17 +226,19 @@ def load_camera_view(view_path: str | Path | None = None) -> str:
     CSS, and JavaScript are left unchanged, so users can fully style the view.
 
     Args:
-        view_path: Path to an HTML template. When omitted, uses
-            ``view/index.html`` at the project root.
+        view_path: Path to an HTML template. Overrides ``view_mode`` when set.
+        view_mode: Bundled template variant: ``"simple"`` for preview only or
+            ``"advanced"`` for preview with runtime camera controls.
 
     Returns:
         HTML ready to serve to the browser.
 
     Raises:
         RuntimeError: If the view file cannot be read.
-        ValueError: If the required camera stream image element is absent.
+        ValueError: If ``view_mode`` is unsupported or the required camera
+            stream image element is absent.
     """
-    path = Path(view_path) if view_path is not None else DEFAULT_VIEW_PATH
+    path = _resolve_view_path(view_mode, view_path)
 
     try:
         html = path.read_text(encoding="utf-8")
@@ -263,6 +303,7 @@ def create_app(
     camera: Camera | None = None,
     *,
     config_path: str | Path | None = None,
+    view_mode: ViewMode = DEFAULT_VIEW_MODE,
     view_path: str | Path | None = None,
 ) -> Any:
     """Create a FastAPI application backed by one shared camera instance.
@@ -274,6 +315,8 @@ def create_app(
     Args:
         camera: Camera to expose. When omitted, creates a default ``Camera``.
         config_path: Optional path to a YAML API configuration file.
+        view_mode: Bundled camera view: ``"simple"`` for preview only or
+            ``"advanced"`` for preview with runtime control panel.
         view_path: Optional path to the browser camera view template.
 
     Returns:
@@ -290,7 +333,7 @@ def create_app(
         )
     )
     config = load_api_config(config_path)
-    resolved_view_path = Path(view_path) if view_path is not None else DEFAULT_VIEW_PATH
+    resolved_view_path = _resolve_view_path(view_mode, view_path)
 
     @asynccontextmanager
     async def lifespan(_: Any) -> AsyncIterator[None]:
@@ -310,6 +353,7 @@ def create_app(
         lifespan=lifespan,
     )
     application.state.config = config
+    application.state.view_mode = view_mode
     application.state.view_path = resolved_view_path
     application.state.camera_controller = camera_controller
 
@@ -571,6 +615,3 @@ def create_app(
         )
 
     return application
-
-
-app = create_app()

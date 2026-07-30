@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from packages.api.api import create_app
@@ -26,7 +27,7 @@ def test_health_and_snapshot_with_mock_camera() -> None:
 
 
 def test_browser_view_is_served_with_mock_camera() -> None:
-    """The customizable view must be available without opening hardware."""
+    """The default simple browser view must be available without hardware."""
     application = create_app(MockCamera())  # type: ignore[arg-type]
 
     with TestClient(application) as client:
@@ -34,3 +35,28 @@ def test_browser_view_is_served_with_mock_camera() -> None:
 
     assert response.status_code == 200
     assert "/api/camera/mjpeg" in response.text
+    assert "Camera controls" not in response.text
+    assert application.state.view_mode == "simple"
+
+
+def test_advanced_browser_view_includes_runtime_camera_controls() -> None:
+    """The advanced bundled view must expose the runtime camera-control panel."""
+    application = create_app(
+        MockCamera(),  # type: ignore[arg-type]
+        view_mode="advanced",
+    )
+
+    with TestClient(application) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "/api/camera/mjpeg" in response.text
+    assert "Camera controls" in response.text
+    assert "/api/camera/control" in response.text
+    assert application.state.view_mode == "advanced"
+
+
+def test_unknown_bundled_view_mode_is_rejected() -> None:
+    """Invalid view variants must fail during application construction."""
+    with pytest.raises(ValueError, match="unknown camera view mode"):
+        create_app(MockCamera(), view_mode="unknown")  # type: ignore[arg-type]
