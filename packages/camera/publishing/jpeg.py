@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
+import importlib
 import threading
 import time
-
 from typing import Any
 
 try:
-    import cv2
+    cv2_module: Any | None = importlib.import_module("cv2")
 
 except ImportError:
-    cv2: Any | None = None
+    cv2_module = None
 
 
 def opencv_available() -> bool:
     """Return whether JPEG encoding support is available."""
-    return cv2 is not None
+    return cv2_module is not None
 
 
 class JPEGPublisher:
@@ -57,7 +57,7 @@ class JPEGPublisher:
         Returns:
             ``True`` when a JPEG frame was encoded and published.
         """
-        if cv2 is None:
+        if cv2_module is None:
             raise RuntimeError(
                 "OpenCV is not available. Use the JetPack-provided Python/OpenCV "
                 "environment with GStreamer support."
@@ -70,8 +70,10 @@ class JPEGPublisher:
 
         self._last_encode_time = now
 
-        success, encoded = cv2.imencode(
-            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._quality]
+        success, encoded = cv2_module.imencode(
+            ".jpg",
+            frame,
+            [cv2_module.IMWRITE_JPEG_QUALITY, self._quality],
         )
         if not success:
             return False

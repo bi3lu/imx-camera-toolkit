@@ -85,6 +85,51 @@ Verify that the project environment can see JetPack OpenCV:
 uv run python -c "import cv2; print(cv2.__version__)"
 ```
 
+## Development quality checks
+
+The project uses Ruff for linting and import hygiene, and mypy in strict mode
+for static type verification. Unit and integration tests use an in-memory mock
+camera, so they run on ordinary development machines and in CI without a CSI
+sensor or a Jetson camera stack.
+
+Install development dependencies and run the standard quality gate:
+
+```bash
+uv sync --group dev
+uv run ruff check .
+uv run mypy packages tests
+uv run pytest -m "not benchmark"
+```
+
+Deterministic capture and MJPEG framing benchmarks are deliberately separate
+from the normal test suite. They measure toolkit overhead only; they do not
+represent sensor, ISP, JPEG encoder, network, or browser performance.
+
+```bash
+uv run pytest -m benchmark
+uv run imx-camera-toolkit benchmark all --frames 1000 --json
+```
+
+GitHub Actions runs linting and type checking in a dedicated job, unit and
+integration tests in a separate job, and verifies that source and wheel
+distributions can be built.
+
+## Command-line interface and diagnostics
+
+The installed `imx-camera-toolkit` command provides non-destructive deployment
+checks and deterministic benchmarks:
+
+```bash
+uv run imx-camera-toolkit diagnose --json
+uv run imx-camera-toolkit diagnose --hardware
+uv run imx-camera-toolkit benchmark capture --frames 1000
+uv run imx-camera-toolkit serve --host 0.0.0.0 --port 8000
+```
+
+`diagnose --hardware` checks for the locally installed Argus GStreamer element
+and V4L2 command-line utility. It does not alter sensor settings or open a
+camera stream.
+
 ## Running the local preview
 
 Start the API server from the repository root:

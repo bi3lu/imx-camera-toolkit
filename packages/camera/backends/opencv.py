@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
 from .base import CaptureBackend
 
 try:
-    import cv2
+    cv2_module: Any | None = importlib.import_module("cv2")
 
 except ImportError:
-    cv2: Any | None = None
+    cv2_module = None
 
 
 class OpenCVCaptureBackend(CaptureBackend):
@@ -23,13 +24,16 @@ class OpenCVCaptureBackend(CaptureBackend):
 
     def open(self) -> None:
         """Open the configured GStreamer pipeline with OpenCV."""
-        if cv2 is None:
+        if cv2_module is None:
             raise RuntimeError(
                 "OpenCV is not available. Use the JetPack-provided Python/OpenCV "
                 "environment with GStreamer support."
             )
 
-        capture = cv2.VideoCapture(self._pipeline, cv2.CAP_GSTREAMER)
+        capture = cv2_module.VideoCapture(
+            self._pipeline,
+            cv2_module.CAP_GSTREAMER,
+        )
         if not capture.isOpened():
             capture.release()
 
@@ -45,7 +49,8 @@ class OpenCVCaptureBackend(CaptureBackend):
         if self._capture is None:
             return False, None
 
-        return self._capture.read()
+        success, frame = self._capture.read()
+        return bool(success), frame
 
     def close(self) -> None:
         """Release the OpenCV capture handle."""

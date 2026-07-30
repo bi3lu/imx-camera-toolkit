@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
-
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+
+import yaml
+from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 from packages.camera.camera import Camera
 from packages.camera_control.camera_control import (
@@ -44,25 +48,6 @@ class APIConfig:
 
 
 DEFAULT_API_CONFIG = APIConfig()
-
-try:
-    from fastapi import Body, FastAPI, HTTPException, Query
-    from fastapi.responses import HTMLResponse, Response, StreamingResponse
-
-except ImportError:
-    FastAPI: Any | None = None
-    Body: Any | None = None
-    HTTPException: Any | None = None
-    Query: Any | None = None
-    HTMLResponse: Any | None = None
-    Response: Any | None = None
-    StreamingResponse: Any | None = None
-
-try:
-    import yaml
-
-except ImportError:
-    yaml: Any | None = None
 
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
@@ -148,10 +133,6 @@ def load_api_config(config_path: str | Path | None = None) -> APIConfig:
 
     except OSError as error:
         logger.warning("Could not read API configuration %s: %s", path, error)
-        return DEFAULT_API_CONFIG
-
-    if yaml is None:
-        logger.warning("PyYAML is unavailable; using built-in API configuration defaults")
         return DEFAULT_API_CONFIG
 
     try:
@@ -268,6 +249,13 @@ def _camera_status(camera: Camera) -> dict[str, object]:
         "frames_encoded": camera.frames_encoded,
         "last_frame_time": camera.last_frame_time,
         "last_error": last_error,
+        "recovery_attempts": camera.recovery_attempts,
+        "recoveries": camera.recoveries,
+        "last_recovery_error": (
+            str(camera.last_recovery_error)
+            if camera.last_recovery_error is not None
+            else None
+        ),
     }
 
 
@@ -294,12 +282,6 @@ def create_app(
     Raises:
         RuntimeError: If FastAPI is unavailable in the current environment.
     """
-    if FastAPI is None:
-        raise RuntimeError(
-            "FastAPI is not installed. Add FastAPI to the project's uv "
-            "dependencies before creating the API application."
-        )
-
     shared_camera = camera if camera is not None else Camera()
     camera_controller = CameraController(
         runtime_handler=lambda update: shared_camera.apply_argus_properties(
@@ -311,7 +293,7 @@ def create_app(
     resolved_view_path = Path(view_path) if view_path is not None else DEFAULT_VIEW_PATH
 
     @asynccontextmanager
-    async def lifespan(_: Any):
+    async def lifespan(_: Any) -> AsyncIterator[None]:
         """Start the shared camera for the lifetime of the API application."""
         shared_camera.start()
 
@@ -591,4 +573,4 @@ def create_app(
     return application
 
 
-app = create_app() if FastAPI is not None else None
+app = create_app()

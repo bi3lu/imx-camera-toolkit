@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 import subprocess
-
-from typing import Final, Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Final
 
 from ..models import CameraCapabilities, SensorMode
 

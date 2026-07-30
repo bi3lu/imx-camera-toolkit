@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import importlib
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+
+cv2_module: Any | None
+np_module: Any | None
 
 try:
-    import cv2
-    import numpy as np
+    cv2_module = importlib.import_module("cv2")
+    np_module = importlib.import_module("numpy")
+
 except ImportError:
-    cv2: Any | None = None
-    np: Any | None = None
+    cv2_module = None
+    np_module = None
 
 
 @dataclass(frozen=True)
@@ -61,7 +67,7 @@ class SoftwareHDRProcessor:
         Raises:
             RuntimeError: If JetPack OpenCV or NumPy is unavailable.
         """
-        if cv2 is None or np is None:
+        if cv2_module is None or np_module is None:
             raise RuntimeError(
                 "Software HDR requires the JetPack OpenCV and NumPy packages"
             )
@@ -77,7 +83,7 @@ class SoftwareHDRProcessor:
         self._frames: list[Any] = []
         self._bracket_index = 0
         self._settle_remaining = settings.settle_frames
-        self._merge = cv2.createMergeMertens()
+        self._merge = cv2_module.createMergeMertens()
 
     @property
     def exposures_us(self) -> tuple[int, int, int]:
@@ -107,9 +113,14 @@ class SoftwareHDRProcessor:
             return None
 
         merged = self._merge.process(self._frames)
-        output = np.clip(merged * 255.0, 0, 255).astype(np.uint8)
+
+        assert np_module is not None
+
+        output = np_module.clip(merged * 255.0, 0, 255).astype(np_module.uint8)
+
         self._frames.clear()
         self._bracket_index = 0
         self._settle_remaining = self._settings.settle_frames
+
         set_exposure(self._exposures_us[0])
         return output

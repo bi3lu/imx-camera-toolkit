@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
-
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,6 @@ class StreamConfig:
 
 
 DEFAULT_STREAM_CONFIG = StreamConfig()
-
-try:
-    import yaml
-
-except ImportError:
-    yaml: Any | None = None
 
 
 class JPEGCamera(Protocol):
@@ -187,12 +182,6 @@ def load_stream_config(config_path: str | Path | None = None) -> StreamConfig:
         return DEFAULT_STREAM_CONFIG
     except OSError as error:
         logger.warning("Could not read stream configuration %s: %s", path, error)
-        return DEFAULT_STREAM_CONFIG
-
-    if yaml is None:
-        logger.warning(
-            "PyYAML is unavailable; using built-in stream configuration defaults"
-        )
         return DEFAULT_STREAM_CONFIG
 
     try:
