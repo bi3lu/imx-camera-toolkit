@@ -51,7 +51,8 @@ intermediate frames.
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
 | [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
-| [`view/index.html`](view/index.html) | Customizable browser-facing HTML and CSS template for the live preview. |
+| [`view/advanced.html`](view/advanced.html) | Browser preview with runtime camera controls. |
+| [`view/simple.html`](view/simple.html) | Browser preview without a camera-control panel. |
 
 ## Platform requirements
 
@@ -98,7 +99,7 @@ Add the stable branch to the consuming project's `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.3.0"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.3.1"
 ]
 ```
 
@@ -307,9 +308,23 @@ example, a different CSI sensor can be selected with `Camera(sensor_id=1)`.
 
 ## Browser view customization
 
-The root endpoint serves [`view/index.html`](view/index.html). The file is read
-for every request, so HTML, CSS, and JavaScript changes are visible after a
-browser refresh without restarting the service.
+The API provides two bundled browser views. `simple` is the default and
+preserves the preview layout without a control panel; `advanced` adds runtime
+camera controls. Select a variant when constructing the application:
+
+```python
+from imx_camera_toolkit.api import create_app
+
+app = create_app(view_mode="simple")
+```
+
+The selected file is read for every request, so HTML, CSS, and JavaScript
+changes are visible after a browser refresh without restarting the service.
+
+| View mode | Template | Purpose |
+| --- | --- | --- |
+| `"simple"` | [`view/simple.html`](view/simple.html) | Default live preview without camera controls. |
+| `"advanced"` | [`view/advanced.html`](view/advanced.html) | Live preview and runtime camera controls. |
 
 The template must preserve the required stream image marker:
 
@@ -330,9 +345,13 @@ from imx_camera_toolkit.camera import Camera
 
 app = create_app(
     Camera(sensor_id=1),
+    view_mode="simple",
     view_path="/etc/imx-camera/index.html",
 )
 ```
+
+`view_path` takes precedence over `view_mode`, allowing an application to use
+its own template while retaining the same API factory.
 
 ## Operational characteristics
 

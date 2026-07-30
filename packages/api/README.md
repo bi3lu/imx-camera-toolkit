@@ -18,10 +18,10 @@ the framework-neutral MJPEG iterator from the `stream` package.
 
 ## Application lifecycle
 
-The module exports `app`, a default FastAPI application. Its lifespan handler
-starts one shared `Camera` during application startup and stops it during
-shutdown. Endpoints share that camera; the API does not create a camera per
-request or per connected MJPEG client.
+The module exports `create_app()`, a FastAPI application factory. Its lifespan
+handler starts one shared `Camera` during application startup and stops it
+during shutdown. Endpoints share that camera; the API does not create a camera
+per request or per connected MJPEG client.
 
 For a local camera preview, run:
 
@@ -32,8 +32,11 @@ uv run python main.py
 The application can also be served directly with Uvicorn:
 
 ```bash
-uv run uvicorn imx_camera_toolkit.api:app --host 0.0.0.0 --port 8000
+uv run uvicorn --factory imx_camera_toolkit.api:create_app --host 0.0.0.0 --port 8000
 ```
+
+Using the factory avoids creating an application, reading its configuration, or
+initializing its dependencies merely by importing the package.
 
 FastAPI exposes interactive documentation at `/docs` and the OpenAPI schema at
 `/openapi.json`.
@@ -79,10 +82,12 @@ HTML image element:
 
 ## Browser view customization
 
-`GET /` serves the customizable template at
-[view/index.html](../../view/index.html). You may freely change its HTML, CSS,
-JavaScript, title, layout, and styling. The template is read for every request,
-so refreshing the browser applies changes without restarting the server.
+`GET /` serves one of two customizable bundled templates. The default
+[`view/simple.html`](../../view/simple.html) provides the live preview without
+a control panel. [`view/advanced.html`](../../view/advanced.html) adds runtime
+camera controls. You may freely change HTML, CSS, JavaScript, title, layout,
+and styling. The selected template is read for every request, so refreshing the
+browser applies changes without restarting the server.
 
 The live camera image is required. Keep this element in the template (it may
 have additional classes, attributes, and surrounding markup):
@@ -113,12 +118,14 @@ camera = Camera(sensor_id=1)
 app = create_app(
     camera,
     config_path="/etc/imx-camera/api.yml",
+    view_mode="simple",
     view_path="/etc/imx-camera/index.html",
 )
 ```
 
 The resolved configuration is available as `app.state.config`, and the chosen
-view path as `app.state.view_path`.
+view path as `app.state.view_path`. The selected bundled mode is available as
+`app.state.view_mode`. `view_path` takes precedence over `view_mode`.
 
 ## Security
 

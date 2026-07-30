@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Preview</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+            background: #101216;
+            color: #f4f7fb;
+        }
+
+        body {
+            display: grid;
+            min-height: 100vh;
+            margin: 0;
+            padding: 24px;
+            place-items: center;
+        }
+
+        main {
+            width: min(1280px, 100%);
+        }
+
+        header {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(1.25rem, 3vw, 2rem);
+        }
+
+        .status {
+            color: #9aa4b2;
+            font-size: 0.875rem;
+        }
+
+        .camera-frame {
+            overflow: hidden;
+            border: 1px solid #303846;
+            border-radius: 16px;
+            background: #000;
+            box-shadow: 0 24px 72px rgb(0 0 0 / 35%);
+        }
+
+        .camera-frame img {
+            display: block;
+            width: 100%;
+            min-height: 240px;
+            max-height: calc(100vh - 150px);
+            object-fit: contain;
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 16px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <header>
+            <h1>Camera Preview</h1>
+            <span class="status" id="stream-status">Connecting to camera</span>
+        </header>
+
+        <section class="camera-frame">
+            <!--
+                This img element is required. You may freely change its classes,
+                styles, alt text, and surrounding markup, but keep data-camera-stream
+                and src="{{ camera_stream_url }}" so the API can insert the feed URL.
+            -->
+            <img data-camera-stream src="{{ camera_stream_url }}" alt="Live IMX camera feed">
+        </section>
+    </main>
+    <script>
+        const image = document.querySelector("[data-camera-stream]");
+        const status = document.getElementById("stream-status");
+        const snapshotUrl = "/api/camera/snapshot";
+
+        let lastFrameNumber = -1;
+        let objectUrl = null;
+
+        function sleep(milliseconds) {
+            return new Promise((resolve) => setTimeout(resolve, milliseconds));
+        }
+
+        async function displayFrame(blob) {
+            const nextObjectUrl = URL.createObjectURL(blob);
+
+            await new Promise((resolve) => {
+                const finish = () => {
+                    image.removeEventListener("load", finish);
+                    image.removeEventListener("error", finish);
+                    resolve();
+                };
+
+                image.addEventListener("load", finish, { once: true });
+                image.addEventListener("error", finish, { once: true });
+                image.src = nextObjectUrl;
+            });
+
+            if (objectUrl !== null) {
+                URL.revokeObjectURL(objectUrl);
+            }
+
+            objectUrl = nextObjectUrl;
+        }
+
+        async function showCamera() {
+            image.removeAttribute("src");
+
+            while (true) {
+                try {
+                    const response = await fetch(
+                        `${snapshotUrl}?after=${lastFrameNumber}`,
+                        { cache: "no-store" },
+                    );
+
+                    if (response.status === 204) {
+                        continue;
+                    }
+
+                    if (!response.ok) {
+                        throw new Error(`Camera returned HTTP ${response.status}`);
+                    }
+
+                    const frameNumber = Number(
+                        response.headers.get("X-Frame-Number"),
+                    );
+
+                    await displayFrame(await response.blob());
+                    lastFrameNumber = frameNumber;
+                    status.textContent = "Live camera preview";
+                } catch (error) {
+                    status.textContent = "Waiting for camera";
+                    await sleep(500);
+                }
+            }
+        }
+
+        showCamera();
+    </script>
+</body>
+
+</html>

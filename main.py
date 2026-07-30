@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from packages.api.api import app
+from imx_camera_toolkit.api import create_app
 
 HOST = "0.0.0.0"
 PORT = 8000
@@ -45,11 +45,7 @@ def main() -> None:
     Raises:
         RuntimeError: If FastAPI or Uvicorn is unavailable.
     """
-    if app is None:
-        raise RuntimeError(
-            "FastAPI is unavailable. Install the project dependencies with "
-            "`uv sync` before starting the camera server."
-        )
+    app = create_app(view_mode="simple")
 
     try:
         import uvicorn
