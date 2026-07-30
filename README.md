@@ -224,6 +224,35 @@ with camera:
 its lifecycle to the application. It does not start, stop, or replace the
 camera instance.
 
+### Generic processed-image preview
+
+`PreviewServer` is a model-agnostic image transport. It does not define or
+interpret detections, bounding boxes, labels, masks, segmentation, or tracking
+metadata. An external application may publish any image it has already drawn:
+
+```python
+from imx_camera_toolkit.preview import PreviewServer
+
+preview = PreviewServer()
+app = preview.create_app()
+
+frame = camera.read()
+result = model(frame.image)
+annotated = draw_results(frame.image, result)
+preview.publish(annotated)
+```
+
+It can also forward the latest raw frame from an existing source without
+creating another camera capture pipeline:
+
+```python
+camera_preview = PreviewServer(source=camera)
+processed_preview = PreviewServer(source=processed_frame_buffer)
+```
+
+`PreviewServer` owns only its JPEG transport worker. It never starts, stops, or
+otherwise owns the supplied source.
+
 Raw application frames and browser preview JPEGs use separate publication
 paths. `camera.latest_frame()` returns the newest raw `Frame`, while
 `camera.latest_jpeg()` returns the newest encoded preview image. For

@@ -23,6 +23,9 @@ from .camera import (
 
 if TYPE_CHECKING:
     from .preview import CameraPreview as CameraPreview
+    from .preview import PreviewServer as PreviewServer
+    from .preview import PreviewSource as PreviewSource
+    from .preview import create_preview_app as create_preview_app
     from .preview import preview as preview
 
 __version__ = "0.3.1"
@@ -50,11 +53,23 @@ def __getattr__(name: str) -> Any:
         ImportError: If preview helpers are requested without the ``preview``
             optional dependency group.
     """
-    if name not in {"CameraPreview", "preview"}:
+    if name not in {
+        "CameraPreview",
+        "PreviewServer",
+        "PreviewSource",
+        "create_preview_app",
+        "preview",
+    }:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
     try:
-        from .preview import CameraPreview, preview
+        from .preview import (
+            CameraPreview,
+            PreviewServer,
+            PreviewSource,
+            create_preview_app,
+            preview,
+        )
 
     except ImportError as error:
         raise ImportError(
@@ -62,6 +77,22 @@ def __getattr__(name: str) -> Any:
             '`uv add "imx-camera-toolkit[preview]"`. '
         ) from error
 
-    globals().update({"CameraPreview": CameraPreview, "preview": preview})
-    __all__.extend(("CameraPreview", "preview"))
+    globals().update(
+        {
+            "CameraPreview": CameraPreview,
+            "PreviewServer": PreviewServer,
+            "PreviewSource": PreviewSource,
+            "create_preview_app": create_preview_app,
+            "preview": preview,
+        }
+    )
+    __all__.extend(
+        (
+            "CameraPreview",
+            "PreviewServer",
+            "PreviewSource",
+            "create_preview_app",
+            "preview",
+        )
+    )
     return globals()[name]

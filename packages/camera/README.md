@@ -215,6 +215,26 @@ not start or stop it. The enclosing application remains responsible for the
 camera lifecycle, and FastAPI snapshots, MJPEG, diagnostics, and inference all
 use the same capture pipeline.
 
+For a separate processed-image view, use the generic `PreviewServer`. It
+transports opaque images only and does not contain any inference-model or
+overlay semantics:
+
+```python
+from imx_camera_toolkit.preview import PreviewServer
+
+preview = PreviewServer()
+app = preview.create_app()
+
+frame = camera.read()
+annotated = draw_results(frame.image, model(frame.image))
+preview.publish(annotated)
+```
+
+Alternatively, `PreviewServer(source=camera)` forwards the latest raw frame
+from the existing camera without creating another capture pipeline. A custom
+processed frame buffer may be used when it implements
+`read(timeout=..., copy=False)` and returns an image or toolkit `Frame`.
+
 ## JPEG preview API
 
 ```python

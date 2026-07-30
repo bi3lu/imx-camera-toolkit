@@ -12,7 +12,10 @@ from imx_camera_toolkit import (
     CameraProfileStatus,
     CameraStats,
     Frame,
+    PreviewServer,
+    PreviewSource,
     __version__,
+    create_preview_app,
     get_camera_profile,
     list_camera_profiles,
     preview,
@@ -53,6 +56,9 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     """External imports must resolve to the existing implementation classes."""
     assert __version__ == "0.3.1"
     assert CameraPreview.__module__ == "imx_camera_toolkit.preview"
+    assert PreviewServer.__module__ == "packages.preview.server"
+    assert PreviewSource.__module__ == "packages.preview.server"
+    assert create_preview_app.__module__ == "imx_camera_toolkit.preview"
     assert preview.__module__ == "imx_camera_toolkit.preview"
     assert create_app is InternalCreateApp
     assert RootCamera is InternalCamera
