@@ -8,6 +8,7 @@ import time
 import pytest
 
 from imx_camera_toolkit import Camera, CameraFrame, Frame
+from packages.camera.publishing.jpeg import JPEGPublisher
 
 
 def _running_camera() -> Camera:
@@ -98,6 +99,49 @@ def test_read_image_returns_only_the_requested_image_payload() -> None:
     assert shared_image is image
 
 
+def test_latest_frame_returns_the_current_raw_frame_without_waiting() -> None:
+    """Latest-frame access must retain raw metadata and copy configuration."""
+    camera = _running_camera()
+    image = bytearray(b"frame")
+    _publish(camera, image)
+
+    frame = camera.latest_frame(copy=False)
+
+    assert frame is not None
+    assert frame.image is image
+    assert frame.sequence == 1
+
+
+def test_latest_jpeg_returns_the_current_preview_payload() -> None:
+    """Latest JPEG access must expose preview data independently from raw frames."""
+    camera = Camera()
+    camera._publisher._jpeg = b"preview"
+
+    assert camera.latest_jpeg() == b"preview"
+
+
+def test_disabled_preview_skips_jpeg_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw-only capture must not invoke the JPEG publisher."""
+    camera = Camera(enable_preview=False)
+
+    def fail_publish(self: JPEGPublisher, frame: object) -> bool:
+        """Fail if raw-only capture attempts JPEG encoding."""
+        raise AssertionError("JPEG encoding must be disabled")
+
+    monkeypatch.setattr(JPEGPublisher, "publish", fail_publish)
+
+    camera._publish_frame(bytearray(b"raw"), timestamp_ns=123)
+
+    frame = camera.latest_frame(copy=False)
+    assert frame is not None
+    assert frame.image == bytearray(b"raw")
+    assert camera.latest_jpeg() is None
+    assert camera.frames_encoded == 0
+    assert camera.preview_enabled is False
+
+
 def test_read_requires_an_active_camera() -> None:
     """Callers must start capture before requesting a raw frame."""
     with pytest.raises(RuntimeError, match="camera is not running"):
@@ -121,3 +165,9 @@ def test_read_validates_arguments(
 
     with pytest.raises(ValueError, match=message):
         camera.read(**kwargs)  # type: ignore[arg-type]
+
+
+def test_camera_rejects_non_boolean_preview_configuration() -> None:
+    """JPEG preview configuration must be an explicit boolean option."""
+    with pytest.raises(ValueError, match="enable_preview"):
+        Camera(enable_preview=1)  # type: ignore[arg-type]

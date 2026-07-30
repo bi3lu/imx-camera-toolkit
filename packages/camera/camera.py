@@ -94,6 +94,7 @@ class Camera:
         capture_fps: Camera capture rate, in frames per second.
         flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
         argus_properties: Initial validated ``nvarguscamerasrc`` properties.
+        enable_preview: Whether to encode JPEG frames for preview and streaming.
     """
 
     def __init__(
@@ -111,8 +112,12 @@ class Camera:
         flip_method: int | None = None,
         argus_properties: Sequence[str] = (),
         recovery_policy: CameraRecoveryPolicy | None = None,
+        enable_preview: bool = True,
     ) -> None:
         """Initialize a camera without opening the capture source."""
+        if not isinstance(enable_preview, bool):
+            raise ValueError("enable_preview must be a boolean")
+
         loaded_config = load_camera_config(config_path)
         config = CameraConfig(
             quality=loaded_config.quality if quality is None else quality,
@@ -144,6 +149,7 @@ class Camera:
         validate_camera_config(config)
 
         self._config = config
+        self._enable_preview = enable_preview
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
         self._argus_properties = normalize_argus_properties(argus_properties)
         self._pipeline = self._build_pipeline(self._argus_properties)
@@ -222,6 +228,11 @@ class Camera:
         return self._publisher.frame_available
 
     @property
+    def preview_enabled(self) -> bool:
+        """bool: Whether JPEG encoding for preview clients is enabled."""
+        return self._enable_preview
+
+    @property
     def frame_number(self) -> int:
         """int: Monotonically increasing identifier of the latest JPEG frame."""
         return self._publisher.frame_number
@@ -245,6 +256,38 @@ class Camera:
         """
         return self._raw_publisher.frame
 
+    def latest_frame(self, copy: bool = True) -> Frame | None:
+        """Return the newest raw frame immediately, without waiting.
+
+        The camera retains a single raw BGR frame. As with :meth:`read`, the
+        default returns an image copy owned by the caller. Set ``copy=False``
+        to receive the shared read-only payload without a copy.
+
+        Args:
+            copy: Whether to return an independent image copy.
+
+        Returns:
+            The newest raw frame, or ``None`` before the first frame or after
+            camera shutdown.
+
+        Raises:
+            ValueError: If ``copy`` is not a boolean or an image cannot be
+                copied.
+        """
+        return self._prepare_frame(self._raw_publisher.latest_frame, copy)
+
+    def latest_jpeg(self) -> bytes | None:
+        """Return the newest preview JPEG without starting a capture pipeline.
+
+        Returns:
+            Latest encoded JPEG data, or ``None`` when preview is disabled or
+            no frame has been encoded.
+        """
+        if not self._enable_preview:
+            return None
+
+        return self._publisher.jpeg
+
     @property
     def frames_encoded(self) -> int:
         """int: Number of frames successfully JPEG-encoded."""
@@ -259,13 +302,21 @@ class Camera:
         """Open the selected backend and start the background capture thread.
 
         Raises:
-            RuntimeError: If OpenCV is unavailable, a previous thread is still
-                stopping, or the Argus camera cannot be opened.
+            RuntimeError: If no capture backend is available, JPEG preview needs
+                unavailable OpenCV support, a previous thread is still stopping,
+                or the Argus camera cannot be opened.
         """
-        if not opencv_available():
+        if not GStreamerCaptureBackend.available() and not opencv_available():
             raise RuntimeError(
-                "OpenCV is not available. Use the JetPack-provided Python/OpenCV "
-                "environment with GStreamer support."
+                "No camera backend is available. Use JetPack-provided OpenCV "
+                "with GStreamer support or PyGObject GStreamer with NumPy."
+            )
+
+        if self._enable_preview and not opencv_available():
+            raise RuntimeError(
+                "OpenCV is required when JPEG preview is enabled. Disable "
+                "preview with Camera(enable_preview=False) for raw-frame-only "
+                "capture."
             )
 
         with self._lifecycle_lock:
@@ -344,13 +395,7 @@ class Camera:
                 if processed_frame is None:
                     continue
 
-                self._raw_publisher.publish(
-                    processed_frame,
-                    width=self._config.output_width,
-                    height=self._config.output_height,
-                    timestamp_ns=timestamp_ns,
-                )
-                self._publisher.publish(processed_frame)
+                self._publish_frame(processed_frame, timestamp_ns)
 
             except Exception as error:
                 self.last_error = error
@@ -413,6 +458,18 @@ class Camera:
                 frame,
                 self._v4l2_controls.set_exposure,
             )
+
+    def _publish_frame(self, frame: object, timestamp_ns: int) -> None:
+        """Publish a raw frame and optionally encode it for preview clients."""
+        self._raw_publisher.publish(
+            frame,
+            width=self._config.output_width,
+            height=self._config.output_height,
+            timestamp_ns=timestamp_ns,
+        )
+
+        if self._enable_preview:
+            self._publisher.publish(frame)
 
     def wait_for_jpeg(
         self,
@@ -503,8 +560,7 @@ class Camera:
         if not isfinite(timeout) or timeout < 0:
             raise ValueError("timeout must be a finite non-negative number")
 
-        if not isinstance(copy, bool):
-            raise ValueError("copy must be a boolean")
+        self._validate_copy(copy)
 
         if not self.running:
             raise RuntimeError("camera is not running; call start() before read()")
@@ -515,10 +571,20 @@ class Camera:
             is_running=lambda: self.running,
         )
 
-        if frame is None:
-            return None
+        return self._prepare_frame(frame, copy)
 
-        if not copy:
+    @staticmethod
+    def _validate_copy(copy: bool) -> None:
+        """Validate a raw-frame image ownership option."""
+        if not isinstance(copy, bool):
+            raise ValueError("copy must be a boolean")
+
+    @staticmethod
+    def _prepare_frame(frame: Frame | None, copy: bool) -> Frame | None:
+        """Return a copied or shared frame according to caller ownership."""
+        Camera._validate_copy(copy)
+
+        if frame is None or not copy:
             return frame
 
         try:

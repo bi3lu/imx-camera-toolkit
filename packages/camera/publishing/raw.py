@@ -31,6 +31,12 @@ class RawFramePublisher:
             return self._frame.image if self._frame is not None else None
 
     @property
+    def latest_frame(self) -> Frame | None:
+        """Frame | None: Newest raw frame and metadata without copying."""
+        with self._condition:
+            return self._frame
+
+    @property
     def frame_number(self) -> int:
         """int: Monotonically increasing identifier of the newest raw frame."""
         with self._condition:

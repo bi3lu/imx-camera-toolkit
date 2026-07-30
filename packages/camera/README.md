@@ -121,6 +121,37 @@ the caller must treat the shared payload as read-only.
 code that requires only the image payload. New integrations should use `read()`
 to retain frame sequence, timestamps, dimensions, and format.
 
+## Independent preview path
+
+Raw frame publication and JPEG preview encoding are independent paths:
+
+```text
+Camera capture
+├── raw/latest frame → application processing
+└── JPEG preview     → browser and MJPEG clients
+```
+
+Use `latest_frame()` for an immediate, non-blocking lookup of the most recent
+raw `Frame`. `latest_jpeg()` provides the latest encoded preview image.
+
+```python
+frame = camera.latest_frame(copy=False)
+jpeg = camera.latest_jpeg()
+```
+
+Applications that do not need a browser preview or MJPEG output can remove JPEG
+encoding from the capture loop:
+
+```python
+camera = Camera(enable_preview=False)
+```
+
+Raw frames remain available through `read()` and `latest_frame()`, while
+`latest_jpeg()` returns `None`. This avoids the per-frame JPEG encoding cost.
+The FastAPI API and `MJPEGStream` retain one shared `Camera` instance, so
+multiple browser or streaming clients do not start additional capture
+pipelines.
+
 ## JPEG preview API
 
 ```python
