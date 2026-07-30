@@ -8,19 +8,52 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .camera import Camera, CameraDependencyError, CameraFrame, Frame
+from .camera import (
+    Camera,
+    CameraConfig,
+    CameraConfigurationError,
+    CameraDependencyError,
+    CameraError,
+    CameraFrame,
+    CameraOpenError,
+    CameraProfile,
+    CameraProfileStatus,
+    CameraReadError,
+    CameraRecoveryError,
+    CameraStats,
+    CameraTimeoutError,
+    Frame,
+    get_camera_profile,
+    list_camera_profiles,
+)
 
 if TYPE_CHECKING:
     from .preview import CameraPreview as CameraPreview
+    from .preview import PreviewServer as PreviewServer
+    from .preview import PreviewSource as PreviewSource
+    from .preview import create_preview_app as create_preview_app
     from .preview import preview as preview
+    from .preview import serve as serve
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "Camera",
+    "CameraConfig",
+    "CameraConfigurationError",
+    "CameraProfile",
+    "CameraProfileStatus",
     "CameraDependencyError",
+    "CameraError",
     "CameraFrame",
+    "CameraOpenError",
+    "CameraReadError",
+    "CameraRecoveryError",
+    "CameraStats",
+    "CameraTimeoutError",
     "Frame",
+    "get_camera_profile",
+    "list_camera_profiles",
     "__version__",
 ]
 
@@ -33,11 +66,25 @@ def __getattr__(name: str) -> Any:
         ImportError: If preview helpers are requested without the ``preview``
             optional dependency group.
     """
-    if name not in {"CameraPreview", "preview"}:
+    if name not in {
+        "CameraPreview",
+        "PreviewServer",
+        "PreviewSource",
+        "create_preview_app",
+        "preview",
+        "serve",
+    }:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
     try:
-        from .preview import CameraPreview, preview
+        from .preview import (
+            CameraPreview,
+            PreviewServer,
+            PreviewSource,
+            create_preview_app,
+            preview,
+            serve,
+        )
 
     except ImportError as error:
         raise ImportError(
@@ -45,6 +92,24 @@ def __getattr__(name: str) -> Any:
             '`uv add "imx-camera-toolkit[preview]"`. '
         ) from error
 
-    globals().update({"CameraPreview": CameraPreview, "preview": preview})
-    __all__.extend(("CameraPreview", "preview"))
+    globals().update(
+        {
+            "CameraPreview": CameraPreview,
+            "PreviewServer": PreviewServer,
+            "PreviewSource": PreviewSource,
+            "create_preview_app": create_preview_app,
+            "preview": preview,
+            "serve": serve,
+        }
+    )
+    __all__.extend(
+        (
+            "CameraPreview",
+            "PreviewServer",
+            "PreviewSource",
+            "create_preview_app",
+            "preview",
+            "serve",
+        )
+    )
     return globals()[name]

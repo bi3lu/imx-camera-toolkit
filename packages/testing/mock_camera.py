@@ -6,6 +6,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+from packages.camera.models import CameraStats
+
 
 @dataclass
 class MockCamera:
@@ -19,15 +21,18 @@ class MockCamera:
     start_error: Exception | None = None
     auto_start: bool = True
     frames_captured: int = 0
+    dropped_frames: int = 0
     frames_encoded: int = 0
     last_frame_time: float | None = None
     last_error: Exception | None = None
     recovery_attempts: int = 0
     recoveries: int = 0
+    consecutive_failures: int = 0
     last_recovery_error: Exception | None = None
     _running: bool = field(default=False, init=False, repr=False)
     _jpeg: bytes | None = field(default=None, init=False, repr=False)
     _frame_number: int = field(default=0, init=False, repr=False)
+    _last_frame_timestamp_ns: int | None = field(default=None, init=False, repr=False)
     _condition: threading.Condition = field(
         default_factory=threading.Condition,
         init=False,
@@ -62,6 +67,19 @@ class MockCamera:
         """bytes | None: Latest JPEG bytes, or ``None`` when unavailable."""
         with self._condition:
             return self._jpeg
+
+    def stats(self) -> CameraStats:
+        """Return stable diagnostics compatible with the production camera."""
+        with self._condition:
+            return CameraStats(
+                captured_frames=self.frames_captured,
+                dropped_frames=self.dropped_frames,
+                capture_fps=0.0,
+                last_frame_timestamp_ns=self._last_frame_timestamp_ns,
+                recovery_count=self.recoveries,
+                consecutive_failures=self.consecutive_failures,
+                running=self._running,
+            )
 
     def start(self) -> None:
         """Start the mock camera or raise its configured startup error."""
@@ -103,6 +121,7 @@ class MockCamera:
             self._jpeg = jpeg
             self._frame_number += 1
             self.frames_captured += 1
+            self._last_frame_timestamp_ns = time.monotonic_ns()
             self.frames_encoded += 1
             self.last_frame_time = time.time()
             self._condition.notify_all()

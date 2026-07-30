@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from ..errors import CameraConfigurationError
+
 
 def normalize_argus_properties(properties: Sequence[str]) -> tuple[str, ...]:
     """Validate properties that are safe to place in an Argus pipeline.
@@ -20,7 +22,9 @@ def normalize_argus_properties(properties: Sequence[str]) -> tuple[str, ...]:
             structure.
     """
     if isinstance(properties, str):
-        raise ValueError("argus_properties must be a sequence of assignments")
+        raise CameraConfigurationError(
+            "argus_properties must be a sequence of assignments"
+        )
 
     normalized: list[str] = []
     property_pattern = re.compile(
@@ -29,10 +33,12 @@ def normalize_argus_properties(properties: Sequence[str]) -> tuple[str, ...]:
 
     for property_value in properties:
         if not isinstance(property_value, str):
-            raise ValueError("each Argus property must be a string")
+            raise CameraConfigurationError("each Argus property must be a string")
 
         if not property_pattern.fullmatch(property_value):
-            raise ValueError(f"invalid Argus property: {property_value!r}")
+            raise CameraConfigurationError(
+                f"invalid Argus property: {property_value!r}"
+            )
 
         normalized.append(property_value)
 
@@ -69,13 +75,17 @@ def build_gstreamer_pipeline(
             source property is outside its supported range.
     """
     if sensor_id < 0:
-        raise ValueError("sensor_id must be greater than or equal to zero")
+        raise CameraConfigurationError(
+            "sensor_id must be greater than or equal to zero"
+        )
 
     if min(capture_width, capture_height, output_width, output_height, framerate) <= 0:
-        raise ValueError("frame dimensions and framerate must be greater than zero")
+        raise CameraConfigurationError(
+            "frame dimensions and framerate must be greater than zero"
+        )
 
     if not 0 <= flip_method <= 7:
-        raise ValueError("flip_method must be between 0 and 7")
+        raise CameraConfigurationError("flip_method must be between 0 and 7")
 
     source_properties = normalize_argus_properties(argus_properties)
     source_arguments = " ".join(source_properties)

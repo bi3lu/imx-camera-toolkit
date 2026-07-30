@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-from ..errors import CameraDependencyError
+from ..errors import CameraDependencyError, CameraOpenError
 from .base import CaptureBackend
 
 try:
@@ -37,7 +37,7 @@ class OpenCVCaptureBackend(CaptureBackend):
         if not capture.isOpened():
             capture.release()
 
-            raise RuntimeError(
+            raise CameraOpenError(
                 "Could not open the IMX camera. Check CSI connection, sensor-id, "
                 "and that nvarguscamerasrc is available."
             )

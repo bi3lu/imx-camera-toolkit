@@ -7,7 +7,14 @@ import time
 
 import pytest
 
-from imx_camera_toolkit import Camera, CameraDependencyError, CameraFrame, Frame
+from imx_camera_toolkit import (
+    Camera,
+    CameraConfigurationError,
+    CameraDependencyError,
+    CameraFrame,
+    CameraReadError,
+    Frame,
+)
 from packages.camera import camera as camera_module
 from packages.camera.backends.gstreamer import GStreamerCaptureBackend
 from packages.camera.config import loader as config_loader
@@ -117,7 +124,7 @@ def test_latest_frame_returns_the_current_raw_frame_without_waiting() -> None:
 
 def test_latest_jpeg_returns_the_current_preview_payload() -> None:
     """Latest JPEG access must expose preview data independently from raw frames."""
-    camera = Camera()
+    camera = Camera(enable_preview=True)
     camera._publisher._jpeg = b"preview"
 
     assert camera.latest_jpeg() == b"preview"
@@ -147,7 +154,7 @@ def test_disabled_preview_skips_jpeg_encoding(
 
 def test_read_requires_an_active_camera() -> None:
     """Callers must start capture before requesting a raw frame."""
-    with pytest.raises(RuntimeError, match="camera is not running"):
+    with pytest.raises(CameraReadError, match="camera is not running"):
         Camera().read(timeout=0)
 
 
@@ -166,13 +173,13 @@ def test_read_validates_arguments(
     """Invalid read options must fail before waiting for a frame."""
     camera = _running_camera()
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(CameraConfigurationError, match=message):
         camera.read(**kwargs)  # type: ignore[arg-type]
 
 
 def test_camera_rejects_non_boolean_preview_configuration() -> None:
     """JPEG preview configuration must be an explicit boolean option."""
-    with pytest.raises(ValueError, match="enable_preview"):
+    with pytest.raises(CameraConfigurationError, match="enable_preview"):
         Camera(enable_preview=1)  # type: ignore[arg-type]
 
 
