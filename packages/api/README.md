@@ -32,7 +32,7 @@ uv run python main.py
 The application can also be served directly with Uvicorn:
 
 ```bash
-uv run uvicorn packages.api.api:app --host 0.0.0.0 --port 8000
+uv run uvicorn imx_camera_toolkit.api:app --host 0.0.0.0 --port 8000
 ```
 
 FastAPI exposes interactive documentation at `/docs` and the OpenAPI schema at
@@ -106,8 +106,8 @@ To create an application with another configuration file or a custom camera,
 use the factory:
 
 ```python
-from packages.api.api import create_app
-from packages.camera.camera import Camera
+from imx_camera_toolkit.api import create_app
+from imx_camera_toolkit.camera import Camera
 
 camera = Camera(sensor_id=1)
 app = create_app(

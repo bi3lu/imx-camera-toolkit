@@ -22,6 +22,8 @@ CSI IMX sensor
 Camera package <--- runtime controls --- Camera Control package
 Argus + GStreamer capture, BGR conversion, software HDR, JPEG encoding
       |
+      +----> Vision package
+      |      Latest-frame inference, structured results, and overlays
       v
 Stream package
 MJPEG multipart framing
@@ -45,6 +47,7 @@ intermediate frames.
 | --- | --- |
 | [`packages/camera`](packages/camera/README.md) | CSI camera acquisition through `nvarguscamerasrc`, frame conversion, JPEG encoding, and frame synchronization. |
 | [`packages/camera_control`](packages/camera_control/README.md) | Validated runtime exposure, gain, white-balance, denoise, sensor-mode, and HDR control for NVIDIA Argus cameras. |
+| [`packages/vision`](packages/vision/README.md) | Latest-frame AI Vision pipeline, raw-camera adapter, inference contracts, overlays, events, file playback, and synthetic sources. |
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
 | [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
@@ -88,6 +91,49 @@ Verify that the project environment can see JetPack OpenCV:
 uv run python -c "import cv2; print(cv2.__version__)"
 ```
 
+## Using the toolkit as a Git dependency
+
+Add the development branch to the consuming project's `pyproject.toml`:
+
+```toml
+[project]
+dependencies = [
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@develop"
+]
+```
+
+Then synchronize the environment with `uv`:
+
+```bash
+uv sync
+```
+
+On Jetson, create the consuming project's environment with
+`--system-site-packages` before synchronizing so the JetPack-provided OpenCV
+build remains available. For reproducible production deployments, pin a
+release tag or commit rather than a moving branch.
+
+## Public Python namespace
+
+External applications should import from `imx_camera_toolkit`. The repository
+internal `packages` namespace remains an implementation detail and should not
+be used by new projects.
+
+```python
+from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit.vision import CameraFrameSource, VisionPipeline
+
+camera = Camera()
+pipeline = VisionPipeline(CameraFrameSource(camera), processor)
+```
+
+The public namespace also provides `api`, `camera_control`, and `stream`:
+
+```python
+from imx_camera_toolkit.camera_control import CameraController
+from imx_camera_toolkit.stream import MJPEGStream
+```
+
 For development, install the additional test, lint, and type-checking tools:
 
 ```bash
@@ -118,7 +164,7 @@ Install development dependencies and run the standard quality gate:
 ```bash
 uv sync --group dev
 uv run ruff check .
-uv run mypy packages tests
+uv run mypy imx_camera_toolkit packages tests
 uv run pytest -m "not benchmark"
 ```
 
@@ -279,8 +325,8 @@ Applications that need a view outside the repository can construct the API with
 an explicit path:
 
 ```python
-from packages.api.api import create_app
-from packages.camera.camera import Camera
+from imx_camera_toolkit.api import create_app
+from imx_camera_toolkit.camera import Camera
 
 app = create_app(
     Camera(sensor_id=1),

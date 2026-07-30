@@ -23,7 +23,7 @@ facade. The implementation is split by responsibility:
 | [runtime/](runtime) | Thread-safe atomic state transitions, runtime-handler dispatch, and in-memory profiles. |
 
 Applications can continue using imports such as
-`from packages.camera_control.camera_control import CameraController`; the
+`from imx_camera_toolkit.camera_control import CameraController`; the
 public API remains unchanged.
 
 ## Supported controls
@@ -47,7 +47,7 @@ Create a controller and use its returned update to inspect the requested
 Argus properties:
 
 ```python
-from packages.camera_control.camera_control import CameraController
+from imx_camera_toolkit.camera_control import CameraController
 
 controller = CameraController()
 update = controller.update(
@@ -65,8 +65,8 @@ package decides whether a change can be applied live or requires a pipeline
 restart:
 
 ```python
-from packages.camera.camera import Camera
-from packages.camera_control.camera_control import CameraController
+from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit.camera_control import CameraController
 
 camera = Camera()
 controller = CameraController(
@@ -108,7 +108,7 @@ partially invalid file is never applied.
 Use another configuration file with `config_path`:
 
 ```python
-from packages.camera_control.camera_control import CameraController
+from imx_camera_toolkit.camera_control import CameraController
 
 controller = CameraController(config_path="/etc/imx-camera/camera-control.yml")
 ```
@@ -116,7 +116,7 @@ controller = CameraController(config_path="/etc/imx-camera/camera-control.yml")
 Explicit constructor arguments have priority over the loaded configuration:
 
 ```python
-from packages.camera_control.camera_control import (
+from imx_camera_toolkit.camera_control import (
     CameraCapabilities,
     CameraController,
 )
@@ -140,7 +140,7 @@ installed JetPack driver and the connected sensor. The
 It requires sensor-mode metadata with at least one entry whose `hdr` field is
 `true`; it does not create HDR on an SDR sensor.
 
-Software HDR is a separate feature of `packages.camera`. It captures exposure
+Software HDR is a separate feature of `imx_camera_toolkit.camera`. It captures exposure
 brackets through the sensor control interface and fuses them on the Jetson.
 Use the camera API or `Camera.configure_software_hdr()` for that mode. Do not
 combine software HDR with manual exposure or gain updates from this controller
