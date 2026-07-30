@@ -22,7 +22,7 @@ jobs:
       - name: Ruff lint
         run: uv run ruff check .
       - name: Mypy strict type check
-        run: uv run mypy packages tests
+        run: uv run mypy imx_camera_toolkit packages tests
 
   tests:
     name: Unit and integration tests

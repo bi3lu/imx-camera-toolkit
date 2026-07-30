@@ -30,3 +30,39 @@ class FrameSource(Protocol):
     def close(self) -> None:
         """Release resources and unblock a pending read when possible."""
         ...
+
+
+@runtime_checkable
+class RawFrameCamera(Protocol):
+    """Camera contract required by :class:`CameraFrameSource`.
+
+    The protocol deliberately exposes raw BGR frames instead of JPEG bytes.
+    This lets a vision pipeline share camera capture with preview encoding
+    without a JPEG decode round trip.
+    """
+
+    @property
+    def running(self) -> bool:
+        """bool: Whether camera capture remains active."""
+        ...
+
+    @property
+    def raw_frame_number(self) -> int:
+        """int: Identifier of the newest raw frame."""
+        ...
+
+    def start(self) -> None:
+        """Start camera capture when it is not already active."""
+        ...
+
+    def stop(self) -> None:
+        """Stop camera capture and wake raw-frame consumers."""
+        ...
+
+    def wait_for_raw_frame(
+        self,
+        previous_frame_number: int,
+        timeout: float = 2.0,
+    ) -> tuple[int, object | None]:
+        """Wait for a newer raw frame without copying its payload."""
+        ...

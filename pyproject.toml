@@ -1,6 +1,6 @@
 [project]
 name = "imx-camera-toolkit"
-version = "0.1.0"
+version = "0.3.0"
 description = "CSI IMX camera capture, control, and streaming toolkit for NVIDIA Jetson"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,8 +17,11 @@ imx-camera-toolkit = "packages.cli:main"
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build]
+force-include = { "view/index.html" = "view/index.html" }
+
 [tool.hatch.build.targets.wheel]
-packages = ["packages"]
+packages = ["packages", "imx_camera_toolkit"]
 
 [dependency-groups]
 dev = [
@@ -45,14 +48,14 @@ line-length = 88
 select = ["E", "F", "I", "B", "UP", "SIM"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["packages"]
+known-first-party = ["imx_camera_toolkit", "packages"]
 
 [tool.ruff.lint.per-file-ignores]
 "packages/api/api.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.10"
-files = ["packages", "tests"]
+files = ["imx_camera_toolkit", "packages", "tests"]
 strict = true
 warn_unused_ignores = true
 pretty = true

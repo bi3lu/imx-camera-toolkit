@@ -9,9 +9,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
-from .events import EventBus, PipelineEvent, PipelineEventHandler, PipelineEventType
+from .events import (
+    EventBus,
+    EventDispatchMode,
+    PipelineEvent,
+    PipelineEventHandler,
+    PipelineEventType,
+)
 from .models import Frame, InferenceResult, OverlayFrame
-from .processors import FrameProcessor, Overlay
+from .processors import FrameProcessor, ManagedFrameProcessor, Overlay
 from .sources import FrameSource
 
 logger = logging.getLogger(__name__)
@@ -64,6 +70,8 @@ class VisionPipeline:
             frame.
         overlay: Optional renderer invoked after successful inference.
         idle_sleep: Delay used when a live source temporarily returns no frame.
+        event_mode: Explicit event delivery mode. Only synchronous dispatch is
+            currently available; callbacks must not perform blocking I/O.
     """
 
     def __init__(
@@ -73,6 +81,7 @@ class VisionPipeline:
         *,
         overlay: Overlay | None = None,
         idle_sleep: float = 0.005,
+        event_mode: EventDispatchMode | str = EventDispatchMode.SYNCHRONOUS,
     ) -> None:
         """Initialize a stopped pipeline without opening the source."""
         if isinstance(idle_sleep, bool) or idle_sleep <= 0:
@@ -83,12 +92,14 @@ class VisionPipeline:
         self._overlay = overlay
         self._idle_sleep = idle_sleep
         self._condition = threading.Condition(threading.RLock())
-        self._events = EventBus()
+        self._events = EventBus(event_mode)
         self._state = PipelineState.STOPPED
         self._stop_requested = threading.Event()
         self._capture_complete = threading.Event()
         self._capture_thread: threading.Thread | None = None
         self._processing_thread: threading.Thread | None = None
+        self._source_closed = True
+        self._processor_closed = True
         self._pending_frame: Frame | None = None
         self._latest_frame: Frame | None = None
         self._latest_result: InferenceResult | None = None
@@ -150,6 +161,11 @@ class VisionPipeline:
                 source_errors=self._source_errors,
             )
 
+    @property
+    def event_mode(self) -> EventDispatchMode:
+        """EventDispatchMode: Synchronous event-delivery policy in use."""
+        return self._events.mode
+
     def subscribe(self, handler: PipelineEventHandler) -> Callable[[], None]:
         """Subscribe to pipeline events.
 
@@ -178,6 +194,7 @@ class VisionPipeline:
             source_event: PipelineEvent | None
 
             try:
+                self._open_processor_if_managed()
                 self._source.open()
 
             except Exception as error:
@@ -191,8 +208,11 @@ class VisionPipeline:
             else:
                 source_event = None
                 self._state = PipelineState.RUNNING
+                self._source_closed = False
 
         if source_event is not None:
+            self._close_source_safely()
+            self._close_processor_safely()
             self._events.emit(source_event)
             assert source_event.error is not None
             raise source_event.error
@@ -216,8 +236,36 @@ class VisionPipeline:
             self._capture_thread.start()
             self._processing_thread.start()
 
+    def request_stop(self) -> None:
+        """Request asynchronous shutdown without joining pipeline workers.
+
+        This method is safe to call from an event handler. It signals workers
+        and closes the source to unblock capture where possible. Use
+        :meth:`stop` from another thread when a blocking lifecycle join is
+        required.
+        """
+        with self._condition:
+            if self._state is PipelineState.STOPPED:
+                return
+
+            self._state = PipelineState.STOPPING
+            self._stop_requested.set()
+            self._condition.notify_all()
+            no_workers = (
+                self._capture_thread is None and self._processing_thread is None
+            )
+
+        self._close_source_safely()
+
+        if no_workers:
+            self._close_processor_safely()
+            self._finish_stopped()
+
     def stop(self, timeout: float = 5.0) -> None:
-        """Request shutdown, release the source, and wait for worker threads.
+        """Request shutdown and wait for workers from a non-worker thread.
+
+        When invoked by a synchronous pipeline event handler, this method
+        behaves like :meth:`request_stop` and returns without joining workers.
 
         Args:
             timeout: Maximum total wait time for capture and processing workers.
@@ -229,23 +277,22 @@ class VisionPipeline:
         if timeout < 0:
             raise ValueError("timeout must be non-negative")
 
+        self.request_stop()
         with self._condition:
-            if self._state is PipelineState.STOPPED and not self._threads_alive():
-                return
-            self._state = PipelineState.STOPPING
-            self._stop_requested.set()
-            self._condition.notify_all()
             capture_thread = self._capture_thread
             processing_thread = self._processing_thread
 
-        self._source.close()
+        if threading.current_thread() in {capture_thread, processing_thread}:
+            return
+
         deadline = time.monotonic() + timeout
         self._join_thread(capture_thread, deadline)
         self._join_thread(processing_thread, deadline)
 
-        if self._threads_alive():
+        if self._threads_alive_except(threading.current_thread()):
             raise RuntimeError("vision pipeline workers did not stop before timeout")
 
+        self._close_processor_safely()
         self._finish_stopped()
 
     def wait_until_stopped(self, timeout: float = 5.0) -> bool:
@@ -282,11 +329,20 @@ class VisionPipeline:
         self._processing_errors = 0
         self._overlay_errors = 0
         self._source_errors = 0
+        self._source_closed = True
+        self._processor_closed = True
 
     def _threads_alive(self) -> bool:
         """Return whether either pipeline worker is still alive."""
         return any(
             thread is not None and thread.is_alive()
+            for thread in (self._capture_thread, self._processing_thread)
+        )
+
+    def _threads_alive_except(self, excluded: threading.Thread) -> bool:
+        """Return whether a worker other than ``excluded`` is still alive."""
+        return any(
+            thread is not None and thread is not excluded and thread.is_alive()
             for thread in (self._capture_thread, self._processing_thread)
         )
 
@@ -322,12 +378,10 @@ class VisionPipeline:
             )
 
         finally:
+            self._close_source_safely()
             self._capture_complete.set()
-
             with self._condition:
                 self._condition.notify_all()
-
-            self._source.close()
 
     def _publish_latest_frame(
         self,
@@ -363,11 +417,14 @@ class VisionPipeline:
         try:
             while True:
                 frame = self._next_pending_frame()
+
                 if frame is None:
                     return
+
                 self._process_frame(frame)
 
         finally:
+            self._close_processor_safely()
             self._finish_stopped()
 
     def _next_pending_frame(self) -> Frame | None:
@@ -461,6 +518,79 @@ class VisionPipeline:
         """Join a worker for the remaining portion of a shutdown timeout."""
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+    def _open_processor_if_managed(self) -> None:
+        """Open an optional managed processor before source capture begins."""
+        processor = self._processor
+
+        if isinstance(processor, ManagedFrameProcessor):
+            processor.open()
+
+            with self._condition:
+                self._processor_closed = False
+
+    def _close_source_safely(self) -> Exception | None:
+        """Close the source once while ensuring shutdown continues on failure."""
+        with self._condition:
+            if self._source_closed:
+                return None
+
+            self._source_closed = True
+
+        try:
+            self._source.close()
+
+        except Exception as error:
+            logger.exception("Vision frame source close failed")
+
+            with self._condition:
+                self._source_errors += 1
+                self._last_error = error
+
+            self._events.emit(
+                PipelineEvent(
+                    PipelineEventType.SOURCE_ERROR,
+                    error=error,
+                    details={"operation": "close"},
+                )
+            )
+            return error
+
+        return None
+
+    def _close_processor_safely(self) -> Exception | None:
+        """Close an optional managed processor without interrupting shutdown."""
+        with self._condition:
+            if self._processor_closed:
+                return None
+
+            self._processor_closed = True
+
+        processor = self._processor
+
+        if not isinstance(processor, ManagedFrameProcessor):
+            return None
+
+        try:
+            processor.close()
+
+        except Exception as error:
+            logger.exception("Vision frame processor close failed")
+
+            with self._condition:
+                self._processing_errors += 1
+                self._last_error = error
+
+            self._events.emit(
+                PipelineEvent(
+                    PipelineEventType.PROCESSING_ERROR,
+                    error=error,
+                    details={"operation": "close"},
+                )
+            )
+            return error
+
+        return None
 
     def _finish_stopped(self) -> None:
         """Publish exactly one terminal state transition when workers are done."""

@@ -1,22 +1,29 @@
-"""Composable, latest-frame vision-pipeline primitives for AI Vision workloads."""
+"""Public AI Vision pipeline API."""
 
-from .events import EventBus, EventDispatchMode, PipelineEvent, PipelineEventType
-from .models import BoundingBox, Detection, Frame, InferenceResult, OverlayFrame
-from .pipeline import PipelineState, PipelineStats, VisionPipeline
-from .processors import (
+from packages.vision import (
+    BoundingBox,
+    CameraFrameSource,
+    Detection,
+    EventBus,
+    EventDispatchMode,
+    FileFrameSource,
+    Frame,
     FrameProcessor,
+    FrameSource,
+    InferenceResult,
     ManagedFrameProcessor,
     NoopFrameProcessor,
     OpenCVOverlay,
     Overlay,
-)
-from .sources import (
-    CameraFrameSource,
-    FileFrameSource,
-    FrameSource,
+    OverlayFrame,
+    PipelineEvent,
+    PipelineEventType,
+    PipelineState,
+    PipelineStats,
     PlaybackMode,
     RawFrameCamera,
     SyntheticFrameSource,
+    VisionPipeline,
 )
 
 __all__ = [
@@ -35,12 +42,12 @@ __all__ = [
     "OpenCVOverlay",
     "Overlay",
     "OverlayFrame",
-    "PlaybackMode",
     "PipelineEvent",
     "PipelineEventType",
     "PipelineState",
     "PipelineStats",
-    "SyntheticFrameSource",
+    "PlaybackMode",
     "RawFrameCamera",
+    "SyntheticFrameSource",
     "VisionPipeline",
 ]

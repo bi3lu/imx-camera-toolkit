@@ -11,7 +11,7 @@ camera can therefore serve multiple independent stream consumers.
 ## Requirements
 
 - A running camera implementing `running` and `wait_for_jpeg()`. The
-  `packages.camera.camera.Camera` class provides this interface.
+  `imx_camera_toolkit.camera.Camera` class provides this interface.
 - An HTTP server or framework when exposing the stream over a network.
 
 This package intentionally has no HTTP-framework dependency. It can be used
@@ -23,8 +23,8 @@ Start the camera once in your application lifecycle, then create a stream for a
 consumer:
 
 ```python
-from packages.camera.camera import Camera
-from packages.stream.stream import MJPEGStream
+from imx_camera_toolkit.camera import Camera
+from imx_camera_toolkit.stream import MJPEGStream
 
 camera = Camera()
 camera.start()
@@ -52,7 +52,7 @@ through `StreamingResponse`:
 ```python
 from fastapi.responses import StreamingResponse
 
-from packages.stream.stream import MJPEGStream
+from imx_camera_toolkit.stream import MJPEGStream
 
 
 def camera_feed(camera):
