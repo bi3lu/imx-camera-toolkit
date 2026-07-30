@@ -11,11 +11,17 @@ from typing import TYPE_CHECKING, Any
 from .camera import (
     Camera,
     CameraConfig,
+    CameraConfigurationError,
     CameraDependencyError,
+    CameraError,
     CameraFrame,
+    CameraOpenError,
     CameraProfile,
     CameraProfileStatus,
+    CameraReadError,
+    CameraRecoveryError,
     CameraStats,
+    CameraTimeoutError,
     Frame,
     get_camera_profile,
     list_camera_profiles,
@@ -27,17 +33,24 @@ if TYPE_CHECKING:
     from .preview import PreviewSource as PreviewSource
     from .preview import create_preview_app as create_preview_app
     from .preview import preview as preview
+    from .preview import serve as serve
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "Camera",
     "CameraConfig",
+    "CameraConfigurationError",
     "CameraProfile",
     "CameraProfileStatus",
-    "CameraStats",
     "CameraDependencyError",
+    "CameraError",
     "CameraFrame",
+    "CameraOpenError",
+    "CameraReadError",
+    "CameraRecoveryError",
+    "CameraStats",
+    "CameraTimeoutError",
     "Frame",
     "get_camera_profile",
     "list_camera_profiles",
@@ -59,6 +72,7 @@ def __getattr__(name: str) -> Any:
         "PreviewSource",
         "create_preview_app",
         "preview",
+        "serve",
     }:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -69,6 +83,7 @@ def __getattr__(name: str) -> Any:
             PreviewSource,
             create_preview_app,
             preview,
+            serve,
         )
 
     except ImportError as error:
@@ -84,6 +99,7 @@ def __getattr__(name: str) -> Any:
             "PreviewSource": PreviewSource,
             "create_preview_app": create_preview_app,
             "preview": preview,
+            "serve": serve,
         }
     )
     __all__.extend(
@@ -93,6 +109,7 @@ def __getattr__(name: str) -> Any:
             "PreviewSource",
             "create_preview_app",
             "preview",
+            "serve",
         )
     )
     return globals()[name]

@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..errors import CameraConfigurationError
+
 try:
     import yaml
 
@@ -102,30 +104,32 @@ def validate_camera_config(config: CameraConfig) -> None:
         value = getattr(config, field_name)
 
         if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"{field_name} must be an integer")
+            raise CameraConfigurationError(f"{field_name} must be an integer")
 
     if config.sensor_mode is not None and (
         isinstance(config.sensor_mode, bool) or not isinstance(config.sensor_mode, int)
     ):
-        raise ValueError("sensor_mode must be an integer or None")
+        raise CameraConfigurationError("sensor_mode must be an integer or None")
 
     if not isinstance(config.enable_preview, bool):
-        raise ValueError("enable_preview must be a boolean")
+        raise CameraConfigurationError("enable_preview must be a boolean")
 
     if config.max_fps is not None and (
         isinstance(config.max_fps, bool)
         or not isinstance(config.max_fps, (int, float))
     ):
-        raise ValueError("max_fps must be a number or None")
+        raise CameraConfigurationError("max_fps must be a number or None")
 
     if not 0 <= config.quality <= 100:
-        raise ValueError("quality must be between 0 and 100")
+        raise CameraConfigurationError("quality must be between 0 and 100")
 
     if config.max_fps is not None and config.max_fps <= 0:
-        raise ValueError("max_fps must be greater than zero")
+        raise CameraConfigurationError("max_fps must be greater than zero")
 
     if config.sensor_id < 0:
-        raise ValueError("sensor_id must be greater than or equal to zero")
+        raise CameraConfigurationError(
+            "sensor_id must be greater than or equal to zero"
+        )
 
     if min(
         config.capture_width,
@@ -134,13 +138,17 @@ def validate_camera_config(config: CameraConfig) -> None:
         config.output_height,
         config.fps,
     ) <= 0:
-        raise ValueError("frame dimensions and framerate must be greater than zero")
+        raise CameraConfigurationError(
+            "frame dimensions and framerate must be greater than zero"
+        )
 
     if not 0 <= config.flip_method <= 7:
-        raise ValueError("flip_method must be between 0 and 7")
+        raise CameraConfigurationError("flip_method must be between 0 and 7")
 
     if config.sensor_mode is not None and config.sensor_mode < 0:
-        raise ValueError("sensor_mode must be greater than or equal to zero")
+        raise CameraConfigurationError(
+            "sensor_mode must be greater than or equal to zero"
+        )
 
 
 DEFAULT_CAMERA_CONFIG = CameraConfig()
@@ -154,10 +162,14 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
 
     if unknown_keys:
         formatted_keys = ", ".join(sorted(unknown_keys))
-        raise ValueError(f"unknown camera configuration key(s): {formatted_keys}")
+        raise CameraConfigurationError(
+            f"unknown camera configuration key(s): {formatted_keys}"
+        )
 
     if "fps" in config_data and "capture_fps" in config_data:
-        raise ValueError("use either fps or legacy capture_fps, not both")
+        raise CameraConfigurationError(
+            "use either fps or legacy capture_fps, not both"
+        )
 
     for key in valid_keys - {"capture_fps"}:
         value = config_data.get(key, getattr(defaults, key))
@@ -167,24 +179,26 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
             if value is not None and (
                 isinstance(value, bool) or not isinstance(value, int)
             ):
-                raise ValueError("sensor_mode must be an integer or null")
+                raise CameraConfigurationError(
+                    "sensor_mode must be an integer or null"
+                )
 
         elif key == "enable_preview":
             if not isinstance(value, bool):
-                raise ValueError("enable_preview must be a boolean")
+                raise CameraConfigurationError("enable_preview must be a boolean")
 
         elif key == "max_fps":
             if value is not None and (
                 isinstance(value, bool) or not isinstance(value, (int, float))
             ):
-                raise ValueError("max_fps must be a number or null")
+                raise CameraConfigurationError("max_fps must be a number or null")
 
         elif isinstance(default_value, int):
             if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(f"{key} must be an integer")
+                raise CameraConfigurationError(f"{key} must be an integer")
 
         elif isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"{key} must be a number")
+            raise CameraConfigurationError(f"{key} must be a number")
 
     config = CameraConfig(
         sensor_id=config_data.get("sensor_id", defaults.sensor_id),
@@ -233,12 +247,12 @@ def load_camera_config(config_path: str | Path | None = None) -> CameraConfig:
         parsed_config = yaml.safe_load(raw_config)
 
         if not isinstance(parsed_config, dict):
-            raise ValueError("the YAML document must be a mapping")
+            raise CameraConfigurationError("the YAML document must be a mapping")
 
         config_data = parsed_config.get("camera_config")
 
         if not isinstance(config_data, dict):
-            raise ValueError("camera_config must be a mapping")
+            raise CameraConfigurationError("camera_config must be a mapping")
 
         return _read_config_values(config_data)
 

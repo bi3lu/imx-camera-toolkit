@@ -7,6 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ..errors import CameraConfigurationError, CameraDependencyError
+
 cv2_module: Any | None
 np_module: Any | None
 
@@ -37,23 +39,31 @@ class SoftwareHDRSettings:
     def __post_init__(self) -> None:
         """Validate software HDR settings."""
         if not isinstance(self.enabled, bool):
-            raise ValueError("software HDR enabled must be a boolean")
+            raise CameraConfigurationError("software HDR enabled must be a boolean")
 
         if isinstance(self.base_exposure_us, bool) or not isinstance(
             self.base_exposure_us, int
         ):
-            raise ValueError("software HDR base exposure must be an integer")
+            raise CameraConfigurationError(
+                "software HDR base exposure must be an integer"
+            )
 
         if self.base_exposure_us <= 0:
-            raise ValueError("software HDR base exposure must be greater than zero")
+            raise CameraConfigurationError(
+                "software HDR base exposure must be greater than zero"
+            )
 
         if isinstance(self.settle_frames, bool) or not isinstance(
             self.settle_frames, int
         ):
-            raise ValueError("software HDR settle frames must be an integer")
+            raise CameraConfigurationError(
+                "software HDR settle frames must be an integer"
+            )
 
         if not 0 <= self.settle_frames <= 10:
-            raise ValueError("software HDR settle frames must be between 0 and 10")
+            raise CameraConfigurationError(
+                "software HDR settle frames must be between 0 and 10"
+            )
 
 
 class SoftwareHDRProcessor:
@@ -65,10 +75,10 @@ class SoftwareHDRProcessor:
         """Initialize a bracket sequence constrained by the capture period.
 
         Raises:
-            RuntimeError: If JetPack OpenCV or NumPy is unavailable.
+            CameraDependencyError: If JetPack OpenCV or NumPy is unavailable.
         """
         if cv2_module is None or np_module is None:
-            raise RuntimeError(
+            raise CameraDependencyError(
                 "Software HDR requires the JetPack OpenCV and NumPy packages"
             )
 

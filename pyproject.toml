@@ -1,6 +1,6 @@
 [project]
 name = "imx-camera-toolkit"
-version = "0.3.1"
+version = "0.4.0"
 description = "CSI IMX camera capture, control, and streaming toolkit for NVIDIA Jetson"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ preview = [
 ]
 
 [project.scripts]
+imx-camera = "packages.cli:main"
 imx-camera-toolkit = "packages.cli:main"
 
 [build-system]

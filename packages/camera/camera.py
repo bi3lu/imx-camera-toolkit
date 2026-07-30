@@ -26,7 +26,15 @@ from .controls import (
     manual_control_properties,
     non_manual_control_properties,
 )
-from .errors import CameraDependencyError
+from .errors import (
+    CameraConfigurationError,
+    CameraDependencyError,
+    CameraError,
+    CameraOpenError,
+    CameraReadError,
+    CameraRecoveryError,
+    CameraTimeoutError,
+)
 from .models import CameraFrame, CameraStats, Frame
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
@@ -57,21 +65,27 @@ class CameraRecoveryPolicy:
             or not isinstance(self.max_attempts, int)
             or self.max_attempts < 0
         ):
-            raise ValueError("max_attempts must be a non-negative integer")
+            raise CameraConfigurationError(
+                "max_attempts must be a non-negative integer"
+            )
 
         if (
             isinstance(self.initial_backoff, bool)
             or not isinstance(self.initial_backoff, (int, float))
             or self.initial_backoff < 0
         ):
-            raise ValueError("initial_backoff must be a non-negative number")
+            raise CameraConfigurationError(
+                "initial_backoff must be a non-negative number"
+            )
 
         if (
             isinstance(self.max_consecutive_read_failures, bool)
             or not isinstance(self.max_consecutive_read_failures, int)
             or self.max_consecutive_read_failures <= 0
         ):
-            raise ValueError("max_consecutive_read_failures must be positive")
+            raise CameraConfigurationError(
+                "max_consecutive_read_failures must be positive"
+            )
 
 
 class Camera:
@@ -126,10 +140,12 @@ class Camera:
     ) -> None:
         """Initialize a camera without opening the capture source."""
         if enable_preview is not None and not isinstance(enable_preview, bool):
-            raise ValueError("enable_preview must be a boolean")
+            raise CameraConfigurationError("enable_preview must be a boolean")
 
         if fps is not None and capture_fps is not None:
-            raise ValueError("use either fps or legacy capture_fps, not both")
+            raise CameraConfigurationError(
+                "use either fps or legacy capture_fps, not both"
+            )
 
         if isinstance(config, int) and not isinstance(config, bool):
             if quality is None:
@@ -142,13 +158,15 @@ class Camera:
         if quality is not None and (
             isinstance(quality, bool) or not isinstance(quality, int)
         ):
-            raise ValueError("quality must be an integer")
+            raise CameraConfigurationError("quality must be an integer")
 
         if config is not None and not isinstance(config, CameraConfig):
             raise TypeError("config must be a CameraConfig or None")
 
         if config is not None and config_path is not None:
-            raise ValueError("config and config_path cannot be used together")
+            raise CameraConfigurationError(
+                "config and config_path cannot be used together"
+            )
 
         base_config = config if config is not None else load_camera_config(config_path)
         resolved_fps = fps if fps is not None else capture_fps
@@ -192,7 +210,7 @@ class Camera:
             property_value.startswith("sensor-mode=")
             for property_value in argus_properties
         ):
-            raise ValueError(
+            raise CameraConfigurationError(
                 "CameraConfig.sensor_mode cannot be combined with an "
                 "argus_properties sensor-mode setting"
             )
@@ -384,7 +402,7 @@ class Camera:
             ValueError: If ``enabled`` is not a boolean.
         """
         if not isinstance(enabled, bool):
-            raise ValueError("enabled must be a boolean")
+            raise CameraConfigurationError("enabled must be a boolean")
 
         with self._lifecycle_lock:
             if self._enable_preview == enabled:
@@ -467,9 +485,9 @@ class Camera:
         """Open the selected backend and start the background capture thread.
 
         Raises:
-            RuntimeError: If no capture backend is available, JPEG preview needs
-                unavailable OpenCV support, a previous thread is still stopping,
-                or the Argus camera cannot be opened.
+            CameraDependencyError: If a required local runtime is unavailable.
+            CameraOpenError: If a previous worker is still stopping or the
+                configured camera cannot be opened.
         """
         if not GStreamerCaptureBackend.available() and not opencv_available():
             raise CameraDependencyError(
@@ -489,7 +507,17 @@ class Camera:
 
             self._release_finished_capture()
             self._backend = self._create_backend()
-            self._backend.open()
+
+            try:
+                self._backend.open()
+
+            except CameraError:
+                raise
+
+            except Exception as error:
+                raise CameraOpenError(
+                    f"Could not open the IMX camera backend: {error}"
+                ) from error
 
             with self._software_hdr_lock:
                 if self._software_hdr_settings.enabled:
@@ -518,7 +546,7 @@ class Camera:
     def _release_finished_capture(self) -> None:
         """Release resources retained after an unexpectedly stopped loop."""
         if self._thread is not None and self._thread.is_alive():
-            raise RuntimeError("camera capture thread is still stopping")
+            raise CameraOpenError("camera capture thread is still stopping")
 
         self._release_backend()
         self._thread = None
@@ -554,7 +582,7 @@ class Camera:
                         consecutive_read_failures
                         >= self._recovery_policy.max_consecutive_read_failures
                     ):
-                        raise RuntimeError("camera backend stopped producing frames")
+                        raise CameraReadError("camera backend stopped producing frames")
                     time.sleep(0.02)
                     continue
 
@@ -573,6 +601,10 @@ class Camera:
                 self.last_error = error
                 logger.exception("IMX camera capture failed")
                 if not self._recover_backend():
+                    if self.running:
+                        self.last_error = CameraRecoveryError(
+                            "camera recovery attempts were exhausted"
+                        )
                     self._running.clear()
 
         self._publisher.notify_waiters()
@@ -665,7 +697,9 @@ class Camera:
             ValueError: If ``timeout`` is negative.
         """
         if timeout < 0:
-            raise ValueError("timeout must be greater than or equal to zero")
+            raise CameraConfigurationError(
+                "timeout must be greater than or equal to zero"
+            )
 
         return self._publisher.wait_for_jpeg(
             previous_frame_number,
@@ -694,7 +728,9 @@ class Camera:
             ValueError: If ``timeout`` is negative.
         """
         if timeout < 0:
-            raise ValueError("timeout must be greater than or equal to zero")
+            raise CameraConfigurationError(
+                "timeout must be greater than or equal to zero"
+            )
 
         return self._raw_publisher.wait_for_frame(
             previous_frame_number,
@@ -730,15 +766,19 @@ class Camera:
                 payload cannot be copied.
         """
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
-            raise ValueError("timeout must be a finite non-negative number")
+            raise CameraConfigurationError(
+                "timeout must be a finite non-negative number"
+            )
 
         if not isfinite(timeout) or timeout < 0:
-            raise ValueError("timeout must be a finite non-negative number")
+            raise CameraConfigurationError(
+                "timeout must be a finite non-negative number"
+            )
 
         self._validate_copy(copy)
 
         if not self.running:
-            raise RuntimeError("camera is not running; call start() before read()")
+            raise CameraReadError("camera is not running; call start() before read()")
 
         frame = self._raw_publisher.wait_for_camera_frame(
             previous_frame_number=-1,
@@ -752,7 +792,7 @@ class Camera:
     def _validate_copy(copy: bool) -> None:
         """Validate a raw-frame image ownership option."""
         if not isinstance(copy, bool):
-            raise ValueError("copy must be a boolean")
+            raise CameraConfigurationError("copy must be a boolean")
 
     @staticmethod
     def _prepare_frame(frame: Frame | None, copy: bool) -> Frame | None:
@@ -766,7 +806,7 @@ class Camera:
             image = copy_image(frame.image)
 
         except Exception as error:
-            raise ValueError(
+            raise CameraReadError(
                 "camera frame image cannot be copied; use read(copy=False) "
                 "only when the consumer can treat the shared image as read-only"
             ) from error
@@ -826,7 +866,7 @@ class Camera:
                     manual_control_properties(normalized)
                     != manual_control_properties(self._argus_properties)
                 ):
-                    raise RuntimeError(
+                    raise CameraConfigurationError(
                         "Disable software HDR before changing exposure or gain controls"
                     )
 
@@ -930,7 +970,7 @@ class Camera:
             if was_running:
                 self.stop()
                 if self._backend is not None:
-                    raise RuntimeError("camera capture thread did not stop")
+                    raise CameraRecoveryError("camera capture thread did not stop")
 
             self._argus_properties = normalized
             self._pipeline = new_pipeline
@@ -990,12 +1030,18 @@ def get_camera(**kwargs: Any) -> Camera:
 
 __all__ = [
     "Camera",
+    "CameraConfigurationError",
     "CameraDependencyError",
+    "CameraError",
     "CameraFrame",
+    "CameraOpenError",
+    "CameraReadError",
     "Frame",
     "CameraConfig",
     "CameraRecoveryPolicy",
+    "CameraRecoveryError",
     "CameraStats",
+    "CameraTimeoutError",
     "DEFAULT_CAMERA_CONFIG",
     "SoftwareHDRSettings",
     "build_gstreamer_pipeline",

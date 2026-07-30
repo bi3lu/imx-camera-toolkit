@@ -19,6 +19,7 @@ __all__ = [
     "PreviewSource",
     "create_preview_app",
     "preview",
+    "serve",
 ]
 
 
@@ -166,3 +167,41 @@ def create_preview_app(
         view_path=view_path,
         manage_camera=False,
     )
+
+
+def serve(
+    source: PreviewSource,
+    *,
+    host: str = "0.0.0.0",
+    port: int = 8000,
+    quality: int = 65,
+    max_fps: float = 30.0,
+) -> None:
+    """Serve opaque images from an existing source through a browser preview.
+
+    The caller retains source lifecycle ownership. In particular, passing a
+    :class:`Camera` does not open or close its capture pipeline; start it with a
+    context manager or application lifecycle before calling this function.
+
+    Args:
+        source: Existing latest-frame source, such as a started ``Camera``.
+        host: Address on which to expose the HTTP server.
+        port: TCP port on which to expose the HTTP server.
+        quality: JPEG quality from 0 to 100.
+        max_fps: Maximum JPEG encoding rate in frames per second.
+
+    Raises:
+        ValueError: If server or JPEG settings are invalid.
+    """
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError("host must be a non-empty string")
+
+    if (
+        isinstance(port, bool)
+        or not isinstance(port, int)
+        or not 1 <= port <= 65535
+    ):
+        raise ValueError("port must be between 1 and 65535")
+
+    server = PreviewServer(source=source, quality=quality, max_fps=max_fps)
+    uvicorn.run(server.create_app(), host=host, port=port)

@@ -6,9 +6,12 @@ import importlib.util
 import platform
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from .camera.camera import Camera, CameraConfig
 
 
 @dataclass(frozen=True)
@@ -84,3 +87,104 @@ def diagnostics_as_dict(include_hardware: bool = False) -> list[dict[str, object
         results.append(asdict(check))
 
     return results
+
+
+def run_camera_smoke_test(
+    *,
+    frames: int = 30,
+    timeout: float = 5.0,
+    sensor_id: int = 0,
+    width: int = 1280,
+    height: int = 720,
+    fps: int = 30,
+) -> list[DiagnosticCheck]:
+    """Open a physical camera, capture frames, and verify clean teardown.
+
+    This test is intentionally opt-in because it accesses the connected CSI
+    sensor. It opens one raw-frame-only camera, waits for ``frames`` distinct
+    source frames, reports the observed capture rate, and always attempts to
+    release the backend before returning.
+
+    Args:
+        frames: Number of distinct raw frames to observe.
+        timeout: Maximum wait for opening and for each expected frame.
+        sensor_id: Zero-based CSI sensor identifier.
+        width: Capture and output width in pixels.
+        height: Capture and output height in pixels.
+        fps: Requested capture rate in frames per second.
+
+    Returns:
+        Ordered diagnostic checks for open, first frame, frame rate, and close.
+    """
+    if frames <= 0:
+        raise ValueError("frames must be greater than zero")
+
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than zero")
+
+    config = CameraConfig(
+        sensor_id=sensor_id,
+        capture_width=width,
+        capture_height=height,
+        output_width=width,
+        output_height=height,
+        fps=fps,
+        enable_preview=False,
+    )
+    camera = Camera(config)
+    checks: list[DiagnosticCheck] = []
+    previous_frame_number = -1
+    captured = 0
+
+    try:
+        camera.start()
+        checks.append(DiagnosticCheck("camera_open", "ok", "opened"))
+        started_at = time.monotonic()
+
+        while captured < frames:
+            frame_number, image = camera.wait_for_raw_frame(
+                previous_frame_number,
+                timeout=timeout,
+            )
+
+            if image is None or frame_number == previous_frame_number:
+                check_name = "first_frame" if captured == 0 else "capture_rate"
+                checks.append(
+                    DiagnosticCheck(
+                        check_name,
+                        "error",
+                        f"timed out after {timeout:.1f}s waiting for a camera frame",
+                    )
+                )
+                return checks
+
+            previous_frame_number = frame_number
+            captured += 1
+
+            if captured == 1:
+                checks.append(DiagnosticCheck("first_frame", "ok", "captured"))
+
+        duration = max(time.monotonic() - started_at, 1e-9)
+        observed_fps = captured / duration
+        checks.append(
+            DiagnosticCheck(
+                "capture_rate",
+                "ok",
+                f"{observed_fps:.2f} FPS across {captured} frames",
+            )
+        )
+
+    except Exception as error:
+        checks.append(DiagnosticCheck("camera_open", "error", str(error)))
+
+    finally:
+        try:
+            camera.stop()
+            status = "ok" if not camera.running else "error"
+            detail = "released" if status == "ok" else "camera is still running"
+            checks.append(DiagnosticCheck("camera_release", status, detail))
+
+        except Exception as error:
+            checks.append(DiagnosticCheck("camera_release", "error", str(error)))
+
+    return checks

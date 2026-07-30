@@ -13,6 +13,15 @@ separation keeps hardware-specific code isolated and allows alternative
 processing or transport layers to be introduced without coupling them to the
 camera capture loop.
 
+## What this project is not
+
+IMX Camera Toolkit is a camera-capture and image-transport foundation. It does
+not provide inference models, model loaders, trackers, batching, CUDA-stream
+management, DeepStream pipelines, ROS 2 integration, multi-camera
+synchronization, or telemetry backends. Applications retain ownership of those
+policies and receive an opaque raw `Frame.image` payload for their own chosen
+vision stack.
+
 ## System architecture
 
 ```text
@@ -58,7 +67,7 @@ intermediate frames.
 
 - NVIDIA Jetson Orin Nano or a compatible Jetson platform.
 - A supported CSI-connected IMX camera sensor.
-- JetPack with NVIDIA Argus, `nvarguscamerasrc`, and GStreamer support.
+- JetPack 6.2.2 with NVIDIA Argus, `nvarguscamerasrc`, and GStreamer support.
 - System OpenCV with GStreamer support. On JetPack this is normally supplied by
   the `python3-opencv` system package.
 - Python 3.10 or newer.
@@ -67,6 +76,16 @@ intermediate frames.
 
 OpenCV is intentionally not installed from PyPI. The JetPack-provided build is
 required because it integrates with NVIDIA's camera and GStreamer stack.
+
+## Compatibility matrix
+
+| JetPack | Jetson | Camera module | Profile / Argus mode | Capture | Output | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| 6.2.2 | Orin Nano | IMX219-77 | `imx219-1080p` / 2 | 1920×1080 at 30 FPS | 1280×720 | tested |
+| 6.2.2 | Orin Nano | IMX477 | — | — | — | planned |
+
+Only the first row has been verified on the stated hardware. “Planned” is not
+a support claim and must not be treated as a working profile.
 
 ## Installation
 
@@ -121,7 +140,7 @@ Add the stable branch to the consuming project's `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.3.1"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.4.0"
 ]
 ```
 
@@ -141,7 +160,7 @@ To consume the Git dependency with the browser-preview extra, declare it as:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.3.1"
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.4.0"
 ]
 ```
 
@@ -160,11 +179,14 @@ with Camera(CameraConfig(enable_preview=False)) as camera:
     frame = source.read(timeout=1.0)
 ```
 
-The public namespace also provides `api`, `camera_control`, and `stream`:
+The public namespace also provides `api`, `camera_control`, `controls`,
+`stream`, and deterministic test doubles:
 
 ```python
 from imx_camera_toolkit.camera_control import CameraController
+from imx_camera_toolkit.controls import CameraControls, ExposureConfig
 from imx_camera_toolkit.stream import MJPEGStream
+from imx_camera_toolkit.testing import MockCamera
 ```
 
 For direct integration with an external AI or image-processing pipeline, use
@@ -203,6 +225,25 @@ if stats.consecutive_failures:
 
 The FastAPI health endpoint also exposes these capture diagnostics in JSON.
 
+### Camera error contract
+
+The public camera API exposes stable exceptions so integrations never need to
+parse logs or match backend-specific messages:
+
+| Exception | Meaning |
+| --- | --- |
+| `CameraDependencyError` | Required JetPack runtime dependency, such as system OpenCV or GStreamer support, is unavailable. |
+| `CameraConfigurationError` | A camera setting, pipeline property, or API option is invalid. It also subclasses `ValueError` for compatibility. |
+| `CameraOpenError` | The selected capture backend cannot open the configured camera. |
+| `CameraReadError` | A frame cannot be read safely, including calling `read()` before startup. |
+| `CameraTimeoutError` | An operation that requires a frame reaches its deadline, for example the hardware benchmark or snapshot command. |
+| `CameraRecoveryError` | Capture recovery is exhausted or a capture worker cannot stop safely. |
+
+`Camera.read(timeout=...)` intentionally retains its lightweight polling
+contract: it returns `None` when no newer raw frame arrives in time. This is
+appropriate for latest-frame processing loops that do not want exceptions on a
+normal temporary absence of frames.
+
 ### Reusing one camera for inference and preview
 
 The browser preview can attach to an existing camera instead of constructing a
@@ -223,6 +264,18 @@ with camera:
 `create_preview_app()` enables JPEG preview on the provided camera but leaves
 its lifecycle to the application. It does not start, stop, or replace the
 camera instance.
+
+For a transport-only preview backed by any existing latest-frame source, use
+`serve()`. It does not create a second capture pipeline or own the source
+lifecycle:
+
+```python
+from imx_camera_toolkit import Camera
+from imx_camera_toolkit.preview import serve
+
+with Camera() as camera:
+    serve(camera, port=8000)
+```
 
 ### Generic processed-image preview
 
@@ -277,8 +330,9 @@ distributions. Build artifacts are written to `dist/`:
 uv build
 ```
 
-The installed package provides the `imx-camera-toolkit` console command. It is
-also available inside the project environment through `uv run`.
+The installed package provides the `imx-camera` console command. The legacy
+`imx-camera-toolkit` command remains available as a compatibility alias. Both
+are available inside the project environment through `uv run`.
 
 ## Development quality checks
 
@@ -298,11 +352,15 @@ uv run pytest -m "not benchmark"
 
 Deterministic capture and MJPEG framing benchmarks are deliberately separate
 from the normal test suite. They measure toolkit overhead only; they do not
-represent sensor, ISP, JPEG encoder, network, or browser performance.
+represent sensor, ISP, JPEG encoder, network, or browser performance. A
+separate, explicit hardware benchmark compares capture with JPEG preview
+disabled and enabled, reports dropped source frames, and records mean raw-frame
+delivery latency.
 
 ```bash
 uv run pytest -m benchmark
-uv run imx-camera-toolkit benchmark all --frames 1000 --json
+uv run imx-camera benchmark all --frames 1000 --json
+uv run imx-camera benchmark camera --frames 300
 ```
 
 GitHub Actions runs linting and strict type checking in a dedicated job, unit
@@ -312,24 +370,42 @@ failures immediately distinguishable in CI.
 
 ## Command-line interface and diagnostics
 
-The installed `imx-camera-toolkit` command provides non-destructive deployment
-checks and deterministic benchmarks:
+The installed `imx-camera` command provides deployment checks, physical-camera
+smoke testing, snapshots, browser preview, and benchmarks:
 
 ```bash
-uv run imx-camera-toolkit diagnose --json
-uv run imx-camera-toolkit diagnose --hardware
-uv run imx-camera-toolkit benchmark capture --frames 1000
-uv run imx-camera-toolkit serve --host 0.0.0.0 --port 8000
+uv run imx-camera info --json
+uv run imx-camera diagnose --hardware
+uv run imx-camera test --frames 30 --timeout 5
+uv run imx-camera snapshot snapshot.jpg
+uv run imx-camera preview --host 0.0.0.0 --port 8000
+uv run imx-camera benchmark capture --frames 1000
+uv run imx-camera benchmark camera --frames 300
 ```
 
 `diagnose --hardware` checks for the locally installed Argus GStreamer element
-and V4L2 command-line utility. It does not alter sensor settings or open a
-camera stream.
+and V4L2 command-line utility. `test` is the explicit physical-camera check: it
+opens the configured sensor, waits for the first frame, measures a sequence of
+distinct frames, and verifies that the backend is released. It may access the
+camera and should therefore not run concurrently with another camera process.
 
-The `benchmark` commands use `MockCamera`, so they are repeatable on both
-Jetson and non-Jetson development machines. They characterize Python-side
-capture publication and multipart framing overhead, rather than end-to-end
-camera or network throughput.
+The `capture`, `streaming`, and `all` benchmark targets use `MockCamera`, so
+they are repeatable on both Jetson and non-Jetson development machines. The
+`camera` target is an explicit physical-camera benchmark. It compares raw
+capture with and without JPEG preview, and reports local capture throughput,
+dropped frames, and mean frame-delivery latency. Neither benchmark measures
+network or browser throughput.
+
+## Examples
+
+The runnable examples are intentionally small and use only public imports:
+
+- [`examples/capture_frames.py`](examples/capture_frames.py) reads raw latest
+  frames for an external processing pipeline.
+- [`examples/browser_preview.py`](examples/browser_preview.py) starts the
+  simple preview facade.
+- [`examples/shared_preview.py`](examples/shared_preview.py) attaches generic
+  browser transport to one existing camera instance.
 
 ## Running the local preview
 
@@ -590,7 +666,7 @@ its own template while retaining the same API factory.
 | Camera cannot open | Verify the CSI connection, `sensor_id`, JetPack installation, and availability of `nvarguscamerasrc`. |
 | Argus cannot connect | Confirm that `nvargus-daemon` is running and that the process has access to the Jetson camera stack. Containers additionally require the Argus socket and relevant device access. |
 | No image at the preview endpoint | Inspect `/api/health` for `last_error`, camera state, and frame counters. |
-| Intermittent camera failures | Inspect `/api/health` for recovery counters and `last_recovery_error`. Run `uv run imx-camera-toolkit diagnose --hardware` to verify Argus and V4L2 prerequisites. |
+| Intermittent camera failures | Inspect `/api/health` for recovery counters and `last_recovery_error`. Run `uv run imx-camera diagnose --hardware` to verify Argus and V4L2 prerequisites. |
 | Runtime control is rejected | Inspect `GET /api/camera/control` and declare only properties and sensor modes supported by the installed `nvarguscamerasrc` driver. |
 | Software HDR cannot start | Confirm that manual sensor exposure control is available. Disable software HDR before applying external manual exposure or gain settings. |
 | Remote browser cannot connect | Confirm network reachability to port `8000` and review host firewall or reverse-proxy configuration. |

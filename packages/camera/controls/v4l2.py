@@ -6,6 +6,7 @@ import math
 import subprocess
 from collections.abc import Sequence
 
+from ..errors import CameraReadError
 from .argus import parse_argus_property
 
 
@@ -60,7 +61,7 @@ class V4L2Controls:
                 prefix.
 
         Raises:
-            RuntimeError: If the V4L2 control device cannot apply a setting.
+            CameraReadError: If the V4L2 control device cannot apply a setting.
         """
         if not controls:
             return
@@ -77,10 +78,12 @@ class V4L2Controls:
             )
 
         except (OSError, subprocess.TimeoutExpired) as error:
-            raise RuntimeError(
+            raise CameraReadError(
                 f"Could not apply V4L2 camera controls: {error}"
             ) from error
 
         if result.returncode != 0:
             message = result.stderr.strip() or result.stdout.strip()
-            raise RuntimeError(f"Could not apply V4L2 camera controls: {message}")
+            raise CameraReadError(
+                f"Could not apply V4L2 camera controls: {message}"
+            )
