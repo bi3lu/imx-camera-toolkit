@@ -25,7 +25,7 @@ from .controls import (
     manual_control_properties,
     non_manual_control_properties,
 )
-from .models import CameraFrame
+from .models import CameraFrame, Frame
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
@@ -338,13 +338,18 @@ class Camera:
 
                 consecutive_read_failures = 0
                 self.frames_captured += 1
-                captured_at = time.monotonic()
+                timestamp_ns = time.monotonic_ns()
                 processed_frame = self._process_frame(frame)
 
                 if processed_frame is None:
                     continue
 
-                self._raw_publisher.publish(processed_frame, captured_at=captured_at)
+                self._raw_publisher.publish(
+                    processed_frame,
+                    width=self._config.output_width,
+                    height=self._config.output_height,
+                    timestamp_ns=timestamp_ns,
+                )
                 self._publisher.publish(processed_frame)
 
             except Exception as error:
@@ -465,7 +470,7 @@ class Camera:
             lambda: self.running,
         )
 
-    def read(self, timeout: float = 2.0, copy: bool = True) -> CameraFrame | None:
+    def read(self, timeout: float = 2.0, copy: bool = True) -> Frame | None:
         """Return the newest available processed BGR frame.
 
         The camera retains exactly one raw frame. This method never creates a
@@ -525,11 +530,33 @@ class Camera:
                 "only when the consumer can treat the shared image as read-only"
             ) from error
 
-        return CameraFrame(
-            sequence=frame.sequence,
+        return Frame(
             image=image,
-            captured_at=frame.captured_at,
+            sequence=frame.sequence,
+            timestamp_ns=frame.timestamp_ns,
+            capture_timestamp_ns=frame.capture_timestamp_ns,
+            width=frame.width,
+            height=frame.height,
+            format=frame.format,
         )
+
+    def read_image(self, timeout: float = 2.0, copy: bool = True) -> object | None:
+        """Return only the newest BGR image for compatibility-oriented callers.
+
+        This is equivalent to ``camera.read(timeout=timeout, copy=copy)``
+        followed by access to ``Frame.image``. Prefer :meth:`read` in new
+        integrations to retain timestamps, dimensions, pixel format, and frame
+        sequence information.
+
+        Args:
+            timeout: Maximum wait for a raw frame, in seconds.
+            copy: Whether to return an independent image copy.
+
+        Returns:
+            Raw BGR image payload, or ``None`` when no frame is available.
+        """
+        frame = self.read(timeout=timeout, copy=copy)
+        return frame.image if frame is not None else None
 
     def apply_argus_properties(
         self,
@@ -723,6 +750,7 @@ def get_camera(**kwargs: Any) -> Camera:
 __all__ = [
     "Camera",
     "CameraFrame",
+    "Frame",
     "CameraConfig",
     "CameraRecoveryPolicy",
     "DEFAULT_CAMERA_CONFIG",

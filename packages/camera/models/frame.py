@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
-class CameraFrame:
-    """One processed BGR camera frame without JPEG encoding or inference.
+class Frame:
+    """One processed camera frame without JPEG encoding or inference.
 
     The image payload is intentionally opaque so callers can pass it directly
     to OpenCV, TensorRT, DeepStream, CUDA, or another image-processing system.
@@ -16,29 +15,50 @@ class CameraFrame:
     ``Camera.read(copy=False)`` is used.
 
     Args:
-        sequence: Monotonically increasing identifier assigned during capture.
         image: Processed BGR image payload.
-        captured_at: Monotonic timestamp recorded when the source frame was
-            acquired.
+        sequence: Monotonically increasing identifier assigned during capture.
+        timestamp_ns: Monotonic timestamp recorded when the frame is acquired.
+        capture_timestamp_ns: Optional hardware-provided capture timestamp.
+        width: Image width in pixels.
+        height: Image height in pixels.
+        format: Pixel format name, such as ``"BGR"``.
     """
 
-    sequence: int
     image: object
-    captured_at: float
+    sequence: int
+    timestamp_ns: int
+    capture_timestamp_ns: int | None
+    width: int
+    height: int
+    format: str
 
     def __post_init__(self) -> None:
-        """Validate the frame identity and timestamp."""
-        if (
-            isinstance(self.sequence, bool)
-            or not isinstance(self.sequence, int)
-            or self.sequence <= 0
-        ):
+        """Validate frame metadata without inspecting the image payload."""
+        integer_fields = ("sequence", "timestamp_ns", "width", "height")
+        for field_name in integer_fields:
+            value = getattr(self, field_name)
+
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"{field_name} must be an integer")
+
+        if self.sequence <= 0:
             raise ValueError("sequence must be a positive integer")
 
-        if (
-            isinstance(self.captured_at, bool)
-            or not isinstance(self.captured_at, (int, float))
-            or not math.isfinite(self.captured_at)
-            or self.captured_at < 0
+        if self.timestamp_ns < 0:
+            raise ValueError("timestamp_ns must be non-negative")
+
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError("width and height must be positive")
+
+        if not isinstance(self.format, str) or not self.format.strip():
+            raise ValueError("format must be a non-empty string")
+
+        if self.capture_timestamp_ns is not None and (
+            isinstance(self.capture_timestamp_ns, bool)
+            or not isinstance(self.capture_timestamp_ns, int)
+            or self.capture_timestamp_ns < 0
         ):
-            raise ValueError("captured_at must be a finite non-negative number")
+            raise ValueError("capture_timestamp_ns must be a non-negative integer")
+
+
+CameraFrame = Frame

@@ -70,9 +70,8 @@ uv sync
 ## Stable raw-frame API
 
 `Camera.read()` is the primary integration API for external image-processing
-pipelines. It returns a `CameraFrame` containing a processed BGR image, a
-monotonic sequence identifier, and capture timestamp. It does not encode JPEG
-data and does not perform inference.
+pipelines. It returns a `Frame` containing an opaque processed BGR image and
+metadata. It does not encode JPEG data and does not perform inference.
 
 ```python
 from imx_camera_toolkit import Camera
@@ -82,6 +81,26 @@ with Camera() as camera:
 
     if frame is not None:
         result = my_tensor_rt_engine(frame.image)
+```
+
+`Frame` provides the following stable fields:
+
+| Field | Meaning |
+| --- | --- |
+| `image` | Opaque BGR payload; it may be a NumPy array, CUDA buffer, DMA-BUF, or another future backend type. |
+| `sequence` | Monotonically increasing capture identifier. |
+| `timestamp_ns` | Monotonic acquisition timestamp in nanoseconds. |
+| `capture_timestamp_ns` | Optional hardware-provided capture timestamp; currently `None` for the standard backend. |
+| `width`, `height` | Output image dimensions in pixels. |
+| `format` | Pixel format, currently `"BGR"`. |
+
+This enables latency measurements without binding the toolkit to an AI
+framework:
+
+```python
+import time
+
+latency_ns = time.monotonic_ns() - frame.timestamp_ns
 ```
 
 The camera retains exactly one raw frame. `read()` returns the newest available
@@ -97,6 +116,10 @@ By default, `copy=True` returns an independent BGR image copy owned by the
 caller. With `copy=False`, `frame.image` is the camera's shared image payload.
 This avoids a copy for TensorRT, DeepStream, OpenCV, and CUDA pipelines, but
 the caller must treat the shared payload as read-only.
+
+`read_image(timeout=..., copy=...)` is available for compatibility-oriented
+code that requires only the image payload. New integrations should use `read()`
+to retain frame sequence, timestamps, dimensions, and format.
 
 ## JPEG preview API
 

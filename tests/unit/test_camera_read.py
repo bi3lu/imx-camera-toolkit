@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from imx_camera_toolkit import Camera, CameraFrame
+from imx_camera_toolkit import Camera, CameraFrame, Frame
 
 
 def _running_camera() -> Camera:
@@ -17,24 +17,39 @@ def _running_camera() -> Camera:
     return camera
 
 
+def _publish(camera: Camera, image: object) -> None:
+    """Publish a raw BGR payload with the camera's resolved metadata."""
+    camera._raw_publisher.publish(
+        image,
+        width=camera.config.output_width,
+        height=camera.config.output_height,
+    )
+
+
 def test_read_returns_newest_frame_and_avoids_a_consumer_queue() -> None:
     """Only the newest raw frame must be exposed to an external consumer."""
     camera = _running_camera()
-    camera._raw_publisher.publish(bytearray(b"older"))
-    camera._raw_publisher.publish(bytearray(b"newest"))
+    _publish(camera, bytearray(b"older"))
+    _publish(camera, bytearray(b"newest"))
 
     frame = camera.read(timeout=0, copy=False)
 
     assert isinstance(frame, CameraFrame)
+    assert isinstance(frame, Frame)
     assert frame.sequence == 2
     assert frame.image == bytearray(b"newest")
+    assert frame.timestamp_ns > 0
+    assert frame.capture_timestamp_ns is None
+    assert frame.width == camera.config.output_width
+    assert frame.height == camera.config.output_height
+    assert frame.format == "BGR"
 
 
 def test_read_copy_controls_image_ownership() -> None:
     """Default reads must copy while zero-copy reads retain the shared image."""
     camera = _running_camera()
     image = bytearray(b"frame")
-    camera._raw_publisher.publish(image)
+    _publish(camera, image)
 
     copied_frame = camera.read(timeout=0)
     shared_frame = camera.read(timeout=0, copy=False)
@@ -60,7 +75,7 @@ def test_read_waits_for_the_first_published_raw_frame() -> None:
     def publish_frame() -> None:
         """Publish one frame after read has started waiting."""
         time.sleep(0.01)
-        camera._raw_publisher.publish(bytearray(b"first"))
+        _publish(camera, bytearray(b"first"))
 
     publisher = threading.Thread(target=publish_frame)
     publisher.start()
@@ -70,6 +85,17 @@ def test_read_waits_for_the_first_published_raw_frame() -> None:
     assert frame is not None
     assert frame.sequence == 1
     assert frame.image == bytearray(b"first")
+
+
+def test_read_image_returns_only_the_requested_image_payload() -> None:
+    """Compatibility helper must preserve read's copy semantics."""
+    camera = _running_camera()
+    image = bytearray(b"frame")
+    _publish(camera, image)
+
+    shared_image = camera.read_image(timeout=0, copy=False)
+
+    assert shared_image is image
 
 
 def test_read_requires_an_active_camera() -> None:

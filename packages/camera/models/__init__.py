@@ -1,5 +1,5 @@
 """Public data models returned by the camera package."""
 
-from .frame import CameraFrame
+from .frame import CameraFrame, Frame
 
-__all__ = ["CameraFrame"]
+__all__ = ["CameraFrame", "Frame"]

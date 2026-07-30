@@ -148,10 +148,12 @@ with Camera() as camera:
         result = my_tensor_rt_engine(frame.image)
 ```
 
-`read()` retains only the newest BGR frame, may skip stale frames, and never
-performs JPEG encoding or inference. The default `copy=True` gives the caller
-an independent image buffer; `copy=False` returns a read-only shared payload
-for zero-copy-oriented pipelines.
+`read()` returns a formal `Frame` with an opaque `image`, monotonic `sequence`,
+nanosecond `timestamp_ns`, optional hardware `capture_timestamp_ns`, dimensions,
+and pixel `format`. It retains only the newest BGR frame, may skip stale frames,
+and never performs JPEG encoding or inference. The default `copy=True` gives
+the caller an independent image buffer; `copy=False` returns a read-only shared
+payload for zero-copy-oriented pipelines.
 
 For development, install the additional test, lint, and type-checking tools:
 

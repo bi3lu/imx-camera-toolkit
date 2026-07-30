@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from time import monotonic
+from time import monotonic_ns
 
-from ..models import CameraFrame
+from ..models import Frame
 
 
 class RawFramePublisher:
@@ -21,7 +21,7 @@ class RawFramePublisher:
     def __init__(self) -> None:
         """Initialize an empty raw-frame slot."""
         self._condition = threading.Condition()
-        self._frame: CameraFrame | None = None
+        self._frame: Frame | None = None
         self._frame_number = 0
 
     @property
@@ -36,23 +36,42 @@ class RawFramePublisher:
         with self._condition:
             return self._frame_number
 
-    def publish(self, frame: object, *, captured_at: float | None = None) -> int:
+    def publish(
+        self,
+        frame: object,
+        *,
+        width: int,
+        height: int,
+        format: str = "BGR",
+        timestamp_ns: int | None = None,
+        capture_timestamp_ns: int | None = None,
+    ) -> int:
         """Publish a processed BGR frame and wake waiting consumers.
 
         Args:
             frame: Frame payload retained by reference without mutation or copy.
-            captured_at: Monotonic acquisition timestamp. When omitted, records
-                the time at which the frame is published.
+            width: Image width in pixels.
+            height: Image height in pixels.
+            format: Pixel format name.
+            timestamp_ns: Monotonic acquisition timestamp. When omitted,
+                records the time at which the frame is published.
+            capture_timestamp_ns: Optional hardware-provided capture timestamp.
 
         Returns:
             Identifier assigned to the published raw frame.
         """
         with self._condition:
             self._frame_number += 1
-            self._frame = CameraFrame(
-                sequence=self._frame_number,
+            self._frame = Frame(
                 image=frame,
-                captured_at=monotonic() if captured_at is None else captured_at,
+                sequence=self._frame_number,
+                timestamp_ns=(
+                    monotonic_ns() if timestamp_ns is None else timestamp_ns
+                ),
+                capture_timestamp_ns=capture_timestamp_ns,
+                width=width,
+                height=height,
+                format=format,
             )
             self._condition.notify_all()
             return self._frame_number
@@ -62,7 +81,7 @@ class RawFramePublisher:
         previous_frame_number: int,
         timeout: float,
         is_running: Callable[[], bool],
-    ) -> CameraFrame | None:
+    ) -> Frame | None:
         """Wait for a newer frame and return its metadata atomically.
 
         Args:
