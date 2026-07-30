@@ -1,4 +1,4 @@
-"""Latest raw-frame publication for local AI Vision consumers."""
+"""Latest raw-frame publication for local application consumers."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ class RawFramePublisher:
 
     The publisher owns only the reference to the newest camera frame. It does
     not mutate or copy the payload, so consumers must treat returned frames as
-    read-only. This avoids a BGR-to-JPEG-to-BGR round trip when AI Vision and an
-    MJPEG preview use the same camera capture loop.
+    read-only. This avoids a BGR-to-JPEG-to-BGR round trip when an external
+    processing pipeline and an MJPEG preview use the same camera capture loop.
     """
 
     def __init__(self) -> None:

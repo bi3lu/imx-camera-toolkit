@@ -22,8 +22,8 @@ CSI IMX sensor
 Camera package <--- runtime controls --- Camera Control package
 Argus + GStreamer capture, BGR conversion, software HDR, JPEG encoding
       |
-      +----> Vision package
-      |      Latest-frame inference, structured results, and overlays
+      +----> Frames package
+      |      Minimal raw-frame source contract for external pipelines
       v
 Stream package
 MJPEG multipart framing
@@ -47,7 +47,7 @@ intermediate frames.
 | --- | --- |
 | [`packages/camera`](packages/camera/README.md) | CSI camera acquisition through `nvarguscamerasrc`, frame conversion, JPEG encoding, and frame synchronization. |
 | [`packages/camera_control`](packages/camera_control/README.md) | Validated runtime exposure, gain, white-balance, denoise, sensor-mode, and HDR control for NVIDIA Argus cameras. |
-| [`packages/vision`](packages/vision/README.md) | Latest-frame AI Vision pipeline, raw-camera adapter, inference contracts, overlays, events, file playback, and synthetic sources. |
+| [`packages/frames`](packages/frames/README.md) | Minimal `FrameSource` protocol and adapter from the toolkit camera to external processing pipelines. |
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
 | [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
@@ -152,11 +152,12 @@ internal `packages` namespace remains an implementation detail and should not
 be used by new projects.
 
 ```python
-from imx_camera_toolkit.camera import Camera
-from imx_camera_toolkit.vision import CameraFrameSource, VisionPipeline
+from imx_camera_toolkit import Camera
+from imx_camera_toolkit.frames import CameraFrameSource
 
-camera = Camera()
-pipeline = VisionPipeline(CameraFrameSource(camera), processor)
+with Camera(enable_preview=False) as camera:
+    source = CameraFrameSource(camera)
+    frame = source.read(timeout=1.0)
 ```
 
 The public namespace also provides `api`, `camera_control`, and `stream`:

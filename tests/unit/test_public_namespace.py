@@ -14,8 +14,8 @@ from imx_camera_toolkit import (
 from imx_camera_toolkit.api import create_app
 from imx_camera_toolkit.camera import Camera
 from imx_camera_toolkit.camera_control import CameraController
+from imx_camera_toolkit.frames import CameraFrameSource, FrameSource
 from imx_camera_toolkit.stream import MJPEGStream
-from imx_camera_toolkit.vision import SyntheticFrameSource, VisionPipeline
 from packages.api.api import create_app as InternalCreateApp
 from packages.camera.camera import Camera as InternalCamera
 from packages.camera.errors import CameraDependencyError as InternalDependencyError
@@ -24,11 +24,9 @@ from packages.camera.models import Frame as InternalFrame
 from packages.camera_control.camera_control import (
     CameraController as InternalController,
 )
+from packages.frames import CameraFrameSource as InternalCameraFrameSource
+from packages.frames import FrameSource as InternalFrameSource
 from packages.stream.stream import MJPEGStream as InternalMJPEGStream
-from packages.vision import (
-    SyntheticFrameSource as InternalSyntheticFrameSource,
-)
-from packages.vision import VisionPipeline as InternalVisionPipeline
 
 
 def test_public_namespace_reexports_stable_library_types() -> None:
@@ -43,6 +41,6 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert CameraFrame is InternalCameraFrame
     assert Frame is InternalFrame
     assert CameraController is InternalController
+    assert CameraFrameSource is InternalCameraFrameSource
+    assert FrameSource is InternalFrameSource
     assert MJPEGStream is InternalMJPEGStream
-    assert SyntheticFrameSource is InternalSyntheticFrameSource
-    assert VisionPipeline is InternalVisionPipeline

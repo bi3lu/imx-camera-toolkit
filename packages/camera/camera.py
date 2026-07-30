@@ -253,7 +253,7 @@ class Camera:
         """object | None: Newest processed raw BGR frame without a copy.
 
         Consumers must treat this payload as read-only. It is shared with JPEG
-        encoding and vision consumers to avoid needless image-copy overhead.
+        encoding and external frame consumers to avoid needless copy overhead.
         """
         return self._raw_publisher.frame
 
