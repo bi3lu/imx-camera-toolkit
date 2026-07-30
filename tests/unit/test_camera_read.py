@@ -7,7 +7,10 @@ import time
 
 import pytest
 
-from imx_camera_toolkit import Camera, CameraFrame, Frame
+from imx_camera_toolkit import Camera, CameraDependencyError, CameraFrame, Frame
+from packages.camera import camera as camera_module
+from packages.camera.backends.gstreamer import GStreamerCaptureBackend
+from packages.camera.config import loader as config_loader
 from packages.camera.publishing.jpeg import JPEGPublisher
 
 
@@ -171,3 +174,27 @@ def test_camera_rejects_non_boolean_preview_configuration() -> None:
     """JPEG preview configuration must be an explicit boolean option."""
     with pytest.raises(ValueError, match="enable_preview"):
         Camera(enable_preview=1)  # type: ignore[arg-type]
+
+
+def test_camera_reports_a_missing_system_opencv_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Missing capture runtime must raise the public dependency exception."""
+    monkeypatch.setattr(camera_module, "opencv_available", lambda: False)
+    monkeypatch.setattr(
+        GStreamerCaptureBackend,
+        "available",
+        lambda: False,
+    )
+
+    with pytest.raises(CameraDependencyError, match="System OpenCV"):
+        Camera().start()
+
+
+def test_camera_config_uses_defaults_when_pyyaml_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Core camera construction must not require a YAML parser dependency."""
+    monkeypatch.setattr(config_loader, "yaml", None)
+
+    assert config_loader.load_camera_config() == config_loader.DEFAULT_CAMERA_CONFIG

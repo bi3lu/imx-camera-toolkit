@@ -7,6 +7,8 @@ import threading
 import time
 from typing import Any
 
+from ..errors import CameraDependencyError
+
 try:
     cv2_module: Any | None = importlib.import_module("cv2")
 
@@ -58,9 +60,8 @@ class JPEGPublisher:
             ``True`` when a JPEG frame was encoded and published.
         """
         if cv2_module is None:
-            raise RuntimeError(
-                "OpenCV is not available. Use the JetPack-provided Python/OpenCV "
-                "environment with GStreamer support."
+            raise CameraDependencyError(
+                "System OpenCV with GStreamer support is required."
             )
 
         now = time.monotonic()

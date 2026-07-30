@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+try:
+    import yaml
+
+except ImportError:
+    yaml = None
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +154,10 @@ def load_camera_config(config_path: str | Path | None = None) -> CameraConfig:
 
     except OSError as error:
         logger.warning("Could not read camera configuration %s: %s", path, error)
+        return DEFAULT_CAMERA_CONFIG
+
+    if yaml is None:
+        logger.warning("PyYAML is unavailable; using built-in camera defaults")
         return DEFAULT_CAMERA_CONFIG
 
     try:

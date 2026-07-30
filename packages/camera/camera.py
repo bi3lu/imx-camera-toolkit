@@ -25,6 +25,7 @@ from .controls import (
     manual_control_properties,
     non_manual_control_properties,
 )
+from .errors import CameraDependencyError
 from .models import CameraFrame, Frame
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
@@ -307,16 +308,15 @@ class Camera:
                 or the Argus camera cannot be opened.
         """
         if not GStreamerCaptureBackend.available() and not opencv_available():
-            raise RuntimeError(
-                "No camera backend is available. Use JetPack-provided OpenCV "
-                "with GStreamer support or PyGObject GStreamer with NumPy."
+            raise CameraDependencyError(
+                "System OpenCV with GStreamer support is required."
             )
 
         if self._enable_preview and not opencv_available():
-            raise RuntimeError(
-                "OpenCV is required when JPEG preview is enabled. Disable "
-                "preview with Camera(enable_preview=False) for raw-frame-only "
-                "capture."
+            raise CameraDependencyError(
+                "System OpenCV with GStreamer support is required for JPEG "
+                "preview. Disable preview with Camera(enable_preview=False) "
+                "for raw-frame-only capture."
             )
 
         with self._lifecycle_lock:
@@ -815,6 +815,7 @@ def get_camera(**kwargs: Any) -> Camera:
 
 __all__ = [
     "Camera",
+    "CameraDependencyError",
     "CameraFrame",
     "Frame",
     "CameraConfig",

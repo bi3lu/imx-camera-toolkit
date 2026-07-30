@@ -61,6 +61,10 @@ The project does not install OpenCV with `pip`. On Jetson, OpenCV is provided
 by JetPack; make sure that `import cv2` works in the Python interpreter used by
 your application.
 
+The core Python package has no PyPI runtime dependencies. YAML configuration is
+used when PyYAML is available; otherwise `Camera` safely uses its built-in
+configuration defaults.
+
 Install the project dependencies with:
 
 ```bash

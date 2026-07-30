@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-import yaml
+try:
+    import yaml
+
+except ImportError:
+    yaml = None
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +135,13 @@ def _validate_stream_config(config: StreamConfig) -> None:
     """
     if not isinstance(config.boundary, str):
         raise ValueError("boundary must be a string")
+
     if isinstance(config.timeout, bool) or not isinstance(config.timeout, (int, float)):
         raise ValueError("timeout must be a number")
+
     if config.timeout <= 0:
         raise ValueError("timeout must be greater than zero")
+
     _encode_boundary(config.boundary)
 
 
@@ -152,6 +159,7 @@ def _read_config_values(config_data: dict[str, Any]) -> StreamConfig:
     """
     valid_keys = set(DEFAULT_STREAM_CONFIG.__dataclass_fields__)
     unknown_keys = set(config_data) - valid_keys
+
     if unknown_keys:
         formatted_keys = ", ".join(sorted(unknown_keys))
         raise ValueError(f"unknown stream configuration key(s): {formatted_keys}")
@@ -178,20 +186,31 @@ def load_stream_config(config_path: str | Path | None = None) -> StreamConfig:
     path = Path(config_path) if config_path is not None else DEFAULT_CONFIG_PATH
     try:
         raw_config = path.read_text(encoding="utf-8")
+
     except FileNotFoundError:
         return DEFAULT_STREAM_CONFIG
+
     except OSError as error:
         logger.warning("Could not read stream configuration %s: %s", path, error)
         return DEFAULT_STREAM_CONFIG
 
+    if yaml is None:
+        logger.warning("PyYAML is unavailable; using built-in stream defaults")
+        return DEFAULT_STREAM_CONFIG
+
     try:
         parsed_config = yaml.safe_load(raw_config)
+
         if not isinstance(parsed_config, dict):
             raise ValueError("the YAML document must be a mapping")
+
         config_data = parsed_config.get("stream_config")
+
         if not isinstance(config_data, dict):
             raise ValueError("stream_config must be a mapping")
+
         return _read_config_values(config_data)
+
     except (ValueError, yaml.YAMLError) as error:
         logger.warning("Invalid stream configuration %s: %s", path, error)
         return DEFAULT_STREAM_CONFIG

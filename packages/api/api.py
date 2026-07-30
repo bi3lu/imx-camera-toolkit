@@ -10,9 +10,14 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
-import yaml
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
+
+try:
+    import yaml
+
+except ImportError:
+    yaml = None
 
 from packages.camera.camera import Camera
 from packages.camera_control.camera_control import (
@@ -139,6 +144,10 @@ def load_api_config(config_path: str | Path | None = None) -> APIConfig:
 
     except OSError as error:
         logger.warning("Could not read API configuration %s: %s", path, error)
+        return DEFAULT_API_CONFIG
+
+    if yaml is None:
+        logger.warning("PyYAML is unavailable; using built-in API defaults")
         return DEFAULT_API_CONFIG
 
     try:

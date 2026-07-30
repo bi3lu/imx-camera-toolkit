@@ -4,6 +4,7 @@ from packages.camera.camera import (
     DEFAULT_CAMERA_CONFIG,
     Camera,
     CameraConfig,
+    CameraDependencyError,
     CameraFrame,
     CameraRecoveryPolicy,
     Frame,
@@ -16,6 +17,7 @@ from packages.camera.camera import (
 __all__ = [
     "Camera",
     "CameraConfig",
+    "CameraDependencyError",
     "CameraFrame",
     "Frame",
     "CameraRecoveryPolicy",

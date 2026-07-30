@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
+from ..errors import CameraDependencyError
 from .base import CaptureBackend
 
 try:
@@ -25,9 +26,8 @@ class OpenCVCaptureBackend(CaptureBackend):
     def open(self) -> None:
         """Open the configured GStreamer pipeline with OpenCV."""
         if cv2_module is None:
-            raise RuntimeError(
-                "OpenCV is not available. Use the JetPack-provided Python/OpenCV "
-                "environment with GStreamer support."
+            raise CameraDependencyError(
+                "System OpenCV with GStreamer support is required."
             )
 
         capture = cv2_module.VideoCapture(
