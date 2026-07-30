@@ -9,6 +9,23 @@ The package is used by the FastAPI application, but it has no FastAPI
 dependency and can be integrated with another UI, service, or application
 loop.
 
+## Internal architecture
+
+The public [camera_control.py](camera_control.py) module is a compatibility
+facade. The implementation is split by responsibility:
+
+| Module | Responsibility |
+| --- | --- |
+| [models/](models) | Immutable settings, capabilities, modes, profiles, updates, and JSON serialization. |
+| [capabilities/](capabilities) | Argus capability declarations and `gst-inspect-1.0` discovery. |
+| [controls/](controls) | Validation and conversion of settings into `nvarguscamerasrc` properties. |
+| [config/](config) | YAML loading, validation, and safe defaults. |
+| [runtime/](runtime) | Thread-safe atomic state transitions, runtime-handler dispatch, and in-memory profiles. |
+
+Applications can continue using imports such as
+`from packages.camera_control.camera_control import CameraController`; the
+public API remains unchanged.
+
 ## Supported controls
 
 - Fixed exposure in microseconds, or automatic exposure.
@@ -60,9 +77,11 @@ controller = CameraController(
 )
 
 camera.start()
+
 try:
     controller.set_exposure(5_000)
     controller.set_gain(2.0)
+
 finally:
     camera.stop()
 ```
@@ -106,6 +125,7 @@ capabilities = CameraCapabilities(
     source_properties=frozenset({"wbmode", "awblock", "tnr-mode"}),
     model="IMX sensor",
 )
+
 controller = CameraController(capabilities=capabilities)
 ```
 
