@@ -10,6 +10,7 @@ from imx_camera_toolkit import (
     CameraPreview,
     CameraProfile,
     CameraProfileStatus,
+    CameraStats,
     Frame,
     __version__,
     get_camera_profile,
@@ -26,6 +27,7 @@ from packages.camera.camera import Camera as InternalCamera
 from packages.camera.config import CameraConfig as InternalCameraConfig
 from packages.camera.errors import CameraDependencyError as InternalDependencyError
 from packages.camera.models import CameraFrame as InternalCameraFrame
+from packages.camera.models import CameraStats as InternalCameraStats
 from packages.camera.models import Frame as InternalFrame
 from packages.camera.profiles import (
     CameraProfile as InternalCameraProfile,
@@ -58,6 +60,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert CameraConfig is InternalCameraConfig
     assert CameraProfile is InternalCameraProfile
     assert CameraProfileStatus is InternalCameraProfileStatus
+    assert CameraStats is InternalCameraStats
     assert CameraDependencyError is InternalDependencyError
     assert CameraFrame is InternalCameraFrame
     assert Frame is InternalFrame

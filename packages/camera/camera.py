@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from collections.abc import Sequence
 from copy import copy as copy_image
 from dataclasses import dataclass, replace
@@ -26,7 +27,7 @@ from .controls import (
     non_manual_control_properties,
 )
 from .errors import CameraDependencyError
-from .models import CameraFrame, Frame
+from .models import CameraFrame, CameraStats, Frame
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
@@ -101,6 +102,8 @@ class Camera:
         enable_preview: Legacy override for JPEG preview encoding. Prefer
             :attr:`CameraConfig.enable_preview` for new code.
     """
+
+    STATS_WINDOW_NS = 1_000_000_000
 
     def __init__(
         self,
@@ -217,8 +220,13 @@ class Camera:
         self._thread: threading.Thread | None = None
         self._running = threading.Event()
         self._lifecycle_lock = threading.RLock()
+        self._stats_lock = threading.Lock()
+        self._capture_timestamps_ns: deque[int] = deque()
 
         self.frames_captured = 0
+        self.dropped_frames = 0
+        self._last_frame_timestamp_ns: int | None = None
+        self._consecutive_failures = 0
         self.last_error: Exception | None = None
         self.recovery_attempts = 0
         self.recoveries = 0
@@ -252,6 +260,81 @@ class Camera:
     def config(self) -> CameraConfig:
         """CameraConfig: Resolved configuration used by this camera instance."""
         return self._config
+
+    def stats(self) -> CameraStats:
+        """Return a consistent point-in-time snapshot of capture diagnostics.
+
+        The method performs no I/O and does not require optional telemetry
+        integrations. ``capture_fps`` is calculated from successful source
+        reads within the most recent one-second window; it is zero when the
+        capture worker is stopped or has not produced at least two recent
+        frames.
+
+        Returns:
+            Immutable capture diagnostics suitable for health checks,
+            watchdogs, metrics adapters, dashboards, or alerting systems.
+        """
+        running = self.running
+        now_ns = time.monotonic_ns()
+
+        with self._stats_lock:
+            self._prune_capture_timestamps(now_ns)
+            capture_fps = self._capture_fps() if running else 0.0
+            return CameraStats(
+                captured_frames=self.frames_captured,
+                dropped_frames=self.dropped_frames,
+                capture_fps=capture_fps,
+                last_frame_timestamp_ns=self._last_frame_timestamp_ns,
+                recovery_count=self.recoveries,
+                consecutive_failures=self._consecutive_failures,
+                running=running,
+            )
+
+    def _prune_capture_timestamps(self, now_ns: int) -> None:
+        """Discard timestamps outside the fixed recent-FPS sampling window."""
+        oldest_timestamp_ns = now_ns - self.STATS_WINDOW_NS
+
+        while (
+            self._capture_timestamps_ns
+            and self._capture_timestamps_ns[0] < oldest_timestamp_ns
+        ):
+            self._capture_timestamps_ns.popleft()
+
+    def _capture_fps(self) -> float:
+        """Calculate the recent source-read rate while holding ``_stats_lock``."""
+        if len(self._capture_timestamps_ns) < 2:
+            return 0.0
+
+        first_timestamp_ns = self._capture_timestamps_ns[0]
+        last_timestamp_ns = self._capture_timestamps_ns[-1]
+        elapsed_ns = last_timestamp_ns - first_timestamp_ns
+
+        if elapsed_ns <= 0:
+            return 0.0
+
+        return (len(self._capture_timestamps_ns) - 1) * 1_000_000_000 / elapsed_ns
+
+    def _record_capture(self, timestamp_ns: int) -> None:
+        """Record one successful source read for diagnostics."""
+        with self._stats_lock:
+            self.frames_captured += 1
+            self._last_frame_timestamp_ns = timestamp_ns
+            self._consecutive_failures = 0
+            self._capture_timestamps_ns.append(timestamp_ns)
+            self._prune_capture_timestamps(timestamp_ns)
+
+    def _record_dropped_frame(self, *, failed_read: bool = False) -> int:
+        """Record a frame omitted from raw publication and return failures."""
+        with self._stats_lock:
+            self.dropped_frames += 1
+            if failed_read:
+                self._consecutive_failures += 1
+            return self._consecutive_failures
+
+    def _reset_consecutive_failures(self) -> None:
+        """Clear the source-read failure streak after a successful recovery."""
+        with self._stats_lock:
+            self._consecutive_failures = 0
 
     @property
     def software_hdr_state(self) -> dict[str, object]:
@@ -427,10 +510,17 @@ class Camera:
                 if backend is None:
                     break
 
-                success, frame = backend.read()
+                try:
+                    success, frame = backend.read()
+
+                except Exception:
+                    self._record_dropped_frame(failed_read=True)
+                    raise
 
                 if not success:
-                    consecutive_read_failures += 1
+                    consecutive_read_failures = self._record_dropped_frame(
+                        failed_read=True
+                    )
                     if (
                         consecutive_read_failures
                         >= self._recovery_policy.max_consecutive_read_failures
@@ -440,11 +530,12 @@ class Camera:
                     continue
 
                 consecutive_read_failures = 0
-                self.frames_captured += 1
                 timestamp_ns = time.monotonic_ns()
+                self._record_capture(timestamp_ns)
                 processed_frame = self._process_frame(frame)
 
                 if processed_frame is None:
+                    self._record_dropped_frame()
                     continue
 
                 self._publish_frame(processed_frame, timestamp_ns)
@@ -471,7 +562,8 @@ class Camera:
             if attempt:
                 time.sleep(self._recovery_policy.initial_backoff * (2**attempt))
 
-            self.recovery_attempts += 1
+            with self._stats_lock:
+                self.recovery_attempts += 1
 
             with self._lifecycle_lock:
                 if not self.running:
@@ -492,7 +584,9 @@ class Camera:
                     )
                     continue
 
-            self.recoveries += 1
+            with self._stats_lock:
+                self.recoveries += 1
+            self._reset_consecutive_failures()
             self.last_recovery_error = None
             self.last_error = None
             logger.info("Camera capture recovered on attempt %s", attempt + 1)
@@ -872,6 +966,7 @@ __all__ = [
     "Frame",
     "CameraConfig",
     "CameraRecoveryPolicy",
+    "CameraStats",
     "DEFAULT_CAMERA_CONFIG",
     "SoftwareHDRSettings",
     "build_gstreamer_pipeline",

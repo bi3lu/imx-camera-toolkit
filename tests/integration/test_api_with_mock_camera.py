@@ -18,6 +18,10 @@ def test_health_and_snapshot_with_mock_camera() -> None:
         health = client.get("/api/health")
         assert health.status_code == 200
         assert health.json()["camera_running"] is True
+        assert health.json()["dropped_frames"] == 0
+        assert health.json()["capture_fps"] == 0.0
+        assert health.json()["last_frame_timestamp_ns"] is None
+        assert health.json()["consecutive_failures"] == 0
 
         camera.publish_jpeg(b"\xff\xd8mock\xff\xd9")
         snapshot = client.get("/api/camera/snapshot")

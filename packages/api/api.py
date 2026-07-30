@@ -278,9 +278,10 @@ def _camera_status(camera: Camera) -> dict[str, object]:
         Health status, frame availability, capture metrics, and the last
         background capture error when one exists.
     """
+    diagnostics = camera.stats()
     last_error = str(camera.last_error) if camera.last_error is not None else None
 
-    if camera.running:
+    if diagnostics.running:
         status = "ok"
 
     elif last_error is not None:
@@ -291,15 +292,19 @@ def _camera_status(camera: Camera) -> dict[str, object]:
 
     return {
         "status": status,
-        "camera_running": camera.running,
+        "camera_running": diagnostics.running,
         "frame_available": camera.frame_available,
         "frame_number": camera.frame_number,
-        "frames_captured": camera.frames_captured,
+        "frames_captured": diagnostics.captured_frames,
+        "dropped_frames": diagnostics.dropped_frames,
+        "capture_fps": diagnostics.capture_fps,
+        "last_frame_timestamp_ns": diagnostics.last_frame_timestamp_ns,
         "frames_encoded": camera.frames_encoded,
         "last_frame_time": camera.last_frame_time,
         "last_error": last_error,
         "recovery_attempts": camera.recovery_attempts,
-        "recoveries": camera.recoveries,
+        "recoveries": diagnostics.recovery_count,
+        "consecutive_failures": diagnostics.consecutive_failures,
         "last_recovery_error": (
             str(camera.last_recovery_error)
             if camera.last_recovery_error is not None

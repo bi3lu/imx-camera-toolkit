@@ -134,6 +134,37 @@ the caller must treat the shared payload as read-only.
 code that requires only the image payload. New integrations should use `read()`
 to retain frame sequence, timestamps, dimensions, and format.
 
+## Diagnostics
+
+`Camera.stats()` returns an immutable `CameraStats` snapshot without requiring
+log parsing or a telemetry library. It is suitable as the direct input for a
+health endpoint, Prometheus adapter, watchdog, dashboard, telemetry process,
+or alerting policy.
+
+```python
+from imx_camera_toolkit import Camera, CameraConfig
+
+with Camera(CameraConfig()) as camera:
+    stats = camera.stats()
+
+    if stats.consecutive_failures:
+        report_capture_problem(stats)
+```
+
+| Field | Meaning |
+| --- | --- |
+| `captured_frames` | Successful source reads since the camera was created. |
+| `dropped_frames` | Failed source reads and frames intentionally not published as raw frames. |
+| `capture_fps` | Recent successful source-read rate over a one-second window. |
+| `last_frame_timestamp_ns` | Monotonic timestamp of the most recent successful source read. |
+| `recovery_count` | Successful backend recovery operations. |
+| `consecutive_failures` | Current uninterrupted source-read failure count. |
+| `running` | Whether the capture worker is active. |
+
+Statistics do not introduce Prometheus, OpenTelemetry, or other telemetry
+dependencies into the core package. Those integrations remain the
+responsibility of the consuming application.
+
 ## Independent preview path
 
 Raw frame publication and JPEG preview encoding are independent paths:

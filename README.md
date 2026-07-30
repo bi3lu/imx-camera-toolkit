@@ -187,6 +187,22 @@ and never performs JPEG encoding or inference. The default `copy=True` gives
 the caller an independent image buffer; `copy=False` returns a read-only shared
 payload for zero-copy-oriented pipelines.
 
+### Diagnostics
+
+`camera.stats()` exposes a typed, immutable `CameraStats` snapshot for external
+health endpoints, monitoring adapters, watchdogs, dashboards, telemetry, and
+alerting without requiring log parsing or adding telemetry dependencies to the
+toolkit core.
+
+```python
+stats = camera.stats()
+
+if stats.consecutive_failures:
+    notify_watchdog(stats)
+```
+
+The FastAPI health endpoint also exposes these capture diagnostics in JSON.
+
 Raw application frames and browser preview JPEGs use separate publication
 paths. `camera.latest_frame()` returns the newest raw `Frame`, while
 `camera.latest_jpeg()` returns the newest encoded preview image. For
