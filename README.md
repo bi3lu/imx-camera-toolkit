@@ -114,7 +114,8 @@ uv add "imx-camera-toolkit[preview]"
 ```
 
 Install the production WebRTC/HLS HTTP layer separately; JetPack continues to
-provide GStreamer, the hardware encoders, and CUDA:
+provide GStreamer and CUDA. Orin Nano additionally needs the system x264
+GStreamer plugin because that SoC does not expose NVENC:
 
 ```bash
 uv add "imx-camera-toolkit[production-preview]"
@@ -305,8 +306,10 @@ TensorRT/ONNX Runtime parity test.
 ### Production preview
 
 MJPEG/OpenCV remains the intentionally simple debug transport. For deployed
-Jetson applications, pass `HardwareVideoConfig` to `GpuCamera` to add an
-independent `nvv4l2h264enc` or `nvv4l2h265enc` branch directly from NVMM.
+Jetson applications, pass `VideoEncoderConfig` to `GpuCamera`. Backend `AUTO`
+uses NVENC where present and falls back to CPU x264 on Orin Nano while keeping
+capture, inference, and overlay in NVMM. `HardwareVideoConfig` is retained as
+a compatibility alias.
 WebRTC is the preferred low-latency browser mode; HLS provides a rolling,
 reverse-proxy-friendly alternative.
 

@@ -10,7 +10,7 @@ memory domain required by the next consumer.
 | Simple diagnostics in any desktop browser | `Camera` or GPU JPEG branch | MJPEG | Debug-oriented. Easy to deploy, but JPEG and multipart delivery cost CPU/network bandwidth. |
 | TensorRT or custom CUDA consumer | `GpuCamera(experimental=True)` | Optional WebRTC | Experimental. The borrowed NV12 frame remains in NVMM. |
 | DeepStream application | `GpuCamera(experimental=True)` or a native DeepStream source | WebRTC/HLS outside capture | Experimental toolkit interop. Prefer a native DeepStream pipeline when DeepStream owns the full graph. |
-| Low-latency production browser preview | `GpuCamera(experimental=True)` | H.264 WebRTC | Preferred production preview; one shared hardware encoder feeds bounded per-client slots. |
+| Low-latency production browser preview | `GpuCamera(experimental=True)` | H.264 WebRTC | One shared NVENC encoder where available, or shared CPU x264 on Orin Nano. |
 | Reverse-proxy-friendly segmented delivery | `GpuCamera(experimental=True)` | H.264/H.265 HLS | Simpler HTTP deployment, with more latency than WebRTC. |
 
 `Camera.read(copy=False)` only avoids another Python-side array copy. It does
@@ -51,7 +51,8 @@ target rather than assuming an image contains the expected stack:
 cat /etc/nv_tegra_release
 nvcc --version
 uv run python -c "import tensorrt; print(tensorrt.__version__)"
-gst-inspect-1.0 nvarguscamerasrc nvv4l2h264enc webrtcbin hlssink2
+gst-inspect-1.0 nvarguscamerasrc nvvidconv x264enc h264parse \
+  rtph264pay webrtcbin nicesrc nicesink hlssink2
 ```
 
 ## TensorRT engine compatibility
