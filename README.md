@@ -59,6 +59,7 @@ intermediate frames.
 | [`packages/frames`](packages/frames/README.md) | Minimal `FrameSource` protocol and adapter from the toolkit camera to external processing pipelines. |
 | [`packages/inference`](packages/inference/README.md) | Model-neutral inference contracts, validated TensorRT engine caching, and optional NvBufSurface/CUDA interop. |
 | [`packages/consumers`](packages/consumers/README.md) | Independent latest-frame slots, worker consumers, and inference-preview adaptation. |
+| [`packages/production_preview`](packages/production_preview/README.md) | Optional shared hardware H.264/H.265 encoding with WebRTC, HLS, GPU overlays, and client metrics. |
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
 | [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
@@ -107,6 +108,13 @@ Install the optional browser preview stack when FastAPI and Uvicorn are needed:
 
 ```bash
 uv add "imx-camera-toolkit[preview]"
+```
+
+Install the production WebRTC/HLS HTTP layer separately; JetPack continues to
+provide GStreamer, the hardware encoders, and CUDA:
+
+```bash
+uv add "imx-camera-toolkit[production-preview]"
 ```
 
 Clone the repository and create a virtual environment that can access the
@@ -289,6 +297,22 @@ compute capability, precision, input name, and complete shape profile.
 Model-specific decoding and overlays remain application-owned. See
 [GPU inference integration](packages/inference/README.md) for usage and the
 TensorRT/ONNX Runtime parity test.
+
+### Production preview
+
+MJPEG/OpenCV remains the intentionally simple debug transport. For deployed
+Jetson applications, pass `HardwareVideoConfig` to `GpuCamera` to add an
+independent `nvv4l2h264enc` or `nvv4l2h265enc` branch directly from NVMM.
+WebRTC is the preferred low-latency browser mode; HLS provides a rolling,
+reverse-proxy-friendly alternative.
+
+The production transport shares one encoder among all clients and exposes
+encode FPS, actual bitrate, active clients, and per-client drop rates. Optional
+`CudaOverlayRenderer` draws normalized rectangles on an isolated NVMM surface;
+the existing `InferencePreviewSource` remains the CPU/JPEG fallback. See
+[production browser preview](packages/production_preview/README.md) for
+installation, signaling, HLS storage, overlay wiring, and the 720p/30 +
+TensorRT acceptance benchmark.
 
 Model-agnostic code can depend only on the public union:
 

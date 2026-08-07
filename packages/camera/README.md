@@ -191,6 +191,40 @@ by `MJPEGStream`, so the encoded branch can feed browser clients without a BGR
 round trip. Any error or shutdown closes the complete tee pipeline; recovery
 recreates both branches together.
 
+## Production hardware video branch
+
+`HardwareVideoConfig` adds a third, optional tee branch without changing the
+JPEG debug path or borrowed inference frames:
+
+```python
+from imx_camera_toolkit import (
+    GpuCamera,
+    HardwareVideoConfig,
+    VideoCodec,
+)
+
+camera = GpuCamera(
+    enable_preview=True,  # optional MJPEG debug output remains available
+    video_config=HardwareVideoConfig(
+        codec=VideoCodec.H264,
+        bitrate_bps=4_000_000,
+        keyframe_interval=30,
+    ),
+)
+```
+
+NV12 remains `memory:NVMM` through `nvv4l2h264enc` or `nvv4l2h265enc`.
+`subscribe_video(name)` gives a transport one latest compressed access-unit
+slot. `video_stats` exposes recent encoder FPS and encoded bitrate without
+retaining a per-frame history.
+
+An injected `VideoOverlayRenderer` must declare `MemoryType.NVMM`. When it is
+active, the branch first makes an isolated device-side copy, then invokes the
+renderer from the GStreamer encoder thread. `set_video_overlay()` supports
+wiring an inference result source before camera startup. Host-memory overlays
+remain available through the separate JPEG/MJPEG consumer adapter and are not
+silently inserted into the NVMM production branch.
+
 Physical validation is opt-in and must be run once with each target module:
 
 ```bash
@@ -478,11 +512,11 @@ latest frame after a timeout or when the camera stops. Before the first frame,
 
 Useful state and metrics:
 
-- `camera.running` — whether the capture thread is active.
-- `camera.frame_available` — whether a JPEG frame is available.
-- `camera.jpeg` — the latest JPEG bytes, or `None`.
-- `camera.frames_captured` and `camera.frames_encoded` — capture metrics.
-- `camera.last_error` — an exception raised by the background capture loop, if
+- `camera.running` - whether the capture thread is active.
+- `camera.frame_available` - whether a JPEG frame is available.
+- `camera.jpeg` - the latest JPEG bytes, or `None`.
+- `camera.frames_captured` and `camera.frames_encoded` - capture metrics.
+- `camera.last_error` - an exception raised by the background capture loop, if
   one occurred.
 
 ## Troubleshooting
