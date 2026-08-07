@@ -10,18 +10,30 @@ from .metrics import (
     StageMetrics,
 )
 from .stats import CameraStats
+from .video import (
+    EncodedVideoFrame,
+    HardwareVideoConfig,
+    VideoCodec,
+    VideoEncodeStats,
+    VideoOverlayRenderer,
+)
 
 __all__ = [
     "CameraFrame",
     "CameraStats",
     "Frame",
     "FrameFormat",
+    "EncodedVideoFrame",
     "GpuBufferHandle",
     "GpuFrame",
     "GpuFrameExpiredError",
+    "HardwareVideoConfig",
     "MemoryType",
     "MetricsRecorder",
     "PipelineMetrics",
     "PipelineStage",
     "StageMetrics",
+    "VideoCodec",
+    "VideoEncodeStats",
+    "VideoOverlayRenderer",
 ]

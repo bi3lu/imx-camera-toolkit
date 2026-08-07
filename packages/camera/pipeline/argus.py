@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 
 from ..errors import CameraConfigurationError
+from ..models.video import HardwareVideoConfig, VideoCodec
 
 
 def normalize_argus_properties(properties: Sequence[str]) -> tuple[str, ...]:
@@ -124,15 +125,18 @@ def build_gpu_gstreamer_pipeline(
     *,
     enable_preview: bool = False,
     jpeg_quality: int = 65,
+    video_config: HardwareVideoConfig | None = None,
+    enable_video_overlay: bool = False,
     argus_properties: Sequence[str] = (),
 ) -> str:
     """Build an NV12/NVMM pipeline with isolated inference and preview branches.
 
     The inference branch terminates at ``gpu_sink`` without leaving NVMM and
     without a CPU color conversion. When preview is enabled, a second leaky
-    queue feeds NVIDIA's JPEG encoder and a separate encoded-byte appsink.
-    Every queue and appsink retains at most one buffer so slow consumers do not
-    increase end-to-end latency.
+    queue feeds NVIDIA's JPEG encoder and a separate encoded-byte appsink. An
+    optional production branch keeps NV12 in NVMM through a Jetson V4L2 H.264
+    or H.265 encoder. Every queue and appsink is bounded so slow consumers do
+    not increase end-to-end latency.
     """
     if sensor_id < 0:
         raise CameraConfigurationError(
@@ -162,6 +166,21 @@ def build_gpu_gstreamer_pipeline(
         or not 0 <= jpeg_quality <= 100
     ):
         raise CameraConfigurationError("jpeg_quality must be between 0 and 100")
+
+    if video_config is not None and not isinstance(
+        video_config, HardwareVideoConfig
+    ):
+        raise CameraConfigurationError(
+            "video_config must be a HardwareVideoConfig or None"
+        )
+
+    if not isinstance(enable_video_overlay, bool):
+        raise CameraConfigurationError("enable_video_overlay must be a boolean")
+
+    if enable_video_overlay and video_config is None:
+        raise CameraConfigurationError(
+            "video overlay requires a hardware video configuration"
+        )
 
     source_properties = normalize_argus_properties(argus_properties)
     source_arguments = " ".join(source_properties)
@@ -201,6 +220,43 @@ def build_gpu_gstreamer_pipeline(
             f"{nvmm_caps} ! "
             f"nvjpegenc quality={jpeg_quality} ! "
             f"appsink name=preview_sink {appsink_policy}"
+        )
+
+    if video_config is not None:
+        if video_config.codec is VideoCodec.H264:
+            encoder = "nvv4l2h264enc"
+            parser = "h264parse"
+            encoded_caps = "video/x-h264"
+
+        else:
+            encoder = "nvv4l2h265enc"
+            parser = "h265parse"
+            encoded_caps = "video/x-h265"
+
+        overlay = ""
+
+        if enable_video_overlay:
+            overlay = (
+                "nvvidconv ! "
+                f"{nvmm_caps} ! "
+                "identity name=video_overlay_hook ! "
+            )
+
+        pipeline += (
+            f" camera_tee. ! queue name=video_queue {queue_policy} ! "
+            f"{nvmm_caps} ! "
+            f"{overlay}"
+            f"{encoder} name=video_encoder control-rate=1 "
+            f"bitrate={video_config.bitrate_bps} "
+            f"iframeinterval={video_config.keyframe_interval} "
+            f"idrinterval={video_config.keyframe_interval} "
+            "insert-sps-pps=1 insert-vui=1 "
+            f"maxperf-enable={int(video_config.max_performance)} "
+            f"MeasureEncoderLatency={int(video_config.measure_latency)} ! "
+            f"{parser} config-interval=-1 ! "
+            f"{encoded_caps}, stream-format=(string)byte-stream, "
+            "alignment=(string)au ! "
+            f"appsink name=video_sink {appsink_policy}"
         )
 
     return pipeline

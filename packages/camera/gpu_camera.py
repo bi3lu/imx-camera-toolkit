@@ -25,15 +25,23 @@ from .errors import (
 )
 from .models import (
     CameraStats,
+    EncodedVideoFrame,
     FrameFormat,
     GpuFrame,
+    HardwareVideoConfig,
     MemoryType,
     MetricsRecorder,
     PipelineMetrics,
     PipelineStage,
+    VideoEncodeStats,
+    VideoOverlayRenderer,
 )
 from .pipeline import build_gpu_gstreamer_pipeline, normalize_argus_properties
-from .publishing import EncodedJPEGPublisher, GpuFramePublisher
+from .publishing import (
+    EncodedJPEGPublisher,
+    EncodedVideoPublisher,
+    GpuFramePublisher,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +64,10 @@ class _GpuBackend(Protocol):
 
     def read_preview(self) -> bytes | None:
         """Pull one independently encoded preview frame."""
+        ...
+
+    def read_video(self) -> EncodedVideoFrame | None:
+        """Pull one independently hardware-encoded access unit."""
         ...
 
     def close(self) -> None:
@@ -81,6 +93,8 @@ class GpuCamera:
         config_path: str | Path | None = None,
         recovery_policy: CameraRecoveryPolicy | None = None,
         enable_preview: bool | None = None,
+        video_config: HardwareVideoConfig | None = None,
+        video_overlay: VideoOverlayRenderer | None = None,
         argus_properties: tuple[str, ...] = (),
     ) -> None:
         """Initialize an NVMM pipeline without opening the camera."""
@@ -91,6 +105,27 @@ class GpuCamera:
 
         if enable_preview is not None and not isinstance(enable_preview, bool):
             raise CameraConfigurationError("enable_preview must be a boolean")
+
+        if video_config is not None and not isinstance(
+            video_config, HardwareVideoConfig
+        ):
+            raise CameraConfigurationError(
+                "video_config must be a HardwareVideoConfig or None"
+            )
+        if video_overlay is not None:
+            if video_config is None:
+                raise CameraConfigurationError(
+                    "video_overlay requires a hardware video configuration"
+                )
+            if not isinstance(video_overlay, VideoOverlayRenderer):
+                raise CameraConfigurationError(
+                    "video_overlay must implement VideoOverlayRenderer"
+                )
+            if video_overlay.memory_type is not MemoryType.NVMM:
+                raise CameraConfigurationError(
+                    "production video overlays must operate on NVMM; use "
+                    "InferencePreviewSource for the CPU fallback"
+                )
 
         base_config = config or load_camera_config(config_path)
         resolved_preview = (
@@ -130,12 +165,20 @@ class GpuCamera:
             flip_method=self._config.flip_method,
             enable_preview=self._config.enable_preview,
             jpeg_quality=self._config.quality,
+            video_config=video_config,
+            enable_video_overlay=video_overlay is not None,
             argus_properties=self._argus_properties,
         )
+        self._video_config = video_config
+        self._video_overlay = video_overlay
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
         self._gpu_publisher = GpuFramePublisher()
         self._frame_hub = LatestFrameHub[GpuFrame](self.record_consumer_drop)
         self._preview_publisher = EncodedJPEGPublisher(self._config.preview_fps)
+        self._video_publisher = EncodedVideoPublisher()
+        self._video_hub = LatestFrameHub[EncodedVideoFrame](
+            self.record_consumer_drop
+        )
         self._metrics = MetricsRecorder()
         self._backend: _GpuBackend | None = None
         self._thread: threading.Thread | None = None
@@ -198,6 +241,65 @@ class GpuCamera:
     def preview_enabled(self) -> bool:
         """Whether the independent JPEG branch is part of the pipeline."""
         return self._config.enable_preview
+
+    @property
+    def video_config(self) -> HardwareVideoConfig | None:
+        """Optional production hardware-encoder configuration."""
+        return self._video_config
+
+    @property
+    def video_enabled(self) -> bool:
+        """Whether the independent H.264/H.265 branch is configured."""
+        return self._video_config is not None
+
+    @property
+    def video_stats(self) -> VideoEncodeStats:
+        """Recent hardware encode FPS/bitrate and cumulative output counts."""
+        return self._video_publisher.stats(time.monotonic_ns())
+
+    def set_video_overlay(
+        self,
+        renderer: VideoOverlayRenderer | None,
+    ) -> None:
+        """Select an NVMM overlay renderer before opening the camera pipeline.
+
+        This permits constructing an ``InferenceConsumer`` from a camera
+        subscription first, then wiring its results into a GPU renderer. The
+        renderer lifecycle remains caller-owned.
+        """
+        with self._lifecycle_lock:
+            if self.running:
+                raise CameraConfigurationError(
+                    "video overlay can be changed only while camera is stopped"
+                )
+            if renderer is not None:
+                if self._video_config is None:
+                    raise CameraConfigurationError(
+                        "video overlay requires a hardware video configuration"
+                    )
+                if not isinstance(renderer, VideoOverlayRenderer):
+                    raise CameraConfigurationError(
+                        "renderer must implement VideoOverlayRenderer"
+                    )
+                if renderer.memory_type is not MemoryType.NVMM:
+                    raise CameraConfigurationError(
+                        "production video overlay renderer must use NVMM"
+                    )
+            self._video_overlay = renderer
+            self._pipeline = build_gpu_gstreamer_pipeline(
+                sensor_id=self._config.sensor_id,
+                capture_width=self._config.capture_width,
+                capture_height=self._config.capture_height,
+                output_width=self._config.output_width,
+                output_height=self._config.output_height,
+                framerate=self._config.fps,
+                flip_method=self._config.flip_method,
+                enable_preview=self._config.enable_preview,
+                jpeg_quality=self._config.quality,
+                video_config=self._video_config,
+                enable_video_overlay=renderer is not None,
+                argus_properties=self._argus_properties,
+            )
 
     @property
     def gpu_frame_number(self) -> int:
@@ -323,6 +425,8 @@ class GpuCamera:
             self._config.output_width,
             self._config.output_height,
             enable_preview=self._config.enable_preview,
+            video_config=self._video_config,
+            video_overlay=self._video_overlay,
         )
 
     def _capture_loop(self) -> None:
@@ -372,6 +476,12 @@ class GpuCamera:
                         else:
                             self._metrics.record_consumer_drop("preview")
 
+                if self._video_config is not None:
+                    encoded_video = backend.read_video()
+                    if encoded_video is not None:
+                        self._video_publisher.publish(encoded_video)
+                        self._video_hub.publish(encoded_video)
+
                 self._metrics.record_stage(
                     PipelineStage.END_TO_END,
                     max(time.monotonic_ns() - frame.timestamp_ns, 0),
@@ -392,6 +502,7 @@ class GpuCamera:
         self._gpu_publisher.notify_waiters()
         self._preview_publisher.notify_waiters()
         self._frame_hub.close()
+        self._video_hub.close()
 
     def _assign_sequence(self, frame: GpuFrame) -> GpuFrame:
         """Assign a camera-lifetime sequence that survives backend recovery."""
@@ -537,6 +648,24 @@ class GpuCamera:
 
             return self._frame_hub.subscribe(name)
 
+    def subscribe_video(
+        self,
+        name: str,
+    ) -> LatestFrameSubscription[EncodedVideoFrame]:
+        """Create one latest encoded-access-unit slot for a transport worker."""
+        if self._video_config is None:
+            raise CameraConfigurationError(
+                "hardware video is disabled; provide video_config to GpuCamera"
+            )
+        with self._lifecycle_lock:
+            if self._video_hub.closed:
+                if self.running:
+                    raise RuntimeError("video subscriptions are closed")
+                self._video_hub = LatestFrameHub[EncodedVideoFrame](
+                    self.record_consumer_drop
+                )
+            return self._video_hub.subscribe(name)
+
     def wait_for_jpeg(
         self,
         previous_frame_number: int,
@@ -574,6 +703,7 @@ class GpuCamera:
             self._gpu_publisher.notify_waiters()
             self._preview_publisher.notify_waiters()
             self._frame_hub.close()
+            self._video_hub.close()
             thread = self._thread
 
         if thread is not None and thread is not threading.current_thread():
@@ -588,6 +718,7 @@ class GpuCamera:
             self._thread = None
             self._gpu_publisher.clear()
             self._preview_publisher.clear()
+            self._video_publisher.clear()
 
     def __enter__(self) -> GpuCamera:
         """Start capture and return this camera."""
