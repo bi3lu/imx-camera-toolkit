@@ -19,17 +19,23 @@ from imx_camera_toolkit import (
     CameraTimeoutError,
     Frame,
     FrameFormat,
+    FrameSpec,
     GpuBufferHandle,
     GpuCamera,
     GpuFrame,
     GpuFrameExpiredError,
+    InferenceResult,
+    InferenceRunner,
     MemoryType,
     MetricsRecorder,
     PipelineMetrics,
     PipelineStage,
     PreviewServer,
     PreviewSource,
+    ShapeProfile,
     StageMetrics,
+    TensorOutput,
+    TensorRTRunner,
     __version__,
     build_gpu_gstreamer_pipeline,
     create_preview_app,
@@ -100,6 +106,12 @@ from packages.frames import CameraFrameSource as InternalCameraFrameSource
 from packages.frames import CaptureFrameSource as InternalCaptureFrameSource
 from packages.frames import FrameSource as InternalFrameSource
 from packages.frames import GpuFrameSource as InternalGpuFrameSource
+from packages.inference import FrameSpec as InternalFrameSpec
+from packages.inference import InferenceResult as InternalInferenceResult
+from packages.inference import InferenceRunner as InternalInferenceRunner
+from packages.inference import ShapeProfile as InternalShapeProfile
+from packages.inference import TensorOutput as InternalTensorOutput
+from packages.inference import TensorRTRunner as InternalTensorRTRunner
 from packages.stream.stream import MJPEGStream as InternalMJPEGStream
 from packages.testing import MockCamera as InternalMockCamera
 from packages.testing import MockFrameSource as InternalMockFrameSource
@@ -131,15 +143,21 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert CameraFrame is InternalCameraFrame
     assert Frame is InternalFrame
     assert FrameFormat is InternalFrameFormat
+    assert FrameSpec is InternalFrameSpec
     assert GpuBufferHandle is InternalGpuBufferHandle
     assert GpuCamera is InternalGpuCamera
     assert GpuFrame is InternalGpuFrame
     assert GpuFrameExpiredError is InternalGpuFrameExpiredError
+    assert InferenceResult is InternalInferenceResult
+    assert InferenceRunner is InternalInferenceRunner
     assert MemoryType is InternalMemoryType
     assert MetricsRecorder is InternalMetricsRecorder
     assert PipelineMetrics is InternalPipelineMetrics
     assert PipelineStage is InternalPipelineStage
     assert StageMetrics is InternalStageMetrics
+    assert ShapeProfile is InternalShapeProfile
+    assert TensorOutput is InternalTensorOutput
+    assert TensorRTRunner is InternalTensorRTRunner
     assert build_gpu_gstreamer_pipeline is internal_build_gpu_gstreamer_pipeline
     assert get_camera_profile is internal_get_camera_profile
     assert list_camera_profiles is internal_list_camera_profiles
