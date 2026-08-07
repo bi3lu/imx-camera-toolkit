@@ -5,13 +5,30 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
+from math import ceil
+from typing import Protocol
 
 from .camera.camera import Camera, CameraConfig, CameraTimeoutError
+from .camera.gpu_camera import GpuCamera
+from .camera.models import GpuFrame
 from .stream.stream import MJPEGStream
+from .telemetry import TegrastatsSampler
 from .testing.mock_camera import MockCamera
 
 BENCHMARK_JPEG = b"\xff\xd8\xff\xd9"
 CpuModel = Callable[[object], object]
+
+
+class ResourceSampler(Protocol):
+    """Resource sampler boundary used by deterministic unit tests."""
+
+    def start(self) -> None:
+        """Start collecting samples."""
+        ...
+
+    def stop(self) -> float | None:
+        """Stop sampling and return average GPU utilization."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -45,8 +62,14 @@ class CameraBenchmarkResult:
     captured_frames: int
     dropped_frames: int
     mean_latency_ms: float
+    p95_latency_ms: float = 0.0
+    process_cpu_percent: float = 0.0
+    gpu_utilization_percent: float | None = None
+    width: int = 0
+    height: int = 0
+    backend: str = "cpu"
 
-    def as_dict(self) -> dict[str, float | int | str]:
+    def as_dict(self) -> dict[str, float | int | str | None]:
         """Return a JSON-ready physical-camera benchmark result."""
         return asdict(self)
 
@@ -55,6 +78,18 @@ def _result(name: str, frames: int, started_at: float) -> BenchmarkResult:
     """Build a result while avoiding division by zero on fast hosts."""
     duration = max(time.perf_counter() - started_at, 1e-9)
     return BenchmarkResult(name, frames, duration, frames / duration)
+
+
+def _p95_latency_ms(latencies_ns: list[int]) -> float:
+    """Return the nearest-rank 95th percentile in milliseconds."""
+    ordered = sorted(latencies_ns)
+    index = max(ceil(0.95 * len(ordered)) - 1, 0)
+    return ordered[index] / 1_000_000
+
+
+def _resource_sampler(sampler: ResourceSampler | None) -> ResourceSampler:
+    """Resolve an injectable sampler without probing hardware during tests."""
+    return sampler or TegrastatsSampler()
 
 
 def benchmark_capture(frames: int = 1_000) -> BenchmarkResult:
@@ -111,6 +146,7 @@ def benchmark_camera_capture(
     timeout: float = 5.0,
     config: CameraConfig | None = None,
     model: CpuModel | None = None,
+    resource_sampler: ResourceSampler | None = None,
 ) -> CameraBenchmarkResult:
     """Measure raw capture from a connected CSI camera.
 
@@ -158,37 +194,47 @@ def benchmark_camera_capture(
     camera = Camera(resolved_config)
     previous_frame_number = -1
     latencies_ns: list[int] = []
+    sampler = _resource_sampler(resource_sampler)
 
     with camera:
         initial_stats = camera.stats()
+        sampler.start()
         started_at = time.monotonic()
+        started_cpu = time.process_time()
 
-        for _ in range(frames):
-            frame_number, image = camera.wait_for_raw_frame(
-                previous_frame_number,
-                timeout=timeout,
-            )
-
-            if image is None or frame_number == previous_frame_number:
-                raise CameraTimeoutError(
-                    f"camera did not provide a frame within {timeout:.1f}s"
+        try:
+            for _ in range(frames):
+                frame_number, image = camera.wait_for_raw_frame(
+                    previous_frame_number,
+                    timeout=timeout,
                 )
 
-            previous_frame_number = frame_number
-            frame = camera.latest_frame(copy=False)
+                if image is None or frame_number == previous_frame_number:
+                    raise CameraTimeoutError(
+                        f"camera did not provide a frame within {timeout:.1f}s"
+                    )
 
-            if frame is None:
-                raise CameraTimeoutError(
-                    "camera published a frame without raw metadata"
+                previous_frame_number = frame_number
+                frame = camera.latest_frame(copy=False)
+
+                if frame is None:
+                    raise CameraTimeoutError(
+                        "camera published a frame without raw metadata"
+                    )
+
+                if model is not None:
+                    model(frame.image)
+
+                latencies_ns.append(
+                    max(time.monotonic_ns() - frame.timestamp_ns, 0)
                 )
 
-            latencies_ns.append(max(time.monotonic_ns() - frame.timestamp_ns, 0))
-
-            if model is not None:
-                model(frame.image)
+        finally:
+            cpu_seconds = time.process_time() - started_cpu
+            duration = max(time.monotonic() - started_at, 1e-9)
+            gpu_percent = sampler.stop()
 
         final_stats = camera.stats()
-        duration = max(time.monotonic() - started_at, 1e-9)
 
     mean_latency_ms = sum(latencies_ns) / len(latencies_ns) / 1_000_000
 
@@ -209,6 +255,83 @@ def benchmark_camera_capture(
         captured_frames=final_stats.captured_frames - initial_stats.captured_frames,
         dropped_frames=final_stats.dropped_frames - initial_stats.dropped_frames,
         mean_latency_ms=mean_latency_ms,
+        p95_latency_ms=_p95_latency_ms(latencies_ns),
+        process_cpu_percent=cpu_seconds / duration * 100,
+        gpu_utilization_percent=gpu_percent,
+        width=resolved_config.output_width,
+        height=resolved_config.output_height,
+        backend="cpu",
+    )
+
+
+def benchmark_gpu_capture(
+    frames: int = 300,
+    *,
+    timeout: float = 5.0,
+    config: CameraConfig | None = None,
+    consumer: Callable[[GpuFrame], object] | None = None,
+    resource_sampler: ResourceSampler | None = None,
+) -> CameraBenchmarkResult:
+    """Benchmark experimental NVMM capture and an optional GPU consumer."""
+    if frames <= 0:
+        raise ValueError("frames must be greater than zero")
+
+    if timeout <= 0:
+        raise ValueError("timeout must be greater than zero")
+
+    if consumer is not None and not callable(consumer):
+        raise ValueError("consumer must be callable or None")
+
+    resolved_config = replace(config or CameraConfig(), enable_preview=False)
+    camera = GpuCamera(resolved_config, experimental=True)
+    subscription = camera.subscribe_latest("benchmark-gpu")
+    sampler = _resource_sampler(resource_sampler)
+    latencies_ns: list[int] = []
+
+    with camera:
+        initial_stats = camera.stats()
+        sampler.start()
+        started_at = time.monotonic()
+        started_cpu = time.process_time()
+
+        try:
+            for _ in range(frames):
+                frame = subscription.receive(timeout)
+
+                if frame is None:
+                    raise CameraTimeoutError(
+                        f"GPU camera did not provide a frame within {timeout:.1f}s"
+                    )
+
+                if consumer is not None:
+                    consumer(frame)
+
+                latencies_ns.append(
+                    max(time.monotonic_ns() - frame.timestamp_ns, 0)
+                )
+
+        finally:
+            cpu_seconds = time.process_time() - started_cpu
+            duration = max(time.monotonic() - started_at, 1e-9)
+            gpu_percent = sampler.stop()
+
+        final_stats = camera.stats()
+
+    mean_latency_ms = sum(latencies_ns) / len(latencies_ns) / 1_000_000
+    return CameraBenchmarkResult(
+        name="gpu-consumer" if consumer is not None else "gpu-capture",
+        frames=frames,
+        duration_seconds=duration,
+        frames_per_second=frames / duration,
+        captured_frames=final_stats.captured_frames - initial_stats.captured_frames,
+        dropped_frames=final_stats.dropped_frames - initial_stats.dropped_frames,
+        mean_latency_ms=mean_latency_ms,
+        p95_latency_ms=_p95_latency_ms(latencies_ns),
+        process_cpu_percent=cpu_seconds / duration * 100,
+        gpu_utilization_percent=gpu_percent,
+        width=resolved_config.output_width,
+        height=resolved_config.output_height,
+        backend="gpu-experimental",
     )
 
 
