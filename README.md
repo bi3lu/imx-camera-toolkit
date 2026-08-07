@@ -401,14 +401,16 @@ uv run pytest -m "not benchmark"
 Deterministic capture and MJPEG framing benchmarks are deliberately separate
 from the normal test suite. They measure toolkit overhead only; they do not
 represent sensor, ISP, JPEG encoder, network, or browser performance. A
-separate, explicit hardware benchmark compares capture with JPEG preview
-disabled and enabled, reports dropped source frames, and records mean raw-frame
-delivery latency.
+separate, explicit hardware benchmark compares BGR/CPU capture-only, capture
+plus JPEG, and optionally capture plus an application-owned CPU model. It
+reports dropped source frames and mean raw-frame delivery latency.
 
 ```bash
 uv run pytest -m benchmark
 uv run imx-camera benchmark all --frames 1000 --json
 uv run imx-camera benchmark camera --frames 300
+uv run imx-camera benchmark camera --frames 300 \
+  --cpu-model my_application.models:cpu_model
 ```
 
 GitHub Actions runs linting and strict type checking in a dedicated job, unit
@@ -429,6 +431,8 @@ uv run imx-camera snapshot snapshot.jpg
 uv run imx-camera preview --host 0.0.0.0 --port 8000
 uv run imx-camera benchmark capture --frames 1000
 uv run imx-camera benchmark camera --frames 300
+uv run imx-camera benchmark camera --frames 300 \
+  --cpu-model my_application.models:cpu_model
 ```
 
 `diagnose --hardware` checks for the locally installed Argus GStreamer element
@@ -439,10 +443,13 @@ camera and should therefore not run concurrently with another camera process.
 
 The `capture`, `streaming`, and `all` benchmark targets use `MockCamera`, so
 they are repeatable on both Jetson and non-Jetson development machines. The
-`camera` target is an explicit physical-camera benchmark. It compares raw
-capture with and without JPEG preview, and reports local capture throughput,
-dropped frames, and mean frame-delivery latency. Neither benchmark measures
-network or browser throughput.
+`camera` target is an explicit physical-camera benchmark. It always measures
+BGR/CPU capture-only and capture plus JPEG. With `--cpu-model MODULE:CALLABLE`,
+it also loads an application-owned callable and passes each BGR host image to
+it, measuring capture plus the actual CPU model without making that model a
+toolkit dependency. These benchmarks report local capture throughput, dropped
+frames, and mean delivery latency; they do not measure network or browser
+throughput.
 
 ## Examples
 
@@ -597,10 +604,13 @@ built-in defaults.
 
 `CameraConfig` is the preferred immutable contract for passing and comparing
 camera settings between components. It contains the sensor, capture/output
-dimensions, `fps`, flip method, optional sensor mode, and preview setting:
+dimensions, `fps`, flip method, optional sensor mode, output format, and preview
+setting. The compatible `Camera` accepts only `FrameFormat.BGR_CPU`: GStreamer
+converts NV12/NVMM to BGR and the backend materializes an owned array in host
+RAM before Python receives it.
 
 ```python
-from imx_camera_toolkit import Camera, CameraConfig
+from imx_camera_toolkit import Camera, CameraConfig, FrameFormat
 
 camera = Camera(
     CameraConfig(
@@ -609,6 +619,7 @@ camera = Camera(
         capture_height=1080,
         output_width=1280,
         output_height=720,
+        output_format=FrameFormat.BGR_CPU,
         fps=30,
         enable_preview=False,
     )
@@ -617,6 +628,8 @@ camera = Camera(
 
 Constructor arguments remain available for backwards compatibility and take
 precedence over the relevant YAML or explicit configuration values.
+`copy=False` only suppresses the subsequent Python API copy of this BGR host
+array; it is not a GPU zero-copy mode.
 
 ### Hardware profiles
 

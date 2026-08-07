@@ -50,5 +50,7 @@ with Camera(enable_preview=False) as camera:
 ```
 
 The adapter uses `copy=False` by default and therefore exposes the shared raw
-image payload as read-only. Pass `copy=True` when the application requires an
-independent image buffer.
+image payload as read-only without another Python API copy. The compatible
+camera backend has already converted NV12/NVMM to BGR and materialized the
+frame in host RAM; this adapter does not provide GPU zero-copy. Pass
+`copy=True` when the application requires an independent image buffer.

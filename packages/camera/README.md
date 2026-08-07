@@ -298,10 +298,16 @@ finally:
 and slotted dataclass, so it is safe to compare, serialize with
 `dataclasses.asdict`, and pass between application components. It controls the
 CSI sensor ID, capture and output resolution, frame rate, sensor mode,
-`nvvidconv` flip method, and optional JPEG preview.
+`nvvidconv` flip method, explicit output format, and optional JPEG preview.
+
+`CameraConfig.output_format` defaults to `FrameFormat.BGR_CPU`, the only format
+accepted by the compatible `Camera`. In this mode GStreamer converts the
+sensor's NV12/NVMM frame to BGR, transfers it to system memory, and the backend
+materializes an owned host array. `output_memory` is therefore `MemoryType.CPU`
+and `copies_to_host_memory` is `True`.
 
 ```python
-from imx_camera_toolkit import Camera, CameraConfig
+from imx_camera_toolkit import Camera, CameraConfig, FrameFormat
 
 config = CameraConfig(
     sensor_id=1,
@@ -309,12 +315,17 @@ config = CameraConfig(
     capture_height=1080,
     output_width=1280,
     output_height=720,
+    output_format=FrameFormat.BGR_CPU,
     fps=30,
     flip_method=0,
     enable_preview=False,
 )
 camera = Camera(config)
 ```
+
+`Camera.read(copy=False)` reuses that already materialized BGR host array. It
+only disables the additional copy normally made by the Python API and never
+promises NVMM, CUDA, or GPU zero-copy access.
 
 ## Hardware profiles
 
