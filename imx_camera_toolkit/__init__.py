@@ -37,6 +37,14 @@ from .camera import (
     get_camera_profile,
     list_camera_profiles,
 )
+from .inference import (
+    FrameSpec,
+    InferenceResult,
+    InferenceRunner,
+    ShapeProfile,
+    TensorOutput,
+    TensorRTRunner,
+)
 
 if TYPE_CHECKING:
     from .preview import CameraPreview as CameraPreview
@@ -64,15 +72,21 @@ __all__ = [
     "CameraTimeoutError",
     "Frame",
     "FrameFormat",
+    "FrameSpec",
     "GpuBufferHandle",
     "GpuCamera",
     "GpuFrame",
     "GpuFrameExpiredError",
+    "InferenceResult",
+    "InferenceRunner",
     "MemoryType",
     "MetricsRecorder",
     "PipelineMetrics",
     "PipelineStage",
     "StageMetrics",
+    "ShapeProfile",
+    "TensorOutput",
+    "TensorRTRunner",
     "build_gpu_gstreamer_pipeline",
     "get_camera_profile",
     "list_camera_profiles",
