@@ -76,7 +76,7 @@ class _GpuBackend(Protocol):
 
 
 class GpuCamera:
-    """Capture newest NV12 frames in NVMM without a CPU image conversion.
+    """Experimentally capture newest NV12 frames without CPU conversion.
 
     ``GpuCamera`` is an explicit opt-in API. It never changes ``Camera`` or its
     BGR/NumPy ``raw_frame`` behavior. The inference branch yields borrowed
@@ -96,8 +96,18 @@ class GpuCamera:
         video_config: HardwareVideoConfig | None = None,
         video_overlay: VideoOverlayRenderer | None = None,
         argus_properties: tuple[str, ...] = (),
+        experimental: bool = False,
     ) -> None:
         """Initialize an NVMM pipeline without opening the camera."""
+        if not isinstance(experimental, bool):
+            raise CameraConfigurationError("experimental must be a boolean")
+
+        if not experimental:
+            raise CameraConfigurationError(
+                "GpuCamera is an experimental API; pass experimental=True "
+                "after reviewing the GPU compatibility guide"
+            )
+
         if config is not None and config_path is not None:
             raise CameraConfigurationError(
                 "config and config_path cannot be used together"
@@ -197,6 +207,11 @@ class GpuCamera:
         self.recovery_attempts = 0
         self.recoveries = 0
         self.last_recovery_error: Exception | None = None
+
+    @property
+    def api_stability(self) -> str:
+        """Release status of the explicitly enabled GPU capture contract."""
+        return "experimental"
 
     @property
     def config(self) -> CameraConfig:

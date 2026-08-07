@@ -61,6 +61,7 @@ def test_720p_hardware_preview_remains_lightweight_during_tensorrt(
             bitrate_bps=4_000_000,
             keyframe_interval=30,
         ),
+        experimental=True,
     )
 
     with camera:

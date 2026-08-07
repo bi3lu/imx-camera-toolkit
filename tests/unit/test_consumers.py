@@ -104,7 +104,7 @@ def test_cpu_camera_subscribe_latest_preserves_legacy_frame_contract() -> None:
 
 def test_gpu_camera_exposes_public_borrowed_latest_subscription() -> None:
     """GPU integrations can subscribe without accessing capture internals."""
-    camera = GpuCamera()
+    camera = GpuCamera(experimental=True)
     subscription = camera.subscribe_latest("inference")
     frame = mock_gpu_frame(object(), sequence=4)
 

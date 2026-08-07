@@ -45,7 +45,7 @@ def test_physical_sensor_delivers_nvmm_at_30_fps(width: int, height: int) -> Non
     timestamps_ns: list[int] = []
     previous_sequence = 0
 
-    with GpuCamera(config) as camera:
+    with GpuCamera(config, experimental=True) as camera:
         deadline = time.monotonic() + 10.0
 
         while len(timestamps_ns) < 60 and time.monotonic() < deadline:

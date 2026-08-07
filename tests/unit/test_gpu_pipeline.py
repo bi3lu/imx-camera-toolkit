@@ -9,6 +9,7 @@ import pytest
 import packages.camera.backends.gpu_gstreamer as gpu_gstreamer_backend
 from imx_camera_toolkit import (
     CameraConfig,
+    CameraConfigurationError,
     CameraOpenError,
     FrameFormat,
     GpuCamera,
@@ -90,7 +91,7 @@ def test_gpu_backend_never_maps_or_imports_numpy_for_inference() -> None:
 def test_gpu_camera_selects_nvmm_without_changing_cpu_config_input() -> None:
     """GpuCamera must be explicit while accepting existing hardware settings."""
     cpu_config = CameraConfig(output_width=1920, output_height=1080)
-    camera = GpuCamera(cpu_config, enable_preview=True)
+    camera = GpuCamera(cpu_config, enable_preview=True, experimental=True)
 
     assert cpu_config.output_format is FrameFormat.BGR_CPU
     assert camera.config.output_format is FrameFormat.NV12_NVMM
@@ -100,6 +101,16 @@ def test_gpu_camera_selects_nvmm_without_changing_cpu_config_input() -> None:
     assert camera.frame_resolution == (1920, 1080)
     assert "appsink name=gpu_sink" in camera.pipeline
     assert "appsink name=preview_sink" in camera.pipeline
+
+
+def test_gpu_camera_requires_explicit_experimental_opt_in() -> None:
+    """GPU capture must not be mistaken for the stable CPU camera API."""
+    with pytest.raises(CameraConfigurationError, match="experimental=True"):
+        GpuCamera()
+
+    camera = GpuCamera(experimental=True)
+
+    assert camera.api_stability == "experimental"
 
 
 class _FakeGpuBackend:
@@ -142,7 +153,7 @@ class _RecoverableGpuCamera(GpuCamera):
     def __init__(self, backends: list[_FakeGpuBackend]) -> None:
         """Store backend instances in creation order."""
         self.backends = backends
-        super().__init__()
+        super().__init__(experimental=True)
 
     def _backend_available(self) -> bool:
         """Allow lifecycle tests on hosts without GStreamer."""
@@ -184,7 +195,7 @@ def test_gpu_start_closes_a_pipeline_that_fails_to_open() -> None:
 
 def test_gpu_publication_invalidates_the_previous_nvmm_lease_on_stop() -> None:
     """Shutdown must release the last buffer back to the GStreamer pool."""
-    camera = GpuCamera()
+    camera = GpuCamera(experimental=True)
     frame = mock_gpu_frame(object())
     camera._gpu_publisher.publish(frame)
     camera._running.set()

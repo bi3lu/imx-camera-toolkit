@@ -103,7 +103,10 @@ class _FakeNvmmOverlay:
 
 def test_gpu_camera_can_wire_overlay_after_inference_subscription() -> None:
     """An application may assemble inference before finalizing the pipeline."""
-    camera = GpuCamera(video_config=HardwareVideoConfig())
+    camera = GpuCamera(
+        video_config=HardwareVideoConfig(),
+        experimental=True,
+    )
 
     camera.set_video_overlay(_FakeNvmmOverlay())
 
@@ -114,7 +117,7 @@ def test_gpu_camera_can_wire_overlay_after_inference_subscription() -> None:
 
 def test_gpu_camera_rejects_overlay_without_hardware_video() -> None:
     """A renderer must not silently activate a host or unencoded branch."""
-    camera = GpuCamera()
+    camera = GpuCamera(experimental=True)
 
     with pytest.raises(CameraConfigurationError, match="hardware video"):
         camera.set_video_overlay(_FakeNvmmOverlay())
