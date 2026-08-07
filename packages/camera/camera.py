@@ -333,12 +333,12 @@ class Camera:
     @property
     def frame_format(self) -> FrameFormat:
         """Explicit output format for the legacy CPU camera path."""
-        return FrameFormat.BGR_CPU
+        return self._config.output_format
 
     @property
     def memory_type(self) -> MemoryType:
         """Memory domain used by frames from this camera."""
-        return MemoryType.CPU
+        return self._config.output_memory
 
     @property
     def frame_resolution(self) -> tuple[int, int]:
@@ -853,8 +853,9 @@ class Camera:
         By default, the BGR image is copied and the caller exclusively owns the
         returned image buffer. With ``copy=False``, the returned image is the
         publisher's shared BGR payload and must be treated as read-only. The
-        shared form avoids a copy for external TensorRT, DeepStream, OpenCV, or
-        CUDA pipelines.
+        shared form avoids only the additional Python API copy. Capture has
+        already converted NV12/NVMM to BGR and copied the frame into host RAM;
+        this option is not a GPU zero-copy guarantee.
 
         Args:
             timeout: Maximum wait for the first available raw frame, in seconds.

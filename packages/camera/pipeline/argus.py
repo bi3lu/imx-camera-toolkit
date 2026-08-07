@@ -55,7 +55,12 @@ def build_gstreamer_pipeline(
     flip_method: int = 0,
     argus_properties: Sequence[str] = (),
 ) -> str:
-    """Build an Argus pipeline with a BGR appsink for one CSI camera.
+    """Build the compatible Argus pipeline with a BGR/CPU appsink.
+
+    NV12 frames begin in NVMM, but ``nvvidconv`` and ``videoconvert`` produce
+    BGR in system memory before ``appsink``. Capture backends then materialize
+    an owned host array. This deliberate compatibility path is not GPU
+    zero-copy.
 
     Args:
         sensor_id: Zero-based CSI sensor identifier used by Argus.

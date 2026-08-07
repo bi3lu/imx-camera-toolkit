@@ -20,6 +20,11 @@ camera_config:
   output_width: 1280
   output_height: 720
 
+  # Compatible Camera output path. BGR_CPU converts the sensor's NV12/NVMM
+  # frames to BGR, downloads them to host RAM, and materializes an owned array.
+  # GPU capture uses a separate API and must not be selected here.
+  output_format: BGR_CPU
+
   # Number of frames captured from the sensor per second.
   fps: 30
 

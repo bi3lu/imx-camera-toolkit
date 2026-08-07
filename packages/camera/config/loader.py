@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import CameraConfigurationError
+from ..models.formats import FrameFormat, MemoryType
 
 try:
     import yaml
@@ -29,6 +30,8 @@ class CameraConfig:
         capture_height: Height captured directly from the sensor, in pixels.
         output_width: Width of frames delivered to OpenCV, in pixels.
         output_height: Height of frames delivered to OpenCV, in pixels.
+        output_format: Explicit output path. ``BGR_CPU`` converts NV12 to BGR
+            and copies each frame into host RAM before Python receives it.
         fps: Camera capture rate, in frames per second.
         flip_method: NVIDIA ``nvvidconv`` flip transformation, from 0 to 7.
         sensor_mode: Optional Argus sensor mode. ``None`` lets Argus choose.
@@ -48,6 +51,7 @@ class CameraConfig:
     enable_preview: bool = False
     quality: int = 65
     max_fps: float | None = None
+    output_format: FrameFormat = FrameFormat.BGR_CPU
 
     def __post_init__(self) -> None:
         """Validate static configuration values at construction time."""
@@ -57,6 +61,16 @@ class CameraConfig:
     def preview_fps(self) -> float:
         """float: Resolved maximum rate used by the JPEG preview encoder."""
         return float(self.fps) if self.max_fps is None else float(self.max_fps)
+
+    @property
+    def output_memory(self) -> MemoryType:
+        """Memory domain used by the configured compatible camera path."""
+        return MemoryType.CPU
+
+    @property
+    def copies_to_host_memory(self) -> bool:
+        """Whether capture materializes an owned frame in host RAM."""
+        return True
 
     @classmethod
     def from_profile(cls, name: str) -> CameraConfig:
@@ -113,6 +127,15 @@ def validate_camera_config(config: CameraConfig) -> None:
 
     if not isinstance(config.enable_preview, bool):
         raise CameraConfigurationError("enable_preview must be a boolean")
+
+    if not isinstance(config.output_format, FrameFormat):
+        raise CameraConfigurationError("output_format must be a FrameFormat")
+
+    if config.output_format is not FrameFormat.BGR_CPU:
+        raise CameraConfigurationError(
+            "Camera supports only FrameFormat.BGR_CPU; use a dedicated GPU "
+            "capture source for NV12_NVMM"
+        )
 
     if config.max_fps is not None and (
         isinstance(config.max_fps, bool)
@@ -193,6 +216,12 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
             ):
                 raise CameraConfigurationError("max_fps must be a number or null")
 
+        elif key == "output_format":
+            if value != FrameFormat.BGR_CPU.value:
+                raise CameraConfigurationError(
+                    "output_format must be BGR_CPU for Camera"
+                )
+
         elif isinstance(default_value, int):
             if isinstance(value, bool) or not isinstance(value, int):
                 raise CameraConfigurationError(f"{key} must be an integer")
@@ -206,6 +235,9 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
         capture_height=config_data.get("capture_height", defaults.capture_height),
         output_width=config_data.get("output_width", defaults.output_width),
         output_height=config_data.get("output_height", defaults.output_height),
+        output_format=FrameFormat(
+            config_data.get("output_format", defaults.output_format.value)
+        ),
         fps=config_data.get("fps", config_data.get("capture_fps", defaults.fps)),
         flip_method=config_data.get("flip_method", defaults.flip_method),
         sensor_mode=config_data.get("sensor_mode", defaults.sensor_mode),
