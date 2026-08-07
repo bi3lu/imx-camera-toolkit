@@ -79,13 +79,15 @@ required because it integrates with NVIDIA's camera and GStreamer stack.
 
 ## Compatibility matrix
 
-| JetPack | Jetson | Camera module | Profile / Argus mode | Capture | Output | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| 6.2.2 | Orin Nano | IMX219-77 | `imx219-1080p` / 2 | 1920×1080 at 30 FPS | 1280×720 | tested |
-| 6.2.2 | Orin Nano | IMX477 | — | — | — | planned |
+| JetPack | Jetson | Camera module | API / Argus mode | Capture and output | Status |
+| --- | --- | --- | --- | --- | --- |
+| 6.2.2 | Orin Nano | IMX219-77 | `Camera`, `imx219-1080p` / 2 | 1920×1080 → 1280×720 at 30 FPS, BGR/CPU | tested |
+| 6.2.2 | Orin Nano | IMX219-77 | `GpuCamera` / 4 | 1280×720 at 30 FPS, NV12/NVMM + JPEG | tested |
+| 6.2.2 | Orin Nano | IMX219-77 | `GpuCamera` / 2 | 1920×1080 at 30 FPS, NV12/NVMM + JPEG | tested |
+| 6.2.2 | Orin Nano | IMX477 | `GpuCamera` | 1280×720 and 1920×1080 at 30 FPS | planned |
 
-Only the first row has been verified on the stated hardware. “Planned” is not
-a support claim and must not be treated as a working profile.
+Only rows marked `tested` have been verified on the stated hardware. “Planned”
+is not a support claim and must not be treated as a working configuration.
 
 ## Installation
 
@@ -224,9 +226,44 @@ implicit NumPy conversion. It carries exactly one borrowed DMA-BUF descriptor
 or a checked `GpuBufferHandle` around `Gst.Buffer` or `NvBufSurface`.
 
 GPU buffers remain owned by capture. A consumer must complete its work before
-requesting the next frame from the source; publishing a successor invalidates
-the previous frame lease. Calling `gpu_frame.payload()` after invalidation
-raises `GpuFrameExpiredError`.
+capture publishes the next frame; publishing a successor invalidates the
+previous frame lease. Calling `gpu_frame.payload()` after invalidation raises
+`GpuFrameExpiredError`.
+
+### GPU-first capture
+
+Use `GpuCamera` to opt into the Jetson NVMM path without changing the compatible
+`Camera` API:
+
+```python
+from imx_camera_toolkit import CameraConfig, GpuCamera
+
+with GpuCamera(
+    CameraConfig(
+        capture_width=1920,
+        capture_height=1080,
+        output_width=1920,
+        output_height=1080,
+        fps=30,
+        enable_preview=True,
+    )
+) as camera:
+    frame = camera.read(timeout=1.0)
+
+    if frame is not None:
+        result = my_tensor_rt_consumer(frame.payload())
+```
+
+The inference branch stays `NV12/NVMM` through a one-buffer leaky queue and
+`gpu_sink`. A separate one-buffer leaky branch feeds `nvjpegenc` and the MJPEG
+preview source. Neither branch can accumulate stale frames. The GPU backend
+checks the negotiated NVMM/NV12 caps and forwards the borrowed `Gst.Buffer`
+without `buffer.map()`, NumPy conversion, or a host-memory image copy.
+
+`GpuCamera` remains model-agnostic: applications own TensorRT engines,
+preprocessing, CUDA synchronization, and model/GPU/TensorRT-aware engine cache
+validation. See [the camera documentation](packages/camera/README.md#gpu-first-nvmm-capture)
+for the pipeline contract and opt-in IMX219/IMX477 hardware validation commands.
 
 Model-agnostic code can depend only on the public union:
 

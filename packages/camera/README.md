@@ -140,7 +140,7 @@ GPU-first sources use the separate public `GpuFrame` contract and never replace
 one borrowed DMA-BUF descriptor or checked `GpuBufferHandle` around an opaque
 `Gst.Buffer`/`NvBufSurface` resource.
 It intentionally has no NumPy `image` field. Capture owns the buffer, and the
-consumer must finish using it before requesting the next frame. A source calls
+consumer must finish using it before the next frame arrives. A source calls
 `invalidate()` on the previous frame when its successor is published;
 subsequent `payload()` access raises `GpuFrameExpiredError`.
 
@@ -148,6 +148,67 @@ Public `GpuFrameSource` and `CaptureFrameSource` protocols allow applications
 to implement CPU/GPU consumers without importing capture internals. Test code
 can use `MockFrameSource`, `mock_cpu_frame`, and `mock_gpu_frame` from
 `imx_camera_toolkit.testing` without Jetson hardware.
+
+## GPU-first NVMM capture
+
+`GpuCamera` is the explicit Jetson-only capture API. It keeps NV12 in NVMM
+through the inference appsink and returns a borrowed `GpuFrame`; it never maps
+that buffer to NumPy or calls `Gst.Buffer.map()`. The optional browser branch
+is split before encoding, so a slow MJPEG client cannot stall inference:
+
+```text
+nvarguscamerasrc -> NV12/NVMM -> nvvidconv -> NV12/NVMM -> tee
+  +-> queue(max=1, leaky) -> NV12/NVMM -> gpu_sink(max=1, drop=true)
+  +-> queue(max=1, leaky) -> NV12/NVMM -> nvjpegenc -> preview_sink(max=1, drop=true)
+```
+
+```python
+from imx_camera_toolkit import CameraConfig, GpuCamera
+
+config = CameraConfig(
+    sensor_id=0,
+    capture_width=1920,
+    capture_height=1080,
+    output_width=1920,
+    output_height=1080,
+    fps=30,
+    enable_preview=True,
+)
+
+with GpuCamera(config) as camera:
+    frame = camera.read(timeout=1.0)
+    if frame is not None:
+        run_tensor_rt(frame.payload(), frame.width, frame.height)
+```
+
+The consumer must complete all access to `frame.payload()` before capture
+publishes the next frame. The payload is an opaque borrowed `Gst.Buffer` whose
+caps were checked for `video/x-raw(memory:NVMM), format=NV12`. The toolkit does
+not choose a TensorRT model, preprocessing policy, CUDA stream, or engine cache.
+
+When preview is enabled, `GpuCamera` implements the JPEG source contract used
+by `MJPEGStream`, so the encoded branch can feed browser clients without a BGR
+round trip. Any error or shutdown closes the complete tee pipeline; recovery
+recreates both branches together.
+
+Physical validation is opt-in and must be run once with each target module:
+
+```bash
+IMX_CAMERA_SENSOR=IMX219 IMX_CAMERA_SENSOR_ID=0 \
+  uv run pytest -m hardware tests/hardware/test_gpu_capture.py
+IMX_CAMERA_SENSOR=IMX477 IMX_CAMERA_SENSOR_ID=0 \
+  uv run pytest -m hardware tests/hardware/test_gpu_capture.py
+```
+
+Each run exercises 1280×720 and 1920×1080 at 30 FPS, verifies borrowed NVMM
+frames from branch A, and verifies hardware JPEG output from branch B. The
+unit suite also constructs all four sensor/resolution scenarios without camera
+hardware, but that structural test is not a physical compatibility claim.
+
+The IMX219 matrix has been run successfully for both resolutions on JetPack
+6.2.2 and Jetson Orin Nano. IMX477 remains pending until that physical module
+is connected and the same test completes; pipeline-construction coverage alone
+does not mark it as verified.
 
 ## Pipeline observability
 
