@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import pytest
-from fastapi.testclient import TestClient
+from fastapi import HTTPException
 
 from imx_camera_toolkit import Camera
 from imx_camera_toolkit.preview import PreviewServer
 from packages.camera.models import Frame
 from packages.camera.publishing import JPEGPublisher
+
+
+def _endpoint(application: Any, path: str) -> Callable[..., Any]:
+    """Resolve one registered FastAPI endpoint without an HTTP test portal."""
+    for route in application.routes:
+        if getattr(route, "path", None) == path:
+            return route.endpoint  # type: ignore[no-any-return]
+    raise LookupError(path)
 
 
 def test_preview_server_publishes_opaque_images_without_model_metadata(
@@ -59,11 +70,12 @@ def test_preview_server_creates_a_transport_only_fastapi_application() -> None:
     server = PreviewServer()
     application = server.create_app()
 
-    with TestClient(application) as client:
-        response = client.get("/")
-        unavailable = client.get("/api/camera/snapshot")
-        controls = client.get("/api/camera/control")
-
+    response = _endpoint(application, "/")()
     assert response.status_code == 200
-    assert unavailable.status_code == 503
-    assert controls.status_code == 404
+    with pytest.raises(HTTPException) as unavailable:
+        _endpoint(application, "/api/camera/snapshot")(-1)
+    assert unavailable.value.status_code == 503
+    assert all(
+        getattr(route, "path", None) != "/api/camera/control"
+        for route in application.routes
+    )
