@@ -40,12 +40,12 @@ class EncodedVideoSource(Protocol):
 
     @property
     def video_config(self) -> HardwareVideoConfig | None:
-        """Hardware encoder settings used by access units."""
+        """Video encoder settings used by access units."""
         ...
 
     @property
     def video_stats(self) -> VideoEncodeStats:
-        """Recent hardware encode throughput."""
+        """Recent video encode throughput."""
         ...
 
     def subscribe_video(
@@ -244,7 +244,7 @@ class HLSPackager:
         self._runtime = None
 
     def _push(self, frame: EncodedVideoFrame) -> None:
-        """Forward one newest hardware-encoded access unit to hlssink2."""
+        """Forward one newest encoded access unit to hlssink2."""
         if self._runtime is None or self._appsrc is None:
             raise ProductionPreviewError("HLS packager is not running")
 

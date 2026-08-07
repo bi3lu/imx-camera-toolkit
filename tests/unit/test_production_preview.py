@@ -532,7 +532,7 @@ class _FakeStream:
         self.synchronizations = 0
 
     def synchronize(self) -> None:
-        """Record ordering before the hardware encoder consumes the surface."""
+        """Record ordering before the video encoder consumes the surface."""
         self.synchronizations += 1
 
 

@@ -69,7 +69,7 @@ class CudaOverlayRenderer:
 
     ``GpuCamera`` inserts a device-to-device ``nvvidconv`` before invoking this
     renderer, so the in-place overlay surface is isolated from the TensorRT
-    inference branch and remains NVMM through hardware encoding.
+    inference branch and remains NVMM until any encoder-specific conversion.
     """
 
     def __init__(

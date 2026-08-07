@@ -1,4 +1,4 @@
-"""Latest hardware-encoded access unit and throughput publication."""
+"""Latest encoded access unit and throughput publication."""
 
 from __future__ import annotations
 

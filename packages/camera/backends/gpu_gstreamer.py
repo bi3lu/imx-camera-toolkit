@@ -242,7 +242,7 @@ class GpuGStreamerCaptureBackend:
         return bytes(buffer.extract_dup(0, buffer.get_size()))
 
     def read_video(self) -> EncodedVideoFrame | None:
-        """Pull one newest hardware-encoded access unit without raw pixels."""
+        """Pull one newest encoded access unit without raw pixels."""
         if self._overlay_error is not None:
             error = self._overlay_error
             self._overlay_error = None

@@ -21,7 +21,7 @@ class PreviewTransport(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class ProductionPreviewConfig:
-    """Transport settings applied after the shared hardware encoder."""
+    """Transport settings applied after the shared video encoder."""
 
     transport: PreviewTransport = PreviewTransport.WEBRTC
     max_clients: int = 4

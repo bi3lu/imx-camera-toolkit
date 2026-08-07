@@ -11,7 +11,7 @@ memory domain required by the next consumer.
 | TensorRT or custom CUDA consumer | `GpuCamera(experimental=True)` | Optional WebRTC | Experimental. The borrowed NV12 frame remains in NVMM. |
 | DeepStream application | `GpuCamera(experimental=True)` or a native DeepStream source | WebRTC/HLS outside capture | Experimental toolkit interop. Prefer a native DeepStream pipeline when DeepStream owns the full graph. |
 | Low-latency production browser preview | `GpuCamera(experimental=True)` | H.264 WebRTC | One shared NVENC encoder where available, or shared CPU x264 on Orin Nano. |
-| Reverse-proxy-friendly segmented delivery | `GpuCamera(experimental=True)` | H.264/H.265 HLS | Simpler HTTP deployment, with more latency than WebRTC. |
+| Reverse-proxy-friendly segmented delivery | `GpuCamera(experimental=True)` | H.264/H.265 HLS | Simpler HTTP deployment, with more latency than WebRTC. H.265 requires NVENC. |
 
 `Camera.read(copy=False)` only avoids another Python-side array copy. It does
 not turn BGR host memory into CUDA or NVMM memory. Conversely, `GpuFrame` is a
@@ -40,7 +40,9 @@ Install a repository environment that can see JetPack system packages:
 uv venv --system-site-packages --allow-existing .venv
 uv sync --extra production-preview --extra tensorrt --group dev
 sudo apt-get install python-gi-dev libgstreamer1.0-dev \
-  libgstreamer-plugins-base1.0-dev cmake ninja-build
+  libgstreamer-plugins-base1.0-dev gstreamer1.0-libav \
+  gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-nice \
+  cmake ninja-build
 uv run imx-camera-build-interop
 ```
 
@@ -52,7 +54,8 @@ cat /etc/nv_tegra_release
 nvcc --version
 uv run python -c "import tensorrt; print(tensorrt.__version__)"
 gst-inspect-1.0 nvarguscamerasrc nvvidconv x264enc h264parse \
-  rtph264pay webrtcbin nicesrc nicesink hlssink2
+  rtph264pay rtph264depay webrtcbin nicesrc nicesink avdec_h264 \
+  videoconvert appsink hlssink2
 ```
 
 ## TensorRT engine compatibility

@@ -55,7 +55,7 @@ def build_hls_transport_pipeline(
     codec: VideoCodec | EncodedStreamDescription,
     config: ProductionPreviewConfig,
 ) -> str:
-    """Build a parser/muxer pipeline; hardware encoding remains upstream."""
+    """Build a parser/muxer pipeline; video encoding remains upstream."""
     description = _description(codec)
     config.validate_codec(description.codec)
 
