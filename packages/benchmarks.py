@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 
 from .camera.camera import Camera, CameraConfig, CameraTimeoutError
@@ -10,6 +11,7 @@ from .stream.stream import MJPEGStream
 from .testing.mock_camera import MockCamera
 
 BENCHMARK_JPEG = b"\xff\xd8\xff\xd9"
+CpuModel = Callable[[object], object]
 
 
 @dataclass(frozen=True)
@@ -108,20 +110,24 @@ def benchmark_camera_capture(
     preview: bool = False,
     timeout: float = 5.0,
     config: CameraConfig | None = None,
+    model: CpuModel | None = None,
 ) -> CameraBenchmarkResult:
     """Measure raw capture from a connected CSI camera.
 
     The benchmark opens one camera, waits for distinct latest raw frames, and
-    closes it before returning. Run it once with ``preview=False`` and once
-    with ``preview=True`` to quantify the local JPEG preview cost. It measures
-    raw capture throughput, source read failures, and publication-to-consumer
-    latency; it does not measure network or browser performance.
+    closes it before returning. Preview measures capture plus JPEG encoding;
+    an optional callable measures capture plus a real application-owned CPU
+    model. It measures raw capture throughput, source read failures, and
+    publication-to-consumer latency; it does not measure network or browser
+    performance.
 
     Args:
         frames: Number of distinct raw frames to observe.
         preview: Whether to enable the independent JPEG preview path.
         timeout: Maximum wait for each raw frame in seconds.
         config: Optional base camera configuration for the tested sensor.
+        model: Optional CPU model callable receiving each BGR image. It cannot
+            be combined with JPEG preview.
 
     Returns:
         End-to-end result for the current local Jetson and sensor setup.
@@ -138,6 +144,12 @@ def benchmark_camera_capture(
 
     if not isinstance(preview, bool):
         raise ValueError("preview must be a boolean")
+
+    if model is not None and not callable(model):
+        raise ValueError("model must be callable or None")
+
+    if preview and model is not None:
+        raise ValueError("CPU model and JPEG preview benchmarks are separate")
 
     resolved_config = replace(
         config or CameraConfig(),
@@ -172,16 +184,76 @@ def benchmark_camera_capture(
 
             latencies_ns.append(max(time.monotonic_ns() - frame.timestamp_ns, 0))
 
+            if model is not None:
+                model(frame.image)
+
         final_stats = camera.stats()
         duration = max(time.monotonic() - started_at, 1e-9)
 
     mean_latency_ms = sum(latencies_ns) / len(latencies_ns) / 1_000_000
+
+    if preview:
+        benchmark_name = "camera-preview"
+
+    elif model is not None:
+        benchmark_name = "camera-cpu-model"
+
+    else:
+        benchmark_name = "camera-raw"
+
     return CameraBenchmarkResult(
-        name="camera-preview" if preview else "camera-raw",
+        name=benchmark_name,
         frames=frames,
         duration_seconds=duration,
         frames_per_second=frames / duration,
         captured_frames=final_stats.captured_frames - initial_stats.captured_frames,
         dropped_frames=final_stats.dropped_frames - initial_stats.dropped_frames,
         mean_latency_ms=mean_latency_ms,
+    )
+
+
+def benchmark_cpu_capture(
+    frames: int = 300,
+    *,
+    timeout: float = 5.0,
+    config: CameraConfig | None = None,
+) -> CameraBenchmarkResult:
+    """Benchmark compatible BGR/CPU capture without JPEG or a model."""
+    return benchmark_camera_capture(
+        frames,
+        preview=False,
+        timeout=timeout,
+        config=config,
+    )
+
+
+def benchmark_cpu_capture_jpeg(
+    frames: int = 300,
+    *,
+    timeout: float = 5.0,
+    config: CameraConfig | None = None,
+) -> CameraBenchmarkResult:
+    """Benchmark compatible BGR/CPU capture with JPEG encoding enabled."""
+    return benchmark_camera_capture(
+        frames,
+        preview=True,
+        timeout=timeout,
+        config=config,
+    )
+
+
+def benchmark_cpu_capture_model(
+    model: CpuModel,
+    frames: int = 300,
+    *,
+    timeout: float = 5.0,
+    config: CameraConfig | None = None,
+) -> CameraBenchmarkResult:
+    """Benchmark compatible BGR/CPU capture plus an application CPU model."""
+    return benchmark_camera_capture(
+        frames,
+        preview=False,
+        timeout=timeout,
+        config=config,
+        model=model,
     )

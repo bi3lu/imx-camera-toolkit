@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import cast
 
 from .benchmarks import (
-    benchmark_camera_capture,
     benchmark_capture,
+    benchmark_cpu_capture,
+    benchmark_cpu_capture_jpeg,
+    benchmark_cpu_capture_model,
     benchmark_streaming,
 )
 from .camera.camera import Camera, CameraConfig, CameraTimeoutError
@@ -47,6 +51,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--preview-only",
         action="store_true",
         help="measure only capture with JPEG preview enabled",
+    )
+    benchmark.add_argument(
+        "--cpu-model",
+        metavar="MODULE:CALLABLE",
+        help="also benchmark an application CPU model callable",
     )
 
     preview = subcommands.add_parser(
@@ -119,6 +128,22 @@ def _print_results(
         print(f"{result['name']}: {result.get('status', 'ok')} ({detail})")
 
 
+def _load_cpu_model(specification: str) -> Callable[[object], object]:
+    """Load an application-owned CPU model callable for a hardware benchmark."""
+    module_name, separator, attribute_name = specification.partition(":")
+
+    if not separator or not module_name or not attribute_name:
+        raise ValueError("--cpu-model must use MODULE:CALLABLE syntax")
+
+    module = importlib.import_module(module_name)
+    model = getattr(module, attribute_name, None)
+
+    if not callable(model):
+        raise ValueError("--cpu-model must resolve to a callable")
+
+    return cast(Callable[[object], object], model)
+
+
 def _has_errors(results: Sequence[Mapping[str, object]]) -> bool:
     """Return whether a structured diagnostic result contains a failure."""
     return any(result.get("status") in {"error", "unavailable"} for result in results)
@@ -184,16 +209,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             benchmark_results.append(benchmark_streaming(arguments.frames).as_dict())
 
         if arguments.target == "camera":
-            preview_modes = (True,) if arguments.preview_only else (False, True)
             config = _camera_config(arguments, preview=False)
-            for preview_enabled in preview_modes:
+
+            if arguments.preview_only:
                 benchmark_results.append(
-                    benchmark_camera_capture(
+                    benchmark_cpu_capture_jpeg(
                         arguments.frames,
-                        preview=preview_enabled,
                         config=config,
                     ).as_dict()
                 )
+
+            else:
+                benchmark_results.extend(
+                    (
+                        benchmark_cpu_capture(
+                            arguments.frames,
+                            config=config,
+                        ).as_dict(),
+                        benchmark_cpu_capture_jpeg(
+                            arguments.frames,
+                            config=config,
+                        ).as_dict(),
+                    )
+                )
+
+                if arguments.cpu_model is not None:
+                    model = _load_cpu_model(arguments.cpu_model)
+                    benchmark_results.append(
+                        benchmark_cpu_capture_model(
+                            model,
+                            arguments.frames,
+                            config=config,
+                        ).as_dict()
+                    )
 
         _print_results(benchmark_results, arguments.json)
         return 0
