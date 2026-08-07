@@ -54,7 +54,7 @@ class APIConfig:
 
     title: str = "IMX Camera API"
     description: str = "Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera."
-    version: str = "0.4.0"
+    version: str = "0.5.0"
     snapshot_timeout: float = 2.0
 
 
@@ -279,6 +279,7 @@ def _camera_status(camera: Camera) -> dict[str, object]:
         background capture error when one exists.
     """
     diagnostics = camera.stats()
+    width, height = camera.frame_resolution
     last_error = str(camera.last_error) if camera.last_error is not None else None
 
     if diagnostics.running:
@@ -299,6 +300,26 @@ def _camera_status(camera: Camera) -> dict[str, object]:
         "dropped_frames": diagnostics.dropped_frames,
         "capture_fps": diagnostics.capture_fps,
         "last_frame_timestamp_ns": diagnostics.last_frame_timestamp_ns,
+        "last_capture_timestamp_ns": diagnostics.last_capture_timestamp_ns,
+        "active_backend": camera.active_backend,
+        "frame_format": camera.frame_format.value,
+        "frame_memory_type": camera.memory_type.value,
+        "frame_resolution": {"width": width, "height": height},
+        "consumer_dropped_frames": dict(diagnostics.consumer_dropped_frames),
+        "stage_latency_ns": {
+            stage: {
+                "samples": metrics.samples,
+                "last": metrics.last_duration_ns,
+                "mean": metrics.mean_duration_ns,
+                "max": metrics.max_duration_ns,
+            }
+            for stage, metrics in (
+                ("transfer", diagnostics.pipeline.transfer),
+                ("inference", diagnostics.pipeline.inference),
+                ("encoder", diagnostics.pipeline.encoder),
+                ("end_to_end", diagnostics.pipeline.end_to_end),
+            )
+        },
         "frames_encoded": camera.frames_encoded,
         "last_frame_time": camera.last_frame_time,
         "last_error": last_error,

@@ -65,6 +65,9 @@ The core Python package has no PyPI runtime dependencies. YAML configuration is
 used when PyYAML is available; otherwise `Camera` safely uses its built-in
 configuration defaults.
 
+For deployment choices and the experimental GPU compatibility policy, see the
+[CPU/GPU and browser mode guide](../../docs/GPU_PATH_GUIDE.md).
+
 Install the project dependencies with:
 
 ```bash
@@ -73,8 +76,8 @@ uv sync
 
 ## Stable raw-frame API
 
-`Camera.read()` is the primary integration API for external image-processing
-pipelines. It returns a `Frame` containing an opaque processed BGR image and
+`Camera.read()` is the primary CPU integration API for external image-processing
+pipelines. It returns a `Frame` containing a processed BGR image and
 metadata. It does not encode JPEG data and does not perform inference.
 
 ```python
@@ -100,7 +103,7 @@ with Camera(config) as camera:
 
 | Field | Meaning |
 | --- | --- |
-| `image` | Opaque BGR payload; it may be a NumPy array, CUDA buffer, DMA-BUF, or another future backend type. |
+| `image` | Host-memory BGR payload, normally a NumPy array. |
 | `sequence` | Monotonically increasing capture identifier. |
 | `timestamp_ns` | Monotonic acquisition timestamp in nanoseconds. |
 | `capture_timestamp_ns` | Optional hardware-provided capture timestamp; currently `None` for the standard backend. |
@@ -127,8 +130,132 @@ frame = camera.read(timeout=1.0, copy=False)
 
 By default, `copy=True` returns an independent BGR image copy owned by the
 caller. With `copy=False`, `frame.image` is the camera's shared image payload.
-This avoids a copy for TensorRT, DeepStream, OpenCV, and CUDA pipelines, but
-the caller must treat the shared payload as read-only.
+This avoids one additional host-memory copy for CPU consumers and preprocessing,
+but the caller must treat the shared payload as read-only.
+
+This is host-memory copy avoidance only; it does not guarantee GPU zero-copy.
+GPU-first sources use the separate public `GpuFrame` contract and never replace
+`raw_frame` with an NVMM buffer.
+
+## GPU frame contract
+
+`GpuFrame` identifies `FrameFormat.NV12_NVMM` in `MemoryType.NVMM` and exposes
+one borrowed DMA-BUF descriptor or checked `GpuBufferHandle` around an opaque
+`Gst.Buffer`/`NvBufSurface` resource.
+It intentionally has no NumPy `image` field. Capture owns the buffer, and the
+consumer must finish using it before the next frame arrives. A source calls
+`invalidate()` on the previous frame when its successor is published;
+subsequent `payload()` access raises `GpuFrameExpiredError`.
+
+Public `GpuFrameSource` and `CaptureFrameSource` protocols allow applications
+to implement CPU/GPU consumers without importing capture internals. Test code
+can use `MockFrameSource`, `mock_cpu_frame`, and `mock_gpu_frame` from
+`imx_camera_toolkit.testing` without Jetson hardware.
+
+## GPU-first NVMM capture
+
+`GpuCamera` is the explicit Jetson-only capture API. It keeps NV12 in NVMM
+through the inference appsink and returns a borrowed `GpuFrame`; it never maps
+that buffer to NumPy or calls `Gst.Buffer.map()`. The optional browser branch
+is split before encoding, so a slow MJPEG client cannot stall inference:
+
+```text
+nvarguscamerasrc -> NV12/NVMM -> nvvidconv -> NV12/NVMM -> tee
+  +-> queue(max=1, leaky) -> NV12/NVMM -> gpu_sink(max=1, drop=true)
+  +-> queue(max=1, leaky) -> NV12/NVMM -> nvjpegenc -> preview_sink(max=1, drop=true)
+```
+
+```python
+from imx_camera_toolkit import CameraConfig, GpuCamera
+
+config = CameraConfig(
+    sensor_id=0,
+    capture_width=1920,
+    capture_height=1080,
+    output_width=1920,
+    output_height=1080,
+    fps=30,
+    enable_preview=True,
+)
+
+with GpuCamera(config, experimental=True) as camera:
+    frame = camera.read(timeout=1.0)
+    if frame is not None:
+        run_tensor_rt(frame.payload(), frame.width, frame.height)
+```
+
+The consumer must complete all access to `frame.payload()` before capture
+publishes the next frame. The payload is an opaque borrowed `Gst.Buffer` whose
+caps were checked for `video/x-raw(memory:NVMM), format=NV12`. The toolkit does
+not choose a TensorRT model, preprocessing policy, CUDA stream, or engine cache.
+
+When preview is enabled, `GpuCamera` implements the JPEG source contract used
+by `MJPEGStream`, so the encoded branch can feed browser clients without a BGR
+round trip. Any error or shutdown closes the complete tee pipeline; recovery
+recreates both branches together.
+
+## Production hardware video branch
+
+`HardwareVideoConfig` adds a third, optional tee branch without changing the
+JPEG debug path or borrowed inference frames:
+
+```python
+from imx_camera_toolkit import (
+    GpuCamera,
+    HardwareVideoConfig,
+    VideoCodec,
+)
+
+camera = GpuCamera(
+    enable_preview=True,  # optional MJPEG debug output remains available
+    video_config=HardwareVideoConfig(
+        codec=VideoCodec.H264,
+        bitrate_bps=4_000_000,
+        keyframe_interval=30,
+    ),
+    experimental=True,
+)
+```
+
+NV12 remains `memory:NVMM` through `nvv4l2h264enc` or `nvv4l2h265enc`.
+`subscribe_video(name)` gives a transport one latest compressed access-unit
+slot. `video_stats` exposes recent encoder FPS and encoded bitrate without
+retaining a per-frame history.
+
+An injected `VideoOverlayRenderer` must declare `MemoryType.NVMM`. When it is
+active, the branch first makes an isolated device-side copy, then invokes the
+renderer from the GStreamer encoder thread. `set_video_overlay()` supports
+wiring an inference result source before camera startup. Host-memory overlays
+remain available through the separate JPEG/MJPEG consumer adapter and are not
+silently inserted into the NVMM production branch.
+
+Physical validation is opt-in and must be run once with each target module:
+
+```bash
+IMX_CAMERA_SENSOR=IMX219 IMX_CAMERA_SENSOR_ID=0 \
+  uv run pytest -m hardware tests/hardware/test_gpu_capture.py
+IMX_CAMERA_SENSOR=IMX477 IMX_CAMERA_SENSOR_ID=0 \
+  uv run pytest -m hardware tests/hardware/test_gpu_capture.py
+```
+
+Each run exercises 1280×720 and 1920×1080 at 30 FPS, verifies borrowed NVMM
+frames from branch A, and verifies hardware JPEG output from branch B. The
+unit suite also constructs all four sensor/resolution scenarios without camera
+hardware, but that structural test is not a physical compatibility claim.
+
+The IMX219 matrix has been run successfully for both resolutions on JetPack
+6.2.2 and Jetson Orin Nano. IMX477 remains pending until that physical module
+is connected and the same test completes; pipeline-construction coverage alone
+does not mark it as verified.
+
+## Pipeline observability
+
+`Camera.stats()` includes fixed-size latency aggregates for transfer,
+inference, encoder, and end-to-end processing, plus immutable per-consumer drop
+counters. Capture records stages it owns. External model consumers report
+their own work through `record_stage_latency("inference", duration_ns)` and
+`record_consumer_drop(name, count)`; neither method retains frames or creates a
+queue.
 
 `read_image(timeout=..., copy=...)` is available for compatibility-oriented
 code that requires only the image payload. New integrations should use `read()`
@@ -270,10 +397,16 @@ finally:
 and slotted dataclass, so it is safe to compare, serialize with
 `dataclasses.asdict`, and pass between application components. It controls the
 CSI sensor ID, capture and output resolution, frame rate, sensor mode,
-`nvvidconv` flip method, and optional JPEG preview.
+`nvvidconv` flip method, explicit output format, and optional JPEG preview.
+
+`CameraConfig.output_format` defaults to `FrameFormat.BGR_CPU`, the only format
+accepted by the compatible `Camera`. In this mode GStreamer converts the
+sensor's NV12/NVMM frame to BGR, transfers it to system memory, and the backend
+materializes an owned host array. `output_memory` is therefore `MemoryType.CPU`
+and `copies_to_host_memory` is `True`.
 
 ```python
-from imx_camera_toolkit import Camera, CameraConfig
+from imx_camera_toolkit import Camera, CameraConfig, FrameFormat
 
 config = CameraConfig(
     sensor_id=1,
@@ -281,12 +414,17 @@ config = CameraConfig(
     capture_height=1080,
     output_width=1280,
     output_height=720,
+    output_format=FrameFormat.BGR_CPU,
     fps=30,
     flip_method=0,
     enable_preview=False,
 )
 camera = Camera(config)
 ```
+
+`Camera.read(copy=False)` reuses that already materialized BGR host array. It
+only disables the additional copy normally made by the Python API and never
+promises NVMM, CUDA, or GPU zero-copy access.
 
 ## Hardware profiles
 
@@ -378,11 +516,11 @@ latest frame after a timeout or when the camera stops. Before the first frame,
 
 Useful state and metrics:
 
-- `camera.running` — whether the capture thread is active.
-- `camera.frame_available` — whether a JPEG frame is available.
-- `camera.jpeg` — the latest JPEG bytes, or `None`.
-- `camera.frames_captured` and `camera.frames_encoded` — capture metrics.
-- `camera.last_error` — an exception raised by the background capture loop, if
+- `camera.running` - whether the capture thread is active.
+- `camera.frame_available` - whether a JPEG frame is available.
+- `camera.jpeg` - the latest JPEG bytes, or `None`.
+- `camera.frames_captured` and `camera.frames_encoded` - capture metrics.
+- `camera.last_error` - an exception raised by the background capture loop, if
   one occurred.
 
 ## Troubleshooting

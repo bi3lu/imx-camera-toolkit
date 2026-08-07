@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import cast
 
 from .benchmarks import (
-    benchmark_camera_capture,
     benchmark_capture,
+    benchmark_cpu_capture,
+    benchmark_cpu_capture_jpeg,
+    benchmark_cpu_capture_model,
+    benchmark_gpu_capture,
     benchmark_streaming,
 )
 from .camera.camera import Camera, CameraConfig, CameraTimeoutError
@@ -38,15 +43,33 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     benchmark.add_argument(
         "target",
-        choices=("capture", "streaming", "camera", "all"),
+        choices=("capture", "streaming", "camera", "jetson", "all"),
     )
     benchmark.add_argument("--frames", type=int, default=1_000)
     benchmark.add_argument("--json", action="store_true", help="emit JSON output")
     _add_camera_arguments(benchmark)
+    benchmark.add_argument("--timeout", type=float, default=5.0)
+    benchmark.add_argument("--sensor-mode", type=int)
+    benchmark.add_argument(
+        "--backend",
+        choices=("cpu", "gpu", "all"),
+        default="all",
+        help="capture backend used by the jetson benchmark",
+    )
+    benchmark.add_argument(
+        "--resolution",
+        choices=("custom", "720p", "1080p", "all"),
+        help="preset matrix; jetson defaults to both 720p and 1080p",
+    )
     benchmark.add_argument(
         "--preview-only",
         action="store_true",
         help="measure only capture with JPEG preview enabled",
+    )
+    benchmark.add_argument(
+        "--cpu-model",
+        metavar="MODULE:CALLABLE",
+        help="also benchmark an application CPU model callable",
     )
 
     preview = subcommands.add_parser(
@@ -92,16 +115,55 @@ def _add_camera_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--fps", type=int, default=30)
 
 
-def _camera_config(arguments: argparse.Namespace, *, preview: bool) -> CameraConfig:
+def _camera_config(
+    arguments: argparse.Namespace,
+    *,
+    preview: bool,
+    width: int | None = None,
+    height: int | None = None,
+) -> CameraConfig:
     """Resolve one CLI camera configuration from parsed command arguments."""
+    resolved_width = arguments.width if width is None else width
+    resolved_height = arguments.height if height is None else height
     return CameraConfig(
         sensor_id=arguments.sensor_id,
-        capture_width=arguments.width,
-        capture_height=arguments.height,
-        output_width=arguments.width,
-        output_height=arguments.height,
+        sensor_mode=getattr(arguments, "sensor_mode", None),
+        capture_width=resolved_width,
+        capture_height=resolved_height,
+        output_width=resolved_width,
+        output_height=resolved_height,
         fps=arguments.fps,
         enable_preview=preview,
+    )
+
+
+def _benchmark_configs(arguments: argparse.Namespace) -> tuple[CameraConfig, ...]:
+    """Resolve a custom size or the standard 720p/1080p report matrix."""
+    resolution = arguments.resolution
+
+    if resolution is None:
+        resolution = (
+            "all"
+            if arguments.command == "benchmark" and arguments.target == "jetson"
+            else "custom"
+        )
+
+    if resolution == "custom":
+        return (_camera_config(arguments, preview=False),)
+
+    presets = {
+        "720p": (1280, 720),
+        "1080p": (1920, 1080),
+    }
+    names = tuple(presets) if resolution == "all" else (resolution,)
+    return tuple(
+        _camera_config(
+            arguments,
+            preview=False,
+            width=presets[name][0],
+            height=presets[name][1],
+        )
+        for name in names
     )
 
 
@@ -117,6 +179,22 @@ def _print_results(
     for result in results:
         detail = result.get("detail") or result.get("frames_per_second")
         print(f"{result['name']}: {result.get('status', 'ok')} ({detail})")
+
+
+def _load_cpu_model(specification: str) -> Callable[[object], object]:
+    """Load an application-owned CPU model callable for a hardware benchmark."""
+    module_name, separator, attribute_name = specification.partition(":")
+
+    if not separator or not module_name or not attribute_name:
+        raise ValueError("--cpu-model must use MODULE:CALLABLE syntax")
+
+    module = importlib.import_module(module_name)
+    model = getattr(module, attribute_name, None)
+
+    if not callable(model):
+        raise ValueError("--cpu-model must resolve to a callable")
+
+    return cast(Callable[[object], object], model)
 
 
 def _has_errors(results: Sequence[Mapping[str, object]]) -> bool:
@@ -184,16 +262,65 @@ def main(argv: Sequence[str] | None = None) -> int:
             benchmark_results.append(benchmark_streaming(arguments.frames).as_dict())
 
         if arguments.target == "camera":
-            preview_modes = (True,) if arguments.preview_only else (False, True)
-            config = _camera_config(arguments, preview=False)
-            for preview_enabled in preview_modes:
-                benchmark_results.append(
-                    benchmark_camera_capture(
+            configs = _benchmark_configs(arguments)
+
+            if arguments.preview_only:
+                benchmark_results.extend(
+                    benchmark_cpu_capture_jpeg(
                         arguments.frames,
-                        preview=preview_enabled,
+                        timeout=arguments.timeout,
                         config=config,
                     ).as_dict()
+                    for config in configs
                 )
+
+            else:
+                for config in configs:
+                    benchmark_results.extend(
+                        (
+                            benchmark_cpu_capture(
+                                arguments.frames,
+                                timeout=arguments.timeout,
+                                config=config,
+                            ).as_dict(),
+                            benchmark_cpu_capture_jpeg(
+                                arguments.frames,
+                                timeout=arguments.timeout,
+                                config=config,
+                            ).as_dict(),
+                        )
+                    )
+
+                    if arguments.cpu_model is not None:
+                        model = _load_cpu_model(arguments.cpu_model)
+                        benchmark_results.append(
+                            benchmark_cpu_capture_model(
+                                model,
+                                arguments.frames,
+                                timeout=arguments.timeout,
+                                config=config,
+                            ).as_dict()
+                        )
+
+        if arguments.target == "jetson":
+            for config in _benchmark_configs(arguments):
+                if arguments.backend in {"cpu", "all"}:
+                    benchmark_results.append(
+                        benchmark_cpu_capture(
+                            arguments.frames,
+                            timeout=arguments.timeout,
+                            config=config,
+                        ).as_dict()
+                    )
+
+                if arguments.backend in {"gpu", "all"}:
+                    benchmark_results.append(
+                        benchmark_gpu_capture(
+                            arguments.frames,
+                            timeout=arguments.timeout,
+                            config=config,
+                        ).as_dict()
+                    )
 
         _print_results(benchmark_results, arguments.json)
         return 0

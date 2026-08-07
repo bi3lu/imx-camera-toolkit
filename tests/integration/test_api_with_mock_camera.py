@@ -2,44 +2,96 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Callable
+from typing import Any, cast
+
 import pytest
-from fastapi.testclient import TestClient
+from fastapi import Response
 
 from packages.api.api import create_app
 from packages.testing.mock_camera import MockCamera
 
 
+def _endpoint(application: Any, path: str) -> Callable[..., Any]:
+    """Resolve one registered endpoint without Starlette's test portal."""
+    for route in application.routes:
+        if getattr(route, "path", None) == path:
+            return route.endpoint  # type: ignore[no-any-return]
+    raise LookupError(path)
+
+
+def _run_lifespan(application: Any, operation: Callable[[], None]) -> None:
+    """Execute assertions inside the application's explicit lifespan."""
+
+    async def run() -> None:
+        async with application.router.lifespan_context(application):
+            operation()
+
+    asyncio.run(run())
+
+
 def test_health_and_snapshot_with_mock_camera() -> None:
     """API health and snapshot endpoints must use one supplied mock camera."""
     camera = MockCamera(auto_start=False)
+    camera.record_stage_latency("inference", 2_000_000)
+    camera.record_consumer_drop("inference", 3)
     application = create_app(camera)  # type: ignore[arg-type]
 
-    with TestClient(application) as client:
-        health = client.get("/api/health")
-        assert health.status_code == 200
-        assert health.json()["camera_running"] is True
-        assert health.json()["dropped_frames"] == 0
-        assert health.json()["capture_fps"] == 0.0
-        assert health.json()["last_frame_timestamp_ns"] is None
-        assert health.json()["consecutive_failures"] == 0
+    def verify() -> None:
+        """Verify health and a subsequently published snapshot."""
+        health = _endpoint(application, "/api/health")()
+        assert health["camera_running"] is True
+        assert health["dropped_frames"] == 0
+        assert health["capture_fps"] == 0.0
+        assert health["last_frame_timestamp_ns"] is None
+        assert health["consecutive_failures"] == 0
+        assert health["active_backend"] == "mock"
+        assert health["frame_format"] == "BGR_CPU"
+        assert health["frame_memory_type"] == "CPU"
+        assert health["frame_resolution"] == {
+            "width": 1280,
+            "height": 720,
+        }
+        assert health["consumer_dropped_frames"] == {"inference": 3}
+        assert set(health["stage_latency_ns"]) == {
+            "transfer",
+            "inference",
+            "encoder",
+            "end_to_end",
+        }
+        assert health["stage_latency_ns"]["inference"] == {
+            "samples": 1,
+            "last": 2_000_000,
+            "mean": 2_000_000.0,
+            "max": 2_000_000,
+        }
 
         camera.publish_jpeg(b"\xff\xd8mock\xff\xd9")
-        snapshot = client.get("/api/camera/snapshot")
+        snapshot = cast(
+            Response,
+            _endpoint(application, "/api/camera/snapshot")(-1),
+        )
         assert snapshot.status_code == 200
-        assert snapshot.headers["content-type"] == "image/jpeg"
-        assert snapshot.content == b"\xff\xd8mock\xff\xd9"
+        assert snapshot.media_type == "image/jpeg"
+        assert snapshot.body == b"\xff\xd8mock\xff\xd9"
+
+    _run_lifespan(application, verify)
 
 
 def test_browser_view_is_served_with_mock_camera() -> None:
     """The default simple browser view must be available without hardware."""
     application = create_app(MockCamera())  # type: ignore[arg-type]
 
-    with TestClient(application) as client:
-        response = client.get("/")
+    def request() -> None:
+        """Load the bundled simple view."""
+        response = cast(Response, _endpoint(application, "/")())
+        assert response.status_code == 200
+        text = bytes(response.body).decode("utf-8")
+        assert "/api/camera/mjpeg" in text
+        assert "Camera controls" not in text
 
-    assert response.status_code == 200
-    assert "/api/camera/mjpeg" in response.text
-    assert "Camera controls" not in response.text
+    _run_lifespan(application, request)
     assert application.state.view_mode == "simple"
 
 
@@ -50,13 +102,16 @@ def test_advanced_browser_view_includes_runtime_camera_controls() -> None:
         view_mode="advanced",
     )
 
-    with TestClient(application) as client:
-        response = client.get("/")
+    def request() -> None:
+        """Load the bundled advanced view."""
+        response = cast(Response, _endpoint(application, "/")())
+        assert response.status_code == 200
+        text = bytes(response.body).decode("utf-8")
+        assert "/api/camera/mjpeg" in text
+        assert "Camera controls" in text
+        assert "/api/camera/control" in text
 
-    assert response.status_code == 200
-    assert "/api/camera/mjpeg" in response.text
-    assert "Camera controls" in response.text
-    assert "/api/camera/control" in response.text
+    _run_lifespan(application, request)
     assert application.state.view_mode == "advanced"
 
 
@@ -71,7 +126,10 @@ def test_api_can_leave_an_existing_camera_lifecycle_to_the_application() -> None
     camera = MockCamera(auto_start=False)
     application = create_app(camera, manage_camera=False)  # type: ignore[arg-type]
 
-    with TestClient(application):
+    def verify() -> None:
+        """Observe lifecycle state while the application is active."""
         assert camera.running is False
+
+    _run_lifespan(application, verify)
 
     assert camera.running is False

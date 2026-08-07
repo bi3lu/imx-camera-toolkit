@@ -1,0 +1,318 @@
+"""Tests for hardware video pipelines and production browser transports."""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+
+from imx_camera_toolkit import (
+    CameraConfigurationError,
+    EncodedVideoFrame,
+    GpuCamera,
+    HardwareVideoConfig,
+    VideoCodec,
+    VideoEncodeStats,
+    build_gpu_gstreamer_pipeline,
+)
+from imx_camera_toolkit.consumers import LatestFrameHub
+from imx_camera_toolkit.inference import InferenceResult
+from imx_camera_toolkit.production_preview import (
+    CudaOverlayRenderer,
+    OverlayRectangle,
+    PreviewTransport,
+    ProductionPreviewConfig,
+    ProductionPreviewConfigurationError,
+    ProductionPreviewServer,
+    build_hls_transport_pipeline,
+    build_webrtc_peer_pipeline,
+    create_production_preview_app,
+)
+from imx_camera_toolkit.testing import mock_gpu_frame
+from packages.camera.models import MemoryType
+from packages.camera.publishing.video import EncodedVideoPublisher
+from packages.production_preview.api import _serialize_health
+from packages.production_preview.metrics import ClientMetricsRegistry
+
+
+def test_hardware_video_pipeline_encodes_h264_directly_from_nvmm() -> None:
+    """H.264 production encode must not introduce a host raw-video capsfilter."""
+    config = HardwareVideoConfig(
+        codec=VideoCodec.H264,
+        bitrate_bps=4_000_000,
+        keyframe_interval=30,
+    )
+
+    pipeline = build_gpu_gstreamer_pipeline(video_config=config)
+
+    assert "queue name=video_queue" in pipeline
+    assert "video/x-raw(memory:NVMM)" in pipeline
+    assert "nvv4l2h264enc name=video_encoder" in pipeline
+    assert "bitrate=4000000" in pipeline
+    assert "iframeinterval=30" in pipeline
+    assert "insert-sps-pps=1" in pipeline
+    assert "h264parse config-interval=-1" in pipeline
+    assert "appsink name=video_sink max-buffers=1 drop=true" in pipeline
+    assert "videoconvert" not in pipeline
+
+
+def test_hardware_video_pipeline_supports_h265_and_isolated_gpu_overlay() -> None:
+    """Overlay mutation must occur only after a device-side branch copy."""
+    config = HardwareVideoConfig(codec=VideoCodec.H265)
+
+    pipeline = build_gpu_gstreamer_pipeline(
+        video_config=config,
+        enable_video_overlay=True,
+    )
+
+    video_branch = pipeline.split("queue name=video_queue", maxsplit=1)[1]
+    assert "nvvidconv" in video_branch
+    assert "identity name=video_overlay_hook" in video_branch
+    assert "nvv4l2h265enc name=video_encoder" in video_branch
+    assert "h265parse config-interval=-1" in video_branch
+    assert "video/x-h265" in video_branch
+    assert "videoconvert" not in video_branch
+
+
+def test_debug_mjpeg_can_coexist_with_optional_production_video() -> None:
+    """Adding production transport must not replace the simple JPEG path."""
+    pipeline = build_gpu_gstreamer_pipeline(
+        enable_preview=True,
+        video_config=HardwareVideoConfig(),
+    )
+
+    assert "nvjpegenc" in pipeline
+    assert "appsink name=preview_sink" in pipeline
+    assert "nvv4l2h264enc" in pipeline
+    assert "appsink name=video_sink" in pipeline
+
+
+class _FakeNvmmOverlay:
+    """Structurally valid caller-owned GPU renderer."""
+
+    memory_type = MemoryType.NVMM
+
+    def render(self, frame: object) -> None:
+        """Accept a borrowed frame without retaining it."""
+
+    def close(self) -> None:
+        """Release no resources in this test double."""
+
+
+def test_gpu_camera_can_wire_overlay_after_inference_subscription() -> None:
+    """An application may assemble inference before finalizing the pipeline."""
+    camera = GpuCamera(
+        video_config=HardwareVideoConfig(),
+        experimental=True,
+    )
+
+    camera.set_video_overlay(_FakeNvmmOverlay())
+
+    assert "identity name=video_overlay_hook" in camera.pipeline
+    camera.set_video_overlay(None)
+    assert "identity name=video_overlay_hook" not in camera.pipeline
+
+
+def test_gpu_camera_rejects_overlay_without_hardware_video() -> None:
+    """A renderer must not silently activate a host or unencoded branch."""
+    camera = GpuCamera(experimental=True)
+
+    with pytest.raises(CameraConfigurationError, match="hardware video"):
+        camera.set_video_overlay(_FakeNvmmOverlay())
+
+
+def test_encoded_video_metrics_report_recent_fps_and_actual_bitrate() -> None:
+    """Encoder metrics must derive rates from emitted access-unit sizes."""
+    publisher = EncodedVideoPublisher()
+    for sequence in range(1, 31):
+        publisher.publish(
+            EncodedVideoFrame(
+                sequence=sequence,
+                timestamp_ns=(sequence - 1) * 1_000_000_000 // 30,
+                codec=VideoCodec.H264,
+                data=b"x" * 10_000,
+                keyframe=sequence == 1,
+            )
+        )
+
+    stats = publisher.stats(29 * 1_000_000_000 // 30)
+
+    assert stats.encoded_frames == 30
+    assert stats.encoded_bytes == 300_000
+    assert stats.encode_fps == pytest.approx(30.0, rel=0.01)
+    assert stats.bitrate_bps == pytest.approx(2_400_000, rel=0.01)
+
+
+def test_transport_builders_reuse_encoded_stream_without_software_encoder(
+    tmp_path: Path,
+) -> None:
+    """WebRTC peers and HLS packaging must never create another encoder."""
+    webrtc_config = ProductionPreviewConfig()
+    hls_config = ProductionPreviewConfig(
+        transport=PreviewTransport.HLS,
+        hls_directory=tmp_path,
+    )
+
+    webrtc = build_webrtc_peer_pipeline(VideoCodec.H264, webrtc_config)
+    hls = build_hls_transport_pipeline(VideoCodec.H265, hls_config)
+
+    assert "rtph264pay" in webrtc
+    assert "webrtcbin name=webrtc" in webrtc
+    assert "h265parse" in hls
+    assert "hlssink2 name=hls_sink" in hls
+    for pipeline in (webrtc, hls):
+        assert "nvv4l2" not in pipeline
+        assert "x264enc" not in pipeline
+        assert "x265enc" not in pipeline
+
+
+def test_webrtc_rejects_h265_for_browser_compatibility() -> None:
+    """H.265 remains available through HLS rather than unreliable WebRTC SDP."""
+    with pytest.raises(
+        ProductionPreviewConfigurationError,
+        match="requires H.264",
+    ):
+        ProductionPreviewConfig().validate_codec(VideoCodec.H265)
+
+
+def test_client_metrics_include_count_and_per_client_drop_rate() -> None:
+    """Every browser must expose bounded sent/drop counters independently."""
+    registry = ClientMetricsRegistry(timeout_seconds=30.0, max_clients=2)
+    registry.connect("one", PreviewTransport.WEBRTC)
+    registry.connect("two", PreviewTransport.WEBRTC)
+    registry.record_sent("one", 1_000, count=8)
+    registry.record_drop("one", 2)
+
+    clients = registry.snapshot()
+
+    assert len(clients) == 2
+    assert clients[0].client_id == "one"
+    assert clients[0].drop_rate == pytest.approx(0.2)
+    assert clients[1].drop_rate == 0.0
+    with pytest.raises(RuntimeError, match="limit"):
+        registry.connect("three", PreviewTransport.WEBRTC)
+
+
+class _FakeEncodedSource:
+    """Hardware-video source with no physical camera or GStreamer runtime."""
+
+    def __init__(self, codec: VideoCodec = VideoCodec.H264) -> None:
+        self.running = True
+        self.video_config = HardwareVideoConfig(codec=codec)
+        self.video_stats = VideoEncodeStats(
+            encoded_frames=30,
+            encoded_bytes=300_000,
+            encode_fps=30.0,
+            bitrate_bps=2_400_000.0,
+        )
+        self.hub = LatestFrameHub[EncodedVideoFrame]()
+
+    def subscribe_video(self, name: str) -> Any:
+        """Return one test latest-frame slot."""
+        return self.hub.subscribe(name)
+
+
+def test_hls_api_serves_safe_assets_and_reports_client_segment_drops(
+    tmp_path: Path,
+) -> None:
+    """HLS delivery must track segment gaps without accepting path traversal."""
+    (tmp_path / "playlist.m3u8").write_text("#EXTM3U", "utf-8")
+    (tmp_path / "segment00001.ts").write_bytes(b"one")
+    (tmp_path / "segment00003.ts").write_bytes(b"three")
+    server = ProductionPreviewServer(
+        _FakeEncodedSource(),
+        ProductionPreviewConfig(
+            transport=PreviewTransport.HLS,
+            hls_directory=tmp_path,
+        ),
+    )
+    server._running = True
+    application = create_production_preview_app(server, manage_server=False)
+
+    client_id = server.create_hls_session()
+    playlist = server.hls_asset(client_id, "playlist.m3u8")
+    first = server.hls_asset(client_id, "segment00001.ts")
+    third = server.hls_asset(client_id, "segment00003.ts")
+    with pytest.raises(FileNotFoundError):
+        server.hls_asset(client_id, "../secret")
+    health = _serialize_health(server)
+
+    assert playlist.name == "playlist.m3u8"
+    assert first.read_bytes() == b"one"
+    assert third.read_bytes() == b"three"
+    assert health["encode_fps"] == 30.0
+    assert health["bitrate_bps"] == 2_400_000.0
+    assert health["active_clients"] == 1
+    clients = cast(list[dict[str, Any]], health["clients"])
+    assert clients[0]["dropped_frames"] == 1
+    assert clients[0]["drop_rate"] == pytest.approx(1 / 3)
+    paths = {getattr(route, "path", None) for route in application.routes}
+    assert "/api/preview/session" in paths
+    assert "/api/preview/hls/{client_id}/{asset}" in paths
+
+
+class _ResultSource:
+    """Mutable latest inference result used by the CUDA overlay test."""
+
+    latest_result: InferenceResult | None = None
+
+
+class _FakeStream:
+    """CUDA stream test double."""
+
+    handle = 1
+
+    def __init__(self) -> None:
+        self.synchronizations = 0
+
+    def synchronize(self) -> None:
+        """Record ordering before the hardware encoder consumes the surface."""
+        self.synchronizations += 1
+
+
+class _FakeOverlayInterop:
+    """Record direct NVMM drawing calls without loading CUDA."""
+
+    def __init__(self) -> None:
+        self.stream = _FakeStream()
+        self.draws: list[dict[str, object]] = []
+
+    def create_stream(self) -> _FakeStream:
+        """Return the renderer-owned test stream."""
+        return self.stream
+
+    def import_frame(self, frame: object) -> object:
+        """Return an opaque imported surface."""
+        return frame
+
+    def draw_nv12_rectangle(self, surface: object, **values: object) -> None:
+        """Record geometry and converted NV12 color."""
+        self.draws.append({"surface": surface, **values})
+
+
+def test_cuda_overlay_draws_latest_result_without_cpu_image_payload() -> None:
+    """Production overlays must launch against NVMM and synchronize GPU work."""
+    source = _ResultSource()
+    source.latest_result = InferenceResult(
+        frame_sequence=1,
+        frame_timestamp_ns=time.monotonic_ns(),
+        inference_time_ns=1,
+        outputs=(),
+        overlays=(OverlayRectangle(10, 20, 30, 40),),
+    )
+    interop = _FakeOverlayInterop()
+    renderer = CudaOverlayRenderer(
+        source,
+        interop=cast(Any, interop),
+    )
+    frame = mock_gpu_frame(object(), width=1280, height=720)
+
+    renderer.render(frame)
+
+    assert renderer.memory_type is MemoryType.NVMM
+    assert len(interop.draws) == 1
+    assert interop.draws[0]["left"] == 10
+    assert interop.draws[0]["yuv"] == (173, 42, 26)
+    assert interop.stream.synchronizations == 1

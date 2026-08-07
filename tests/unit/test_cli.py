@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from packages import cli
+from packages.benchmarks import CameraBenchmarkResult
+from packages.camera.config import CameraConfig
 from packages.cli import main
 
 
@@ -35,3 +39,98 @@ def test_cli_info_and_hardware_test_use_structured_results(
     assert main(("test", "--json")) == 0
     captured = capsys.readouterr()
     assert '"camera_profiles"' in captured.out
+
+
+def test_cli_camera_benchmark_can_load_an_application_cpu_model(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Camera benchmark must expose all CPU paths without owning a model."""
+    def model(image: object) -> object:
+        """Return an image as a deterministic application model."""
+        return image
+
+    def result(name: str) -> CameraBenchmarkResult:
+        """Build one deterministic CLI benchmark result."""
+        return CameraBenchmarkResult(name, 1, 1.0, 1.0, 1, 0, 0.0)
+
+    monkeypatch.setattr(cli, "benchmark_cpu_capture", lambda *_, **__: result("raw"))
+    monkeypatch.setattr(
+        cli,
+        "benchmark_cpu_capture_jpeg",
+        lambda *_, **__: result("jpeg"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "benchmark_cpu_capture_model",
+        lambda loaded_model, *_, **__: (
+            result("model") if loaded_model is model else result("unexpected")
+        ),
+    )
+    monkeypatch.setattr(cli, "_load_cpu_model", lambda _: model)
+
+    assert (
+        main(
+            (
+                "benchmark",
+                "camera",
+                "--frames",
+                "1",
+                "--cpu-model",
+                "application:model",
+                "--json",
+            )
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    assert '"name": "raw"' in captured.out
+    assert '"name": "jpeg"' in captured.out
+    assert '"name": "model"' in captured.out
+
+
+def test_cli_jetson_benchmark_defaults_to_cpu_gpu_and_two_resolutions(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """One command must emit the complete 720p/1080p deployment matrix."""
+    calls: list[tuple[str, int, int]] = []
+
+    def run(backend: str, *args: object, **kwargs: object) -> CameraBenchmarkResult:
+        config = cast(CameraConfig, kwargs["config"])
+        width = config.output_width
+        height = config.output_height
+        calls.append((backend, width, height))
+        return CameraBenchmarkResult(
+            backend,
+            1,
+            1.0,
+            1.0,
+            1,
+            0,
+            0.0,
+            width=width,
+            height=height,
+            backend=backend,
+        )
+
+    monkeypatch.setattr(
+        cli,
+        "benchmark_cpu_capture",
+        lambda *args, **kwargs: run("cpu", *args, **kwargs),
+    )
+    monkeypatch.setattr(
+        cli,
+        "benchmark_gpu_capture",
+        lambda *args, **kwargs: run("gpu", *args, **kwargs),
+    )
+
+    assert main(("benchmark", "jetson", "--frames", "1", "--json")) == 0
+
+    assert calls == [
+        ("cpu", 1280, 720),
+        ("gpu", 1280, 720),
+        ("cpu", 1920, 1080),
+        ("gpu", 1920, 1080),
+    ]
+    assert '"process_cpu_percent"' in capsys.readouterr().out

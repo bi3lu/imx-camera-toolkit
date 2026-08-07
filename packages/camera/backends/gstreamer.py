@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import time
 from typing import Any
 
 from ..errors import CameraDependencyError, CameraOpenError
@@ -37,6 +38,8 @@ class GStreamerCaptureBackend(CaptureBackend):
         self._pipeline: Any | None = None
         self._source: Any | None = None
         self._sink: Any | None = None
+        self._capture_timestamp_ns: int | None = None
+        self._transfer_duration_ns: int | None = None
 
     @classmethod
     def available(cls) -> bool:
@@ -47,6 +50,21 @@ class GStreamerCaptureBackend(CaptureBackend):
     def argus_source(self) -> Any | None:
         """Return the retained ``nvarguscamerasrc`` GObject."""
         return self._source
+
+    @property
+    def backend_name(self) -> str:
+        """Stable health identifier for the PyGObject backend."""
+        return "gstreamer"
+
+    @property
+    def capture_timestamp_ns(self) -> int | None:
+        """Presentation timestamp of the most recently pulled Gst buffer."""
+        return self._capture_timestamp_ns
+
+    @property
+    def transfer_duration_ns(self) -> int | None:
+        """Time spent mapping and copying the latest CPU frame."""
+        return self._transfer_duration_ns
 
     def open(self) -> None:
         """Parse, start, and validate the configured GStreamer pipeline."""
@@ -90,6 +108,9 @@ class GStreamerCaptureBackend(CaptureBackend):
 
     def read(self) -> tuple[bool, Any | None]:
         """Pull one owned BGR frame from the configured appsink."""
+        self._capture_timestamp_ns = None
+        self._transfer_duration_ns = None
+
         if self._sink is None or Gst is None or np_module is None:
             return False, None
 
@@ -99,6 +120,11 @@ class GStreamerCaptureBackend(CaptureBackend):
             return False, None
 
         buffer = sample.get_buffer()
+
+        if buffer.pts != Gst.CLOCK_TIME_NONE:
+            self._capture_timestamp_ns = int(buffer.pts)
+
+        transfer_started_ns = time.monotonic_ns()
         success, map_info = buffer.map(Gst.MapFlags.READ)
 
         if not success:
@@ -116,11 +142,13 @@ class GStreamerCaptureBackend(CaptureBackend):
                 dtype=np_module.uint8,
                 count=frame_size,
             )
-            return True, frame.reshape(
+            owned_frame = frame.reshape(
                 self._output_height,
                 self._output_width,
                 3,
             ).copy()
+            self._transfer_duration_ns = time.monotonic_ns() - transfer_started_ns
+            return True, owned_frame
 
         finally:
             buffer.unmap(map_info)
@@ -133,3 +161,5 @@ class GStreamerCaptureBackend(CaptureBackend):
         self._pipeline = None
         self._source = None
         self._sink = None
+        self._capture_timestamp_ns = None
+        self._transfer_duration_ns = None

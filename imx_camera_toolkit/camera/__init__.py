@@ -20,12 +20,31 @@ from packages.camera.camera import (
     get_camera,
     load_camera_config,
 )
+from packages.camera.gpu_camera import GpuCamera
+from packages.camera.models import (
+    EncodedVideoFrame,
+    FrameFormat,
+    GpuBufferHandle,
+    GpuFrame,
+    GpuFrameExpiredError,
+    HardwareVideoConfig,
+    MemoryType,
+    MetricsRecorder,
+    PipelineMetrics,
+    PipelineStage,
+    StageMetrics,
+    VideoCodec,
+    VideoEncodeStats,
+    VideoOverlayRenderer,
+)
+from packages.camera.pipeline import build_gpu_gstreamer_pipeline
 from packages.camera.profiles import (
     CameraProfile,
     CameraProfileStatus,
     get_camera_profile,
     list_camera_profiles,
 )
+from packages.consumers.latest import LatestFrameSubscription
 
 __all__ = [
     "Camera",
@@ -39,6 +58,22 @@ __all__ = [
     "CameraOpenError",
     "CameraReadError",
     "Frame",
+    "FrameFormat",
+    "EncodedVideoFrame",
+    "GpuBufferHandle",
+    "GpuCamera",
+    "GpuFrame",
+    "GpuFrameExpiredError",
+    "HardwareVideoConfig",
+    "MemoryType",
+    "LatestFrameSubscription",
+    "MetricsRecorder",
+    "PipelineMetrics",
+    "PipelineStage",
+    "StageMetrics",
+    "VideoCodec",
+    "VideoEncodeStats",
+    "VideoOverlayRenderer",
     "CameraRecoveryPolicy",
     "CameraRecoveryError",
     "CameraStats",
@@ -46,6 +81,7 @@ __all__ = [
     "DEFAULT_CAMERA_CONFIG",
     "SoftwareHDRSettings",
     "build_gstreamer_pipeline",
+    "build_gpu_gstreamer_pipeline",
     "get_camera",
     "get_camera_profile",
     "load_camera_config",

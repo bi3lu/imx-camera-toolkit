@@ -22,9 +22,42 @@ from .camera import (
     CameraRecoveryError,
     CameraStats,
     CameraTimeoutError,
+    EncodedVideoFrame,
     Frame,
+    FrameFormat,
+    GpuBufferHandle,
+    GpuCamera,
+    GpuFrame,
+    GpuFrameExpiredError,
+    HardwareVideoConfig,
+    MemoryType,
+    MetricsRecorder,
+    PipelineMetrics,
+    PipelineStage,
+    StageMetrics,
+    VideoCodec,
+    VideoEncodeStats,
+    VideoOverlayRenderer,
+    build_gpu_gstreamer_pipeline,
     get_camera_profile,
     list_camera_profiles,
+)
+from .consumers import (
+    FrameConsumer,
+    InferenceConsumer,
+    InferencePreviewSource,
+    InferenceResultSource,
+    LatestFrameSubscription,
+    OverlayRenderer,
+    PreviewOverlayContext,
+)
+from .inference import (
+    FrameSpec,
+    InferenceResult,
+    InferenceRunner,
+    ShapeProfile,
+    TensorOutput,
+    TensorRTRunner,
 )
 
 if TYPE_CHECKING:
@@ -35,7 +68,7 @@ if TYPE_CHECKING:
     from .preview import preview as preview
     from .preview import serve as serve
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "Camera",
@@ -51,7 +84,36 @@ __all__ = [
     "CameraRecoveryError",
     "CameraStats",
     "CameraTimeoutError",
+    "EncodedVideoFrame",
     "Frame",
+    "FrameConsumer",
+    "FrameFormat",
+    "FrameSpec",
+    "GpuBufferHandle",
+    "GpuCamera",
+    "GpuFrame",
+    "GpuFrameExpiredError",
+    "HardwareVideoConfig",
+    "InferenceResult",
+    "InferenceConsumer",
+    "InferencePreviewSource",
+    "InferenceResultSource",
+    "InferenceRunner",
+    "LatestFrameSubscription",
+    "MemoryType",
+    "MetricsRecorder",
+    "PipelineMetrics",
+    "PipelineStage",
+    "OverlayRenderer",
+    "PreviewOverlayContext",
+    "StageMetrics",
+    "ShapeProfile",
+    "TensorOutput",
+    "TensorRTRunner",
+    "VideoCodec",
+    "VideoEncodeStats",
+    "VideoOverlayRenderer",
+    "build_gpu_gstreamer_pipeline",
     "get_camera_profile",
     "list_camera_profiles",
     "__version__",

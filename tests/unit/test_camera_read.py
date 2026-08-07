@@ -152,6 +152,22 @@ def test_disabled_preview_skips_jpeg_encoding(
     assert camera.preview_enabled is False
 
 
+def test_raw_publication_preserves_capture_timestamp_metadata() -> None:
+    """Hardware or pipeline timestamps must reach the public Frame contract."""
+    camera = Camera(enable_preview=False)
+
+    camera._publish_frame(
+        bytearray(b"raw"),
+        timestamp_ns=123,
+        capture_timestamp_ns=456,
+    )
+
+    frame = camera.latest_frame(copy=False)
+    assert frame is not None
+    assert frame.timestamp_ns == 123
+    assert frame.capture_timestamp_ns == 456
+
+
 def test_read_requires_an_active_camera() -> None:
     """Callers must start capture before requesting a raw frame."""
     with pytest.raises(CameraReadError, match="camera is not running"):
