@@ -25,6 +25,7 @@ from .errors import (
 )
 from .models import (
     CameraStats,
+    EncodedStreamDescription,
     EncodedVideoFrame,
     FrameFormat,
     GpuFrame,
@@ -33,10 +34,18 @@ from .models import (
     MetricsRecorder,
     PipelineMetrics,
     PipelineStage,
+    VideoCodec,
+    VideoEncoderBackend,
+    VideoEncoderPipeline,
+    VideoEncoderPipelineFactory,
     VideoEncodeStats,
     VideoOverlayRenderer,
 )
-from .pipeline import build_gpu_gstreamer_pipeline, normalize_argus_properties
+from .pipeline import (
+    build_gpu_gstreamer_pipeline,
+    build_video_encoder_pipeline,
+    normalize_argus_properties,
+)
 from .publishing import (
     EncodedJPEGPublisher,
     EncodedVideoPublisher,
@@ -95,6 +104,7 @@ class GpuCamera:
         enable_preview: bool | None = None,
         video_config: HardwareVideoConfig | None = None,
         video_overlay: VideoOverlayRenderer | None = None,
+        encoder_pipeline_factory: VideoEncoderPipelineFactory | None = None,
         argus_properties: tuple[str, ...] = (),
         experimental: bool = False,
     ) -> None:
@@ -122,10 +132,20 @@ class GpuCamera:
             raise CameraConfigurationError(
                 "video_config must be a HardwareVideoConfig or None"
             )
+        if encoder_pipeline_factory is not None and not callable(
+            encoder_pipeline_factory
+        ):
+            raise CameraConfigurationError(
+                "encoder_pipeline_factory must be callable or None"
+            )
+        if encoder_pipeline_factory is not None and video_config is None:
+            raise CameraConfigurationError(
+                "encoder_pipeline_factory requires video_config"
+            )
         if video_overlay is not None:
             if video_config is None:
                 raise CameraConfigurationError(
-                    "video_overlay requires a hardware video configuration"
+                    "video_overlay requires a video encoder configuration"
                 )
             if not isinstance(video_overlay, VideoOverlayRenderer):
                 raise CameraConfigurationError(
@@ -165,22 +185,13 @@ class GpuCamera:
         self._argus_properties = normalize_argus_properties(
             (*config_properties, *argus_properties)
         )
-        self._pipeline = build_gpu_gstreamer_pipeline(
-            sensor_id=self._config.sensor_id,
-            capture_width=self._config.capture_width,
-            capture_height=self._config.capture_height,
-            output_width=self._config.output_width,
-            output_height=self._config.output_height,
-            framerate=self._config.fps,
-            flip_method=self._config.flip_method,
-            enable_preview=self._config.enable_preview,
-            jpeg_quality=self._config.quality,
-            video_config=video_config,
-            enable_video_overlay=video_overlay is not None,
-            argus_properties=self._argus_properties,
-        )
         self._video_config = video_config
         self._video_overlay = video_overlay
+        self._encoder_pipeline_factory = encoder_pipeline_factory
+        self._resolved_video_encoder_backend: str | None = None
+        self._encoded_stream_description: EncodedStreamDescription | None = None
+        self._pipeline = ""
+        self._rebuild_pipeline()
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
         self._gpu_publisher = GpuFramePublisher()
         self._frame_hub = LatestFrameHub[GpuFrame](self.record_consumer_drop)
@@ -259,8 +270,21 @@ class GpuCamera:
 
     @property
     def video_config(self) -> HardwareVideoConfig | None:
-        """Optional production hardware-encoder configuration."""
+        """Optional production video-encoder configuration."""
         return self._video_config
+
+    @property
+    def video_encoder_backend(self) -> str | None:
+        """Resolved encoder backend, or the requested policy before startup."""
+        if self._video_config is None:
+            return None
+        return self._resolved_video_encoder_backend or self._video_config.backend.value
+
+    @property
+    def encoded_stream_description(self) -> EncodedStreamDescription | None:
+        """Newest negotiated encoded caps and codec parameter sets."""
+        with self._lifecycle_lock:
+            return self._encoded_stream_description
 
     @property
     def video_enabled(self) -> bool:
@@ -290,7 +314,8 @@ class GpuCamera:
             if renderer is not None:
                 if self._video_config is None:
                     raise CameraConfigurationError(
-                        "video overlay requires a hardware video configuration"
+                        "video overlay requires a hardware video or general "
+                        "video encoder configuration"
                     )
                 if not isinstance(renderer, VideoOverlayRenderer):
                     raise CameraConfigurationError(
@@ -301,20 +326,68 @@ class GpuCamera:
                         "production video overlay renderer must use NVMM"
                     )
             self._video_overlay = renderer
-            self._pipeline = build_gpu_gstreamer_pipeline(
-                sensor_id=self._config.sensor_id,
-                capture_width=self._config.capture_width,
-                capture_height=self._config.capture_height,
-                output_width=self._config.output_width,
-                output_height=self._config.output_height,
-                framerate=self._config.fps,
-                flip_method=self._config.flip_method,
-                enable_preview=self._config.enable_preview,
-                jpeg_quality=self._config.quality,
-                video_config=self._video_config,
-                enable_video_overlay=renderer is not None,
-                argus_properties=self._argus_properties,
+            self._rebuild_pipeline()
+
+    def _encoder_pipeline(
+        self,
+        backend: VideoEncoderBackend | None = None,
+    ) -> VideoEncoderPipeline | None:
+        """Build the selected public encoder definition."""
+        if self._video_config is None:
+            return None
+        if self._encoder_pipeline_factory is not None:
+            definition = self._encoder_pipeline_factory(
+                self._video_config,
+                self._config.output_width,
+                self._config.output_height,
+                self._config.fps,
             )
+            if not isinstance(definition, VideoEncoderPipeline):
+                raise CameraConfigurationError(
+                    "encoder_pipeline_factory must return VideoEncoderPipeline"
+                )
+            return definition
+        return build_video_encoder_pipeline(
+            self._video_config,
+            self._config.output_width,
+            self._config.output_height,
+            self._config.fps,
+            backend=backend,
+        )
+
+    def _rebuild_pipeline(
+        self,
+        backend: VideoEncoderBackend | None = None,
+    ) -> None:
+        """Regenerate the camera graph from public configuration only."""
+        definition = self._encoder_pipeline(backend)
+        factory = None if definition is None else lambda *_: definition
+        self._pipeline = build_gpu_gstreamer_pipeline(
+            sensor_id=self._config.sensor_id,
+            capture_width=self._config.capture_width,
+            capture_height=self._config.capture_height,
+            output_width=self._config.output_width,
+            output_height=self._config.output_height,
+            framerate=self._config.fps,
+            flip_method=self._config.flip_method,
+            enable_preview=self._config.enable_preview,
+            jpeg_quality=self._config.quality,
+            video_config=self._video_config,
+            enable_video_overlay=self._video_overlay is not None,
+            encoder_pipeline_factory=factory,
+            argus_properties=self._argus_properties,
+        )
+        if definition is not None:
+            if (
+                self._encoder_pipeline_factory is not None
+                or backend is not None
+                or self._video_config is not None
+                and self._video_config.backend is not VideoEncoderBackend.AUTO
+            ):
+                self._resolved_video_encoder_backend = definition.backend
+            else:
+                self._resolved_video_encoder_backend = None
+            self._encoded_stream_description = definition.description
 
     @property
     def gpu_frame_number(self) -> int:
@@ -404,6 +477,7 @@ class GpuCamera:
                 return
 
             self._release_finished_capture()
+            self._prepare_pipeline()
             backend = self._create_backend()
 
             try:
@@ -442,6 +516,117 @@ class GpuCamera:
             enable_preview=self._config.enable_preview,
             video_config=self._video_config,
             video_overlay=self._video_overlay,
+            stream_description=self._encoded_stream_description,
+            video_encoder_backend=self._resolved_video_encoder_backend,
+        )
+
+    def _prepare_pipeline(self) -> None:
+        """Resolve AUTO and report every missing plugin before parse_launch."""
+        if not GpuGStreamerCaptureBackend.available():
+            # Deterministic backend subclasses used by host tests do not need
+            # a system GStreamer registry.
+            return
+
+        selected: VideoEncoderBackend | None = None
+        definition: VideoEncoderPipeline | None = None
+
+        if self._video_config is not None:
+            if self._encoder_pipeline_factory is not None:
+                definition = self._encoder_pipeline()
+
+            else:
+                selected = self._resolve_encoder_backend()
+                definition = self._encoder_pipeline(selected)
+
+        required = [
+            "nvarguscamerasrc",
+            "nvvidconv",
+            "tee",
+            "queue",
+            "capsfilter",
+            "appsink",
+        ]
+
+        if self._config.enable_preview:
+            required.append("nvjpegenc")
+        if self._video_overlay is not None:
+            required.append("identity")
+
+        if definition is not None:
+            required.extend(definition.required_elements)
+
+        missing = GpuGStreamerCaptureBackend.missing_elements(
+            tuple(dict.fromkeys(required))
+        )
+        if missing:
+            backend_name = "camera"
+
+            if definition is not None:
+                backend_name = f"encoder backend {definition.backend}"
+
+            hint = (
+                "; use backend=x264 or install the NVIDIA encoder plugin"
+                if definition is not None and definition.backend == "nvenc"
+                else ""
+            )
+
+            raise CameraDependencyError(
+                f"{backend_name} unavailable; missing GStreamer element(s): "
+                f"{', '.join(missing)}{hint}"
+            )
+
+        self._rebuild_pipeline(selected)
+
+    def _resolve_encoder_backend(self) -> VideoEncoderBackend:
+        """Resolve the configured backend from actual GStreamer factories."""
+        if self._video_config is None:
+            raise CameraConfigurationError("video encoder is disabled")
+
+        requested = self._video_config.backend
+        nvenc_element = (
+            "nvv4l2h264enc"
+            if self._video_config.codec is VideoCodec.H264
+            else "nvv4l2h265enc"
+        )
+        nvenc_available = GpuGStreamerCaptureBackend.element_available(
+            nvenc_element
+        )
+        x264_available = GpuGStreamerCaptureBackend.element_available("x264enc")
+
+        if requested is VideoEncoderBackend.NVENC:
+            if not nvenc_available:
+                raise CameraDependencyError(
+                    "encoder backend nvenc unavailable; use backend=x264 or "
+                    f"install {nvenc_element}"
+                )
+            return requested
+
+        if requested is VideoEncoderBackend.X264:
+            if not x264_available:
+                raise CameraDependencyError(
+                    "encoder backend x264 unavailable; install x264enc"
+                )
+
+            return requested
+
+        if nvenc_available:
+            return VideoEncoderBackend.NVENC
+
+        if self._video_config.codec is VideoCodec.H264 and x264_available:
+            logger.warning(
+                "%s is unavailable; production preview is using CPU x264",
+                nvenc_element,
+            )
+            return VideoEncoderBackend.X264
+
+        alternatives = (
+            " and x264enc"
+            if self._video_config.codec is VideoCodec.H264
+            else ""
+        )
+        raise CameraDependencyError(
+            "encoder backend auto unavailable; missing "
+            f"{nvenc_element}{alternatives}"
         )
 
     def _capture_loop(self) -> None:
@@ -493,7 +678,14 @@ class GpuCamera:
 
                 if self._video_config is not None:
                     encoded_video = backend.read_video()
+
                     if encoded_video is not None:
+                        if encoded_video.stream_description is not None:
+                            with self._lifecycle_lock:
+                                self._encoded_stream_description = (
+                                    encoded_video.stream_description
+                                )
+
                         self._video_publisher.publish(encoded_video)
                         self._video_hub.publish(encoded_video)
 
@@ -670,7 +862,7 @@ class GpuCamera:
         """Create one latest encoded-access-unit slot for a transport worker."""
         if self._video_config is None:
             raise CameraConfigurationError(
-                "hardware video is disabled; provide video_config to GpuCamera"
+                "video encoding is disabled; provide video_config to GpuCamera"
             )
         with self._lifecycle_lock:
             if self._video_hub.closed:
