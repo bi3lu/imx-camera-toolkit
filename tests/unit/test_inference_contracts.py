@@ -64,6 +64,7 @@ def test_inference_result_retains_metadata_timing_and_optional_overlays() -> Non
     )
     result = InferenceResult(
         frame_sequence=7,
+        frame_timestamp_ns=100,
         capture_timestamp_ns=123,
         inference_time_ns=456,
         outputs=(output,),
@@ -73,6 +74,7 @@ def test_inference_result_retains_metadata_timing_and_optional_overlays() -> Non
     metadata["backend"] = "changed"
 
     assert result.metadata["backend"] == "mock"
+    assert result.frame_timestamp_ns == 100
     assert result.outputs == (output,)
     assert result.overlays == ({"kind": "box"},)
     with pytest.raises(TypeError):

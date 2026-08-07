@@ -30,7 +30,7 @@ OverlayFactory = Callable[[tuple[TensorOutput, ...]], Iterable[object]]
 
 
 class TensorRTRunner:
-    """Build and execute one ONNX image model on a shared CUDA stream.
+    """Build and execute one ONNX image model on a runner-owned CUDA stream.
 
     The runner is deliberately unaware of YOLO, NMS, segmentation, or label
     formats. It preprocesses an NV12/NVMM camera surface into one NCHW float32
@@ -468,6 +468,7 @@ class TensorRTRunner:
 
         return InferenceResult(
             frame_sequence=frame.sequence,
+            frame_timestamp_ns=frame.timestamp_ns,
             capture_timestamp_ns=frame.capture_timestamp_ns,
             inference_time_ns=inference_time_ns,
             outputs=output_tuple,
@@ -489,7 +490,7 @@ class TensorRTRunner:
         )
 
     def close(self) -> None:
-        """Synchronize the shared stream and release runner-owned resources."""
+        """Synchronize the runner stream and release runner-owned resources."""
         if self._stream is not None:
             self._stream.synchronize()
 

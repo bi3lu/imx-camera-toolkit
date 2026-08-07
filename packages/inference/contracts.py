@@ -132,6 +132,7 @@ class InferenceResult:
     """Model-neutral outputs and timing associated with one input frame."""
 
     frame_sequence: int
+    frame_timestamp_ns: int
     inference_time_ns: int
     outputs: tuple[TensorOutput, ...]
     metadata: Mapping[str, object] = field(default_factory=dict)
@@ -153,6 +154,13 @@ class InferenceResult:
             or self.inference_time_ns < 0
         ):
             raise ValueError("inference_time_ns must be non-negative")
+
+        if (
+            isinstance(self.frame_timestamp_ns, bool)
+            or not isinstance(self.frame_timestamp_ns, int)
+            or self.frame_timestamp_ns < 0
+        ):
+            raise ValueError("frame_timestamp_ns must be non-negative")
 
         if not isinstance(self.outputs, tuple) or not all(
             isinstance(output, TensorOutput) for output in self.outputs

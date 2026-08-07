@@ -39,6 +39,7 @@ from packages.camera.profiles import (
     get_camera_profile,
     list_camera_profiles,
 )
+from packages.consumers.latest import LatestFrameSubscription
 
 __all__ = [
     "Camera",
@@ -58,6 +59,7 @@ __all__ = [
     "GpuFrame",
     "GpuFrameExpiredError",
     "MemoryType",
+    "LatestFrameSubscription",
     "MetricsRecorder",
     "PipelineMetrics",
     "PipelineStage",

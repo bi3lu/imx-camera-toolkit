@@ -10,6 +10,8 @@ from math import isfinite
 from pathlib import Path
 from typing import Protocol
 
+from packages.consumers.latest import LatestFrameHub, LatestFrameSubscription
+
 from .backends import GpuGStreamerCaptureBackend
 from .camera import CameraRecoveryPolicy
 from .config import CameraConfig, load_camera_config
@@ -132,6 +134,7 @@ class GpuCamera:
         )
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
         self._gpu_publisher = GpuFramePublisher()
+        self._frame_hub = LatestFrameHub[GpuFrame](self.record_consumer_drop)
         self._preview_publisher = EncodedJPEGPublisher(self._config.preview_fps)
         self._metrics = MetricsRecorder()
         self._backend: _GpuBackend | None = None
@@ -351,6 +354,7 @@ class GpuCamera:
 
                 self._record_capture(frame)
                 self._gpu_publisher.publish(frame)
+                self._frame_hub.publish(frame)
 
                 if self._config.enable_preview:
                     encoder_started_ns = time.monotonic_ns()
@@ -387,6 +391,7 @@ class GpuCamera:
 
         self._gpu_publisher.notify_waiters()
         self._preview_publisher.notify_waiters()
+        self._frame_hub.close()
 
     def _assign_sequence(self, frame: GpuFrame) -> GpuFrame:
         """Assign a camera-lifetime sequence that survives backend recovery."""
@@ -513,6 +518,25 @@ class GpuCamera:
         """Return the newest borrowed NVMM frame immediately."""
         return self._gpu_publisher.latest_frame
 
+    def subscribe_latest(self, name: str) -> LatestFrameSubscription[GpuFrame]:
+        """Create one non-blocking borrowed NVMM slot for a named consumer.
+
+        Each subscriber owns only a single latest-frame slot. A slow GPU
+        consumer skips old leases instead of back-pressuring capture or the
+        preview branch. As with :meth:`read`, a frame must not be kept after
+        the camera publishes its successor.
+        """
+        with self._lifecycle_lock:
+            if self._frame_hub.closed:
+                if self.running:
+                    raise RuntimeError("GPU frame subscriptions are closed")
+
+                self._frame_hub = LatestFrameHub[GpuFrame](
+                    self.record_consumer_drop
+                )
+
+            return self._frame_hub.subscribe(name)
+
     def wait_for_jpeg(
         self,
         previous_frame_number: int,
@@ -549,6 +573,7 @@ class GpuCamera:
             self._running.clear()
             self._gpu_publisher.notify_waiters()
             self._preview_publisher.notify_waiters()
+            self._frame_hub.close()
             thread = self._thread
 
         if thread is not None and thread is not threading.current_thread():

@@ -13,6 +13,8 @@ from math import isfinite
 from pathlib import Path
 from typing import Any
 
+from packages.consumers.latest import LatestFrameHub, LatestFrameSubscription
+
 from .backends import CaptureBackend, GStreamerCaptureBackend, OpenCVCaptureBackend
 from .config import (
     DEFAULT_CAMERA_CONFIG,
@@ -244,6 +246,7 @@ class Camera:
             resolved_config.preview_fps,
         )
         self._raw_publisher = RawFramePublisher()
+        self._frame_hub = LatestFrameHub[Frame](self.record_consumer_drop)
         self._v4l2_controls = V4L2Controls(resolved_config.sensor_id)
         self._software_hdr_settings = SoftwareHDRSettings()
         self._software_hdr_processor: SoftwareHDRProcessor | None = None
@@ -534,6 +537,25 @@ class Camera:
         """
         return self._prepare_frame(self._raw_publisher.latest_frame, copy)
 
+    def subscribe_latest(self, name: str) -> LatestFrameSubscription[Frame]:
+        """Create one non-blocking latest-frame slot for a named consumer.
+
+        The slot receives the same read-only BGR/CPU :class:`Frame` published
+        by the compatibility API. A slow consumer skips overwritten frames and
+        never blocks capture or another subscriber. Camera shutdown closes all
+        remaining subscriptions.
+        """
+        with self._lifecycle_lock:
+            if self._frame_hub.closed:
+                if self.running:
+                    raise RuntimeError("camera frame subscriptions are closed")
+
+                self._frame_hub = LatestFrameHub[Frame](
+                    self.record_consumer_drop
+                )
+
+            return self._frame_hub.subscribe(name)
+
     def latest_jpeg(self) -> bytes | None:
         """Return the newest preview JPEG without starting a capture pipeline.
 
@@ -697,6 +719,7 @@ class Camera:
 
         self._publisher.notify_waiters()
         self._raw_publisher.notify_waiters()
+        self._frame_hub.close()
 
     def _recover_backend(self) -> bool:
         """Reopen the capture backend after a transient capture failure.
@@ -769,6 +792,9 @@ class Camera:
             timestamp_ns=timestamp_ns,
             capture_timestamp_ns=capture_timestamp_ns,
         )
+        published_frame = self._raw_publisher.latest_frame
+        if published_frame is not None:
+            self._frame_hub.publish(published_frame)
 
         if self._enable_preview:
             encoder_started_ns = time.monotonic_ns()
@@ -1110,6 +1136,7 @@ class Camera:
             self._running.clear()
             self._publisher.notify_waiters()
             self._raw_publisher.notify_waiters()
+            self._frame_hub.close()
             thread = self._thread
 
             if thread is not None and thread is not threading.current_thread():
