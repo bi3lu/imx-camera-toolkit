@@ -74,7 +74,7 @@ if TYPE_CHECKING:
     from .preview import preview as preview
     from .preview import serve as serve
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 __all__ = [
     "Camera",
