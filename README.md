@@ -57,6 +57,7 @@ intermediate frames.
 | [`packages/camera`](packages/camera/README.md) | CSI camera acquisition through `nvarguscamerasrc`, frame conversion, JPEG encoding, and frame synchronization. |
 | [`packages/camera_control`](packages/camera_control/README.md) | Validated runtime exposure, gain, white-balance, denoise, sensor-mode, and HDR control for NVIDIA Argus cameras. |
 | [`packages/frames`](packages/frames/README.md) | Minimal `FrameSource` protocol and adapter from the toolkit camera to external processing pipelines. |
+| [`packages/inference`](packages/inference/README.md) | Model-neutral inference contracts, validated TensorRT engine caching, and optional NvBufSurface/CUDA interop. |
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
 | [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
@@ -264,6 +265,28 @@ without `buffer.map()`, NumPy conversion, or a host-memory image copy.
 preprocessing, CUDA synchronization, and model/GPU/TensorRT-aware engine cache
 validation. See [the camera documentation](packages/camera/README.md#gpu-first-nvmm-capture)
 for the pipeline contract and opt-in IMX219/IMX477 hardware validation commands.
+
+### Optional TensorRT runner
+
+The `tensorrt` extra adds a reference `TensorRTRunner` without making any model
+framework a core dependency. On JetPack 6.2.2 it uses a small pybind11/CUDA
+extension to import `NvBufSurface` through EGLImage, preprocess NV12 directly
+into a TensorRT device binding, and execute on one shared CUDA stream. Camera
+pixels never become a BGR/NumPy host image and are never uploaded from RAM.
+
+```bash
+uv sync --extra tensorrt
+sudo apt-get install python-gi-dev libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev cmake ninja-build
+uv run imx-camera-build-interop
+```
+
+The runner supports dynamic min/opt/max input profiles and caches local engine
+bytes only beside matching metadata for the ONNX hash, TensorRT version,
+compute capability, precision, input name, and complete shape profile.
+Model-specific decoding and overlays remain application-owned. See
+[GPU inference integration](packages/inference/README.md) for usage and the
+TensorRT/ONNX Runtime parity test.
 
 Model-agnostic code can depend only on the public union:
 
