@@ -85,9 +85,9 @@ def test_720p_production_preview_runs_during_tensorrt(
 
     assert video.encode_fps >= 25.0
     assert inference.processed_frames > 0
+
     if selected_backend == VideoEncoderBackend.NVENC.value:
         assert elapsed_cpu / elapsed_wall < 0.5
+
     else:
-        # x264 is the expected Orin Nano fallback and deliberately consumes
-        # CPU. Deployments choose resolution/FPS/preset for their own budget.
         assert selected_backend == VideoEncoderBackend.X264.value

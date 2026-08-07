@@ -85,8 +85,6 @@ class VideoEncoderConfig:
             raise ValueError("software_preset is not supported by x264enc")
 
 
-# Kept as a source-compatible alias.  New code should use the backend-neutral
-# name so a software encoder does not masquerade as hardware.
 HardwareVideoConfig = VideoEncoderConfig
 
 
