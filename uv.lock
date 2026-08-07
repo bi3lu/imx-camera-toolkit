@@ -287,6 +287,10 @@ version = "0.4.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+production-preview = [
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
 preview = [
     { name = "fastapi" },
     { name = "uvicorn" },
@@ -314,6 +318,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", marker = "extra == 'production-preview'", specifier = ">=0.116,<1.0" },
     { name = "fastapi", marker = "extra == 'preview'", specifier = ">=0.116,<1.0" },
     { name = "numpy", marker = "extra == 'tensorrt'", specifier = ">=1.24,<2.0" },
     { name = "numpy", marker = "extra == 'tensorrt-test'", specifier = ">=1.24,<2.0" },
@@ -321,9 +326,10 @@ requires-dist = [
     { name = "onnxruntime", marker = "extra == 'tensorrt-test'", specifier = ">=1.18,<1.24" },
     { name = "pybind11", marker = "extra == 'tensorrt'", specifier = ">=2.11,<3.0" },
     { name = "pybind11", marker = "extra == 'tensorrt-test'", specifier = ">=2.11,<3.0" },
+    { name = "uvicorn", marker = "extra == 'production-preview'", specifier = ">=0.35,<1.0" },
     { name = "uvicorn", marker = "extra == 'preview'", specifier = ">=0.35,<1.0" },
 ]
-provides-extras = ["preview", "tensorrt", "tensorrt-test"]
+provides-extras = ["preview", "production-preview", "tensorrt", "tensorrt-test"]
 
 [package.metadata.requires-dev]
 dev = [

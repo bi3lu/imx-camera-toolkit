@@ -171,3 +171,33 @@ class NativeCudaInterop:
 
         except (RuntimeError, ValueError) as error:
             raise CudaInteropError(f"NV12 preprocessing failed: {error}") from error
+
+    def draw_nv12_rectangle(
+        self,
+        surface: NvmmSurface,
+        *,
+        left: int,
+        top: int,
+        width: int,
+        height: int,
+        thickness: int,
+        yuv: tuple[int, int, int],
+        stream: CudaStream,
+    ) -> None:
+        """Draw one rectangle directly into an isolated NVMM surface."""
+        try:
+            self._native.draw_nv12_rectangle(
+                surface,
+                left,
+                top,
+                width,
+                height,
+                thickness,
+                yuv[0],
+                yuv[1],
+                yuv[2],
+                stream,
+            )
+
+        except (RuntimeError, ValueError) as error:
+            raise CudaInteropError(f"NV12 overlay failed: {error}") from error

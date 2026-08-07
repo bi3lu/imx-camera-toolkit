@@ -196,7 +196,7 @@ public:
                 cuGraphicsEGLRegisterImage(
                     &cuda_resource_,
                     image,
-                    CU_GRAPHICS_MAP_RESOURCE_FLAGS_READ_ONLY),
+                    CU_GRAPHICS_MAP_RESOURCE_FLAGS_NONE),
                 "cuGraphicsEGLRegisterImage");
             cuda_registered_ = true;
             check_driver(
@@ -329,6 +329,70 @@ __device__ unsigned char read_array_byte(
     unsigned char value = 0;
     surf2Dread(&value, surface, byte_x, y);
     return value;
+}
+
+__device__ void write_array_byte(
+    cudaSurfaceObject_t surface,
+    int byte_x,
+    int y,
+    unsigned char value) {
+    surf2Dwrite(value, surface, byte_x, y);
+}
+
+__global__ void draw_nv12_rectangle_kernel(
+    unsigned char* y_plane,
+    unsigned char* uv_plane,
+    unsigned int y_pitch,
+    unsigned int uv_pitch,
+    cudaSurfaceObject_t y_surface,
+    cudaSurfaceObject_t uv_surface,
+    bool array_frame,
+    unsigned int surface_width,
+    unsigned int left,
+    unsigned int top,
+    unsigned int rectangle_width,
+    unsigned int rectangle_height,
+    unsigned int thickness,
+    unsigned char y_value,
+    unsigned char u_value,
+    unsigned char v_value) {
+    const unsigned int local_x = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int local_y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (local_x >= rectangle_width || local_y >= rectangle_height) {
+        return;
+    }
+
+    const bool border =
+        local_x < thickness || local_y < thickness ||
+        local_x + thickness >= rectangle_width ||
+        local_y + thickness >= rectangle_height;
+
+    if (!border) {
+        return;
+    }
+    const unsigned int x = left + local_x;
+    const unsigned int y = top + local_y;
+
+    if (array_frame) {
+        write_array_byte(y_surface, static_cast<int>(x), y, y_value);
+    } else {
+        y_plane[y * y_pitch + x] = y_value;
+    }
+
+    if ((x & 1U) != 0 || (y & 1U) != 0 || x + 1 >= surface_width) {
+        return;
+    }
+
+    const unsigned int uv_y = y / 2;
+
+    if (array_frame) {
+        write_array_byte(uv_surface, static_cast<int>(x), uv_y, u_value);
+        write_array_byte(uv_surface, static_cast<int>(x + 1), uv_y, v_value);
+    } else {
+        uv_plane[uv_y * uv_pitch + x] = u_value;
+        uv_plane[uv_y * uv_pitch + x + 1] = v_value;
+    }
 }
 
 __global__ void nv12_to_nchw_kernel(
@@ -508,6 +572,64 @@ void preprocess_nv12(
     check_cuda(cudaGetLastError(), "NV12 preprocessing kernel launch");
 }
 
+void draw_nv12_rectangle(
+    NvmmSurface& surface,
+    unsigned int left,
+    unsigned int top,
+    unsigned int width,
+    unsigned int height,
+    unsigned int thickness,
+    unsigned char y_value,
+    unsigned char u_value,
+    unsigned char v_value,
+    const CudaStream& stream) {
+    if (width == 0 || height == 0 || thickness == 0) {
+        throw std::invalid_argument(
+            "rectangle dimensions and thickness must be positive");
+    }
+
+    if (left >= surface.width() || top >= surface.height()) {
+        return;
+    }
+
+    const unsigned int clipped_width =
+        std::min(width, surface.width() - left);
+    const unsigned int clipped_height =
+        std::min(height, surface.height() - top);
+    const unsigned int clipped_thickness =
+        std::min(thickness, std::min(clipped_width, clipped_height));
+    const CUeglFrame& frame = surface.frame();
+    const bool is_array = frame.frameType == CU_EGL_FRAME_TYPE_ARRAY;
+    auto* y_plane = is_array
+        ? nullptr
+        : static_cast<unsigned char*>(frame.frame.pPitch[0]);
+    auto* uv_plane = is_array
+        ? nullptr
+        : static_cast<unsigned char*>(frame.frame.pPitch[1]);
+    const dim3 threads(16, 16);
+    const dim3 blocks(
+        (clipped_width + threads.x - 1) / threads.x,
+        (clipped_height + threads.y - 1) / threads.y);
+    draw_nv12_rectangle_kernel<<<blocks, threads, 0, stream.get()>>>(
+        y_plane,
+        uv_plane,
+        surface.y_pitch(),
+        surface.uv_pitch(),
+        surface.y_surface(),
+        surface.uv_surface(),
+        is_array,
+        surface.width(),
+        left,
+        top,
+        clipped_width,
+        clipped_height,
+        clipped_thickness,
+        y_value,
+        u_value,
+        v_value);
+    check_cuda(cudaGetLastError(), "NV12 rectangle kernel launch");
+}
+
 std::pair<int, int> compute_capability() {
     int device = 0;
     check_cuda(cudaGetDevice(&device), "cudaGetDevice");
@@ -555,5 +677,18 @@ PYBIND11_MODULE(_cuda_interop, module) {
         py::arg("scale") = 1.0F / 255.0F,
         py::arg("mean") = std::array<float, 3>{0.0F, 0.0F, 0.0F},
         py::arg("standard_deviation") = std::array<float, 3>{1.0F, 1.0F, 1.0F},
+        py::arg("stream"));
+    module.def(
+        "draw_nv12_rectangle",
+        &draw_nv12_rectangle,
+        py::arg("surface"),
+        py::arg("left"),
+        py::arg("top"),
+        py::arg("width"),
+        py::arg("height"),
+        py::arg("thickness"),
+        py::arg("y"),
+        py::arg("u"),
+        py::arg("v"),
         py::arg("stream"));
 }

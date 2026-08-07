@@ -11,6 +11,10 @@ preview = [
     "fastapi>=0.116,<1.0",
     "uvicorn>=0.35,<1.0",
 ]
+production-preview = [
+    "fastapi>=0.116,<1.0",
+    "uvicorn>=0.35,<1.0",
+]
 tensorrt = [
     "numpy>=1.24,<2.0",
     "pybind11>=2.11,<3.0",
@@ -36,6 +40,7 @@ force-include = {
     "native" = "native",
     "view/advanced.html" = "view/advanced.html",
     "view/simple.html" = "view/simple.html",
+    "view/production.html" = "view/production.html",
 }
 
 [tool.hatch.build.targets.wheel]
