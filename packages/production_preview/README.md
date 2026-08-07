@@ -179,6 +179,8 @@ production `GpuCamera` rejects a host-memory renderer on its NVMM branch.
 as successful RTP delivery. WebRTC counts packet buffers after `rtph264pay`,
 monitors its pipeline bus continuously, and marks media failed or stalled even
 when ICE itself is connected. HLS counts segment gaps observed by each browser.
+The legacy `frames_sent` property is deprecated and retains frame/access-unit
+units; use `frames_pushed` or `rtp_packets_sent` explicitly.
 
 The no-camera tests validate pipeline caps, encoder selection, transport
 sharing, metrics, safe HLS paths, and CUDA overlay dispatch. Run the opt-in
