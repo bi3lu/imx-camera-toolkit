@@ -14,10 +14,12 @@ result = runner.infer(gpu_frame)
 runner.close()
 ```
 
-`InferenceResult` contains the input sequence and capture timestamp, elapsed
-inference time, named `TensorOutput` values, immutable metadata, and optional
-opaque overlays supplied by the application. It does not define boxes,
-classes, masks, NMS, or YOLO-specific fields.
+`InferenceResult` contains the input sequence, monotonic input-frame timestamp,
+optional hardware capture timestamp, elapsed inference time, named
+`TensorOutput` values, immutable metadata, and optional opaque overlays
+supplied by the application. It does not define boxes, classes, masks, NMS, or
+YOLO-specific fields. The monotonic timestamp lets a preview or UI calculate
+the age of the result without guessing which frame was evaluated.
 
 ## JetPack 6.2.2 interoperability
 
@@ -102,6 +104,27 @@ with GpuCamera() as camera:
 
 runner.close()
 ```
+
+For live operation, prefer the asynchronous latest-frame adapter over polling
+`read()`. It provides one input slot and one worker per expensive consumer, so
+model throughput cannot accumulate a capture backlog:
+
+```python
+from imx_camera_toolkit import GpuCamera
+from imx_camera_toolkit.consumers import InferenceConsumer
+
+with GpuCamera() as camera:
+    with InferenceConsumer(
+        camera.subscribe_latest("primary-inference"),
+        runner,
+    ) as inference:
+        result = inference.latest_result
+```
+
+Create a separate `TensorRTRunner` for each independent inference consumer.
+Each runner owns its CUDA stream, while each `InferenceConsumer` owns its worker
+thread. Slow consumers overwrite only their own unread slot and automatically
+contribute named drop counters to camera health metrics.
 
 The reference runner supports one float32 NCHW image input and arbitrary named
 output tensors. Model-specific decoding, NMS, labels, masks, and overlays stay

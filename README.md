@@ -58,6 +58,7 @@ intermediate frames.
 | [`packages/camera_control`](packages/camera_control/README.md) | Validated runtime exposure, gain, white-balance, denoise, sensor-mode, and HDR control for NVIDIA Argus cameras. |
 | [`packages/frames`](packages/frames/README.md) | Minimal `FrameSource` protocol and adapter from the toolkit camera to external processing pipelines. |
 | [`packages/inference`](packages/inference/README.md) | Model-neutral inference contracts, validated TensorRT engine caching, and optional NvBufSurface/CUDA interop. |
+| [`packages/consumers`](packages/consumers/README.md) | Independent latest-frame slots, worker consumers, and inference-preview adaptation. |
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
 | [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
@@ -271,8 +272,9 @@ for the pipeline contract and opt-in IMX219/IMX477 hardware validation commands.
 The `tensorrt` extra adds a reference `TensorRTRunner` without making any model
 framework a core dependency. On JetPack 6.2.2 it uses a small pybind11/CUDA
 extension to import `NvBufSurface` through EGLImage, preprocess NV12 directly
-into a TensorRT device binding, and execute on one shared CUDA stream. Camera
-pixels never become a BGR/NumPy host image and are never uploaded from RAM.
+into a TensorRT device binding, and execute on one runner-owned CUDA stream.
+Camera pixels never become a BGR/NumPy host image and are never uploaded from
+RAM.
 
 ```bash
 uv sync --extra tensorrt
@@ -316,6 +318,37 @@ camera.record_consumer_drop("primary-inference", skipped_frames)
 `/api/health` exposes those aggregates together with the active backend,
 explicit frame format and memory domain, output resolution, capture timestamp,
 and per-consumer drop counters.
+
+### Asynchronous latest-frame consumers
+
+Both camera variants expose `subscribe_latest(name)`. Every subscription owns
+one replaceable slot, so capture never invokes consumer code or waits for a
+slow model. `FrameConsumer` executes arbitrary CPU work on its own thread;
+`InferenceConsumer` prepares and runs a model-neutral `InferenceRunner` on a
+dedicated thread. Give each expensive inference consumer its own runner;
+`TensorRTRunner` then gives each one an independent CUDA stream.
+
+```python
+from imx_camera_toolkit import GpuCamera
+from imx_camera_toolkit.consumers import InferenceConsumer
+
+with GpuCamera() as camera:
+    inference = InferenceConsumer(
+        camera.subscribe_latest("primary-inference"),
+        runner,
+    )
+
+    with inference:
+        serve_application(inference)
+```
+
+`InferenceResult.frame_timestamp_ns` always identifies the monotonic timestamp
+of the exact input frame. `InferencePreviewSource` reads the independent JPEG
+branch at preview speed and passes every fresh JPEG, the newest result, and a
+`PreviewOverlayContext` to an application renderer. Its `detection_age_ns`
+property can be exposed directly in UI telemetry. The renderer remains
+model-specific; capture remains unaware of boxes, masks, YOLO, or other output
+schemas. See [consumer integration](packages/consumers/README.md).
 
 ### Diagnostics
 
