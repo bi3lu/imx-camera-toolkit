@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+import warnings
 from dataclasses import dataclass
 
 from packages.camera.models import (
@@ -49,10 +50,13 @@ class PreviewClientStats:
 
     @property
     def frames_sent(self) -> int:
-        """Compatibility alias using real RTP for WebRTC delivery."""
-        if self.transport is PreviewTransport.WEBRTC:
-            return self.rtp_packets_sent
-
+        """Deprecated compatibility alias for pushed frames or HLS segments."""
+        warnings.warn(
+            "frames_sent is deprecated; use frames_pushed for encoded frames "
+            "or rtp_packets_sent for WebRTC packets",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.frames_pushed
 
     @property

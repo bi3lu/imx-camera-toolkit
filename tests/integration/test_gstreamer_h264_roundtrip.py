@@ -1,4 +1,4 @@
-"""Real GStreamer H.264/RTP/decode smoke coverage when plugins are installed."""
+"""Real GStreamer H.264/RTP codec roundtrip integration coverage."""
 
 from __future__ import annotations
 
@@ -35,8 +35,8 @@ def _runtime() -> Any:
 
 
 @pytest.mark.integration
-def test_real_x264_rtp_roundtrip_decodes_five_nonblack_frames() -> None:
-    """Exercise real parser/payloader negotiation through an H.264 decoder."""
+def test_h264_rtp_codec_roundtrip_decodes_five_nonblack_frames() -> None:
+    """Exercise H.264/RTP packetization without claiming WebRTC coverage."""
     gst = _runtime()
     pipeline = gst.parse_launch(
         "videotestsrc num-buffers=12 pattern=ball ! "
