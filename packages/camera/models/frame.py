@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .formats import FrameFormat, MemoryType
+
 
 @dataclass(frozen=True, slots=True)
 class Frame:
     """One processed camera frame without JPEG encoding or inference.
 
-    The image payload is intentionally opaque so callers can pass it directly
-    to OpenCV, TensorRT, DeepStream, CUDA, or another image-processing system.
-    The model is shallowly immutable: ``image`` is retained by reference when
-    ``Camera.read(copy=False)`` is used.
+    This is the legacy CPU contract: ``image`` contains a BGR payload, normally
+    a NumPy array supplied by OpenCV or the GStreamer CPU backend. The model is
+    shallowly immutable: ``image`` is retained by reference when
+    ``Camera.read(copy=False)`` is used. That option avoids another host copy;
+    it is not a guarantee of CUDA or NVMM zero-copy operation.
 
     Args:
         image: Processed BGR image payload.
@@ -31,6 +34,16 @@ class Frame:
     width: int
     height: int
     format: str
+
+    @property
+    def output_format(self) -> FrameFormat:
+        """Explicit CPU output format without changing legacy ``format``."""
+        return FrameFormat.BGR_CPU
+
+    @property
+    def memory_type(self) -> MemoryType:
+        """Memory domain containing the legacy BGR image."""
+        return MemoryType.CPU
 
     def __post_init__(self) -> None:
         """Validate frame metadata without inspecting the image payload."""

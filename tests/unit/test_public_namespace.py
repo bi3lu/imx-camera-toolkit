@@ -18,8 +18,17 @@ from imx_camera_toolkit import (
     CameraStats,
     CameraTimeoutError,
     Frame,
+    FrameFormat,
+    GpuBufferHandle,
+    GpuFrame,
+    GpuFrameExpiredError,
+    MemoryType,
+    MetricsRecorder,
+    PipelineMetrics,
+    PipelineStage,
     PreviewServer,
     PreviewSource,
+    StageMetrics,
     __version__,
     create_preview_app,
     get_camera_profile,
@@ -31,9 +40,14 @@ from imx_camera_toolkit.api import create_app
 from imx_camera_toolkit.camera import Camera
 from imx_camera_toolkit.camera_control import CameraController
 from imx_camera_toolkit.controls import CameraControls, ExposureConfig
-from imx_camera_toolkit.frames import CameraFrameSource, FrameSource
+from imx_camera_toolkit.frames import (
+    CameraFrameSource,
+    CaptureFrameSource,
+    FrameSource,
+    GpuFrameSource,
+)
 from imx_camera_toolkit.stream import MJPEGStream
-from imx_camera_toolkit.testing import MockCamera
+from imx_camera_toolkit.testing import MockCamera, MockFrameSource
 from packages.api.api import create_app as InternalCreateApp
 from packages.camera.camera import Camera as InternalCamera
 from packages.camera.config import CameraConfig as InternalCameraConfig
@@ -49,6 +63,15 @@ from packages.camera.errors import CameraTimeoutError as InternalTimeoutError
 from packages.camera.models import CameraFrame as InternalCameraFrame
 from packages.camera.models import CameraStats as InternalCameraStats
 from packages.camera.models import Frame as InternalFrame
+from packages.camera.models import FrameFormat as InternalFrameFormat
+from packages.camera.models import GpuBufferHandle as InternalGpuBufferHandle
+from packages.camera.models import GpuFrame as InternalGpuFrame
+from packages.camera.models import GpuFrameExpiredError as InternalGpuFrameExpiredError
+from packages.camera.models import MemoryType as InternalMemoryType
+from packages.camera.models import MetricsRecorder as InternalMetricsRecorder
+from packages.camera.models import PipelineMetrics as InternalPipelineMetrics
+from packages.camera.models import PipelineStage as InternalPipelineStage
+from packages.camera.models import StageMetrics as InternalStageMetrics
 from packages.camera.profiles import (
     CameraProfile as InternalCameraProfile,
 )
@@ -68,9 +91,12 @@ from packages.camera_control.camera_control import (
     CameraSettings as InternalCameraSettings,
 )
 from packages.frames import CameraFrameSource as InternalCameraFrameSource
+from packages.frames import CaptureFrameSource as InternalCaptureFrameSource
 from packages.frames import FrameSource as InternalFrameSource
+from packages.frames import GpuFrameSource as InternalGpuFrameSource
 from packages.stream.stream import MJPEGStream as InternalMJPEGStream
 from packages.testing import MockCamera as InternalMockCamera
+from packages.testing import MockFrameSource as InternalMockFrameSource
 
 
 def test_public_namespace_reexports_stable_library_types() -> None:
@@ -98,12 +124,24 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert CameraRecoveryError is InternalRecoveryError
     assert CameraFrame is InternalCameraFrame
     assert Frame is InternalFrame
+    assert FrameFormat is InternalFrameFormat
+    assert GpuBufferHandle is InternalGpuBufferHandle
+    assert GpuFrame is InternalGpuFrame
+    assert GpuFrameExpiredError is InternalGpuFrameExpiredError
+    assert MemoryType is InternalMemoryType
+    assert MetricsRecorder is InternalMetricsRecorder
+    assert PipelineMetrics is InternalPipelineMetrics
+    assert PipelineStage is InternalPipelineStage
+    assert StageMetrics is InternalStageMetrics
     assert get_camera_profile is internal_get_camera_profile
     assert list_camera_profiles is internal_list_camera_profiles
     assert CameraController is InternalController
     assert CameraFrameSource is InternalCameraFrameSource
     assert FrameSource is InternalFrameSource
+    assert CaptureFrameSource is InternalCaptureFrameSource
+    assert GpuFrameSource is InternalGpuFrameSource
     assert MJPEGStream is InternalMJPEGStream
     assert CameraControls is InternalController
     assert ExposureConfig is InternalCameraSettings
     assert MockCamera is InternalMockCamera
+    assert MockFrameSource is InternalMockFrameSource

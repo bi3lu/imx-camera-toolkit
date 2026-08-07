@@ -20,6 +20,17 @@ from packages.camera.camera import (
     get_camera,
     load_camera_config,
 )
+from packages.camera.models import (
+    FrameFormat,
+    GpuBufferHandle,
+    GpuFrame,
+    GpuFrameExpiredError,
+    MemoryType,
+    MetricsRecorder,
+    PipelineMetrics,
+    PipelineStage,
+    StageMetrics,
+)
 from packages.camera.profiles import (
     CameraProfile,
     CameraProfileStatus,
@@ -39,6 +50,15 @@ __all__ = [
     "CameraOpenError",
     "CameraReadError",
     "Frame",
+    "FrameFormat",
+    "GpuBufferHandle",
+    "GpuFrame",
+    "GpuFrameExpiredError",
+    "MemoryType",
+    "MetricsRecorder",
+    "PipelineMetrics",
+    "PipelineStage",
+    "StageMetrics",
     "CameraRecoveryPolicy",
     "CameraRecoveryError",
     "CameraStats",
