@@ -88,7 +88,6 @@ def test_camera_config_is_frozen_and_serializable() -> None:
         ({"sensor_mode": -1}, "sensor_mode"),
         ({"enable_preview": 1}, "enable_preview"),
         ({"max_fps": 0}, "max_fps"),
-        ({"output_format": FrameFormat.NV12_NVMM}, "BGR_CPU"),
         ({"output_format": "BGR_CPU"}, "FrameFormat"),
     ],
 )
@@ -136,6 +135,19 @@ def test_yaml_values_resolve_the_explicit_bgr_cpu_output() -> None:
 
     assert config.output_format is FrameFormat.BGR_CPU
     assert config.output_memory is MemoryType.CPU
+
+    gpu_config = _read_config_values({"output_format": "NV12_NVMM"})
+    assert gpu_config.output_format is FrameFormat.NV12_NVMM
+    assert gpu_config.output_memory is MemoryType.NVMM
+    assert gpu_config.copies_to_host_memory is False
+
+
+def test_legacy_camera_rejects_gpu_output_without_changing_its_semantics() -> None:
+    """NVMM selection must require the separate GpuCamera API."""
+    config = CameraConfig(output_format=FrameFormat.NV12_NVMM)
+
+    with pytest.raises(ValueError, match="GpuCamera"):
+        Camera(config)
 
 
 def test_imx219_77_profile_is_explicitly_tested() -> None:

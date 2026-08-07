@@ -44,6 +44,7 @@ testpaths = ["tests"]
 markers = [
     "integration: verifies components working together without physical camera hardware.",
     "benchmark: measures capture or streaming throughput; excluded from normal CI.",
+    "hardware: exercises a physical Jetson CSI camera and is skipped unless configured.",
 ]
 
 [tool.ruff]

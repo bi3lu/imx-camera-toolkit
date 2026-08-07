@@ -20,6 +20,7 @@ from imx_camera_toolkit import (
     Frame,
     FrameFormat,
     GpuBufferHandle,
+    GpuCamera,
     GpuFrame,
     GpuFrameExpiredError,
     MemoryType,
@@ -30,6 +31,7 @@ from imx_camera_toolkit import (
     PreviewSource,
     StageMetrics,
     __version__,
+    build_gpu_gstreamer_pipeline,
     create_preview_app,
     get_camera_profile,
     list_camera_profiles,
@@ -60,6 +62,7 @@ from packages.camera.errors import CameraOpenError as InternalOpenError
 from packages.camera.errors import CameraReadError as InternalReadError
 from packages.camera.errors import CameraRecoveryError as InternalRecoveryError
 from packages.camera.errors import CameraTimeoutError as InternalTimeoutError
+from packages.camera.gpu_camera import GpuCamera as InternalGpuCamera
 from packages.camera.models import CameraFrame as InternalCameraFrame
 from packages.camera.models import CameraStats as InternalCameraStats
 from packages.camera.models import Frame as InternalFrame
@@ -72,6 +75,9 @@ from packages.camera.models import MetricsRecorder as InternalMetricsRecorder
 from packages.camera.models import PipelineMetrics as InternalPipelineMetrics
 from packages.camera.models import PipelineStage as InternalPipelineStage
 from packages.camera.models import StageMetrics as InternalStageMetrics
+from packages.camera.pipeline import (
+    build_gpu_gstreamer_pipeline as internal_build_gpu_gstreamer_pipeline,
+)
 from packages.camera.profiles import (
     CameraProfile as InternalCameraProfile,
 )
@@ -126,6 +132,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert Frame is InternalFrame
     assert FrameFormat is InternalFrameFormat
     assert GpuBufferHandle is InternalGpuBufferHandle
+    assert GpuCamera is InternalGpuCamera
     assert GpuFrame is InternalGpuFrame
     assert GpuFrameExpiredError is InternalGpuFrameExpiredError
     assert MemoryType is InternalMemoryType
@@ -133,6 +140,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert PipelineMetrics is InternalPipelineMetrics
     assert PipelineStage is InternalPipelineStage
     assert StageMetrics is InternalStageMetrics
+    assert build_gpu_gstreamer_pipeline is internal_build_gpu_gstreamer_pipeline
     assert get_camera_profile is internal_get_camera_profile
     assert list_camera_profiles is internal_list_camera_profiles
     assert CameraController is InternalController
