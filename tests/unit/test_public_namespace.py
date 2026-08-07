@@ -17,6 +17,7 @@ from imx_camera_toolkit import (
     CameraRecoveryError,
     CameraStats,
     CameraTimeoutError,
+    EncodedVideoFrame,
     Frame,
     FrameConsumer,
     FrameFormat,
@@ -25,6 +26,7 @@ from imx_camera_toolkit import (
     GpuCamera,
     GpuFrame,
     GpuFrameExpiredError,
+    HardwareVideoConfig,
     InferenceConsumer,
     InferencePreviewSource,
     InferenceResult,
@@ -43,6 +45,9 @@ from imx_camera_toolkit import (
     StageMetrics,
     TensorOutput,
     TensorRTRunner,
+    VideoCodec,
+    VideoEncodeStats,
+    VideoOverlayRenderer,
     __version__,
     build_gpu_gstreamer_pipeline,
     create_preview_app,
@@ -78,16 +83,21 @@ from packages.camera.errors import CameraTimeoutError as InternalTimeoutError
 from packages.camera.gpu_camera import GpuCamera as InternalGpuCamera
 from packages.camera.models import CameraFrame as InternalCameraFrame
 from packages.camera.models import CameraStats as InternalCameraStats
+from packages.camera.models import EncodedVideoFrame as InternalEncodedVideoFrame
 from packages.camera.models import Frame as InternalFrame
 from packages.camera.models import FrameFormat as InternalFrameFormat
 from packages.camera.models import GpuBufferHandle as InternalGpuBufferHandle
 from packages.camera.models import GpuFrame as InternalGpuFrame
 from packages.camera.models import GpuFrameExpiredError as InternalGpuFrameExpiredError
+from packages.camera.models import HardwareVideoConfig as InternalHardwareVideoConfig
 from packages.camera.models import MemoryType as InternalMemoryType
 from packages.camera.models import MetricsRecorder as InternalMetricsRecorder
 from packages.camera.models import PipelineMetrics as InternalPipelineMetrics
 from packages.camera.models import PipelineStage as InternalPipelineStage
 from packages.camera.models import StageMetrics as InternalStageMetrics
+from packages.camera.models import VideoCodec as InternalVideoCodec
+from packages.camera.models import VideoEncodeStats as InternalVideoEncodeStats
+from packages.camera.models import VideoOverlayRenderer as InternalVideoOverlayRenderer
 from packages.camera.pipeline import (
     build_gpu_gstreamer_pipeline as internal_build_gpu_gstreamer_pipeline,
 )
@@ -156,6 +166,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert CameraOpenError is InternalOpenError
     assert CameraReadError is InternalReadError
     assert CameraTimeoutError is InternalTimeoutError
+    assert EncodedVideoFrame is InternalEncodedVideoFrame
     assert CameraConfigurationError is InternalConfigurationError
     assert CameraRecoveryError is InternalRecoveryError
     assert CameraFrame is InternalCameraFrame
@@ -167,6 +178,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert GpuCamera is InternalGpuCamera
     assert GpuFrame is InternalGpuFrame
     assert GpuFrameExpiredError is InternalGpuFrameExpiredError
+    assert HardwareVideoConfig is InternalHardwareVideoConfig
     assert InferenceResult is InternalInferenceResult
     assert InferenceConsumer is InternalInferenceConsumer
     assert InferencePreviewSource is InternalInferencePreviewSource
@@ -183,6 +195,9 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert ShapeProfile is InternalShapeProfile
     assert TensorOutput is InternalTensorOutput
     assert TensorRTRunner is InternalTensorRTRunner
+    assert VideoCodec is InternalVideoCodec
+    assert VideoEncodeStats is InternalVideoEncodeStats
+    assert VideoOverlayRenderer is InternalVideoOverlayRenderer
     assert build_gpu_gstreamer_pipeline is internal_build_gpu_gstreamer_pipeline
     assert get_camera_profile is internal_get_camera_profile
     assert list_camera_profiles is internal_list_camera_profiles

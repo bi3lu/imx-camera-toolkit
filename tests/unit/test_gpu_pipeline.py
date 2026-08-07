@@ -127,6 +127,10 @@ class _FakeGpuBackend:
         """Produce no preview in lifecycle-only tests."""
         return None
 
+    def read_video(self) -> None:
+        """Produce no encoded video in lifecycle-only tests."""
+        return None
+
     def close(self) -> None:
         """Record closure of the shared tee pipeline."""
         self.closed = True
