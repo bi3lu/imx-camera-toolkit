@@ -95,7 +95,7 @@ runner = TensorRTRunner(
     inference_shape=(1, 3, 640, 640),
 )
 
-with GpuCamera() as camera:
+with GpuCamera(experimental=True) as camera:
     frame = camera.read(timeout=2.0)
     if frame is not None:
         runner.prepare(FrameSpec.from_gpu_frame(frame))
@@ -113,7 +113,7 @@ model throughput cannot accumulate a capture backlog:
 from imx_camera_toolkit import GpuCamera
 from imx_camera_toolkit.consumers import InferenceConsumer
 
-with GpuCamera() as camera:
+with GpuCamera(experimental=True) as camera:
     with InferenceConsumer(
         camera.subscribe_latest("primary-inference"),
         runner,

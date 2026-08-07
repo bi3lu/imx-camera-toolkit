@@ -22,6 +22,9 @@ synchronization, or telemetry backends. Applications retain ownership of those
 policies and receive a BGR/CPU `Frame.image` payload for their own chosen vision
 stack. Optional GPU sources use the separate borrowed `GpuFrame` contract.
 
+Start with the [CPU/GPU and browser mode guide](docs/GPU_PATH_GUIDE.md) before
+selecting `Camera`, experimental `GpuCamera`, MJPEG, WebRTC, or HLS.
+
 ## System architecture
 
 ```text
@@ -152,7 +155,7 @@ Add the stable branch to the consuming project's `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.4.0"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.0"
 ]
 ```
 
@@ -172,7 +175,7 @@ To consume the Git dependency with the browser-preview extra, declare it as:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.4.0"
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.0"
 ]
 ```
 
@@ -256,7 +259,8 @@ with GpuCamera(
         output_height=1080,
         fps=30,
         enable_preview=True,
-    )
+    ),
+    experimental=True,
 ) as camera:
     frame = camera.read(timeout=1.0)
 
@@ -356,7 +360,7 @@ dedicated thread. Give each expensive inference consumer its own runner;
 from imx_camera_toolkit import GpuCamera
 from imx_camera_toolkit.consumers import InferenceConsumer
 
-with GpuCamera() as camera:
+with GpuCamera(experimental=True) as camera:
     inference = InferenceConsumer(
         camera.subscribe_latest("primary-inference"),
         runner,
