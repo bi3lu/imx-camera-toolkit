@@ -111,3 +111,96 @@ def build_gstreamer_pipeline(
         "video/x-raw, format=(string)BGR ! "
         "appsink name=camera_sink max-buffers=1 drop=true sync=false"
     )
+
+
+def build_gpu_gstreamer_pipeline(
+    sensor_id: int = 0,
+    capture_width: int = 1920,
+    capture_height: int = 1080,
+    output_width: int = 1280,
+    output_height: int = 720,
+    framerate: int = 30,
+    flip_method: int = 0,
+    *,
+    enable_preview: bool = False,
+    jpeg_quality: int = 65,
+    argus_properties: Sequence[str] = (),
+) -> str:
+    """Build an NV12/NVMM pipeline with isolated inference and preview branches.
+
+    The inference branch terminates at ``gpu_sink`` without leaving NVMM and
+    without a CPU color conversion. When preview is enabled, a second leaky
+    queue feeds NVIDIA's JPEG encoder and a separate encoded-byte appsink.
+    Every queue and appsink retains at most one buffer so slow consumers do not
+    increase end-to-end latency.
+    """
+    if sensor_id < 0:
+        raise CameraConfigurationError(
+            "sensor_id must be greater than or equal to zero"
+        )
+
+    if min(
+        capture_width,
+        capture_height,
+        output_width,
+        output_height,
+        framerate,
+    ) <= 0:
+        raise CameraConfigurationError(
+            "frame dimensions and framerate must be greater than zero"
+        )
+
+    if not 0 <= flip_method <= 7:
+        raise CameraConfigurationError("flip_method must be between 0 and 7")
+
+    if not isinstance(enable_preview, bool):
+        raise CameraConfigurationError("enable_preview must be a boolean")
+
+    if (
+        isinstance(jpeg_quality, bool)
+        or not isinstance(jpeg_quality, int)
+        or not 0 <= jpeg_quality <= 100
+    ):
+        raise CameraConfigurationError("jpeg_quality must be between 0 and 100")
+
+    source_properties = normalize_argus_properties(argus_properties)
+    source_arguments = " ".join(source_properties)
+    source_suffix = f" {source_arguments}" if source_arguments else ""
+    nvmm_caps = (
+        "video/x-raw(memory:NVMM), "
+        f"width=(int){output_width}, "
+        f"height=(int){output_height}, "
+        "format=(string)NV12, "
+        f"framerate=(fraction){framerate}/1"
+    )
+    queue_policy = (
+        "max-size-buffers=1 max-size-bytes=0 max-size-time=0 leaky=downstream"
+    )
+    appsink_policy = (
+        "max-buffers=1 drop=true sync=false enable-last-sample=false "
+        "wait-on-eos=false"
+    )
+    pipeline = (
+        f"nvarguscamerasrc name=argus_source sensor-id={sensor_id}{source_suffix} ! "
+        "video/x-raw(memory:NVMM), "
+        f"width=(int){capture_width}, "
+        f"height=(int){capture_height}, "
+        "format=(string)NV12, "
+        f"framerate=(fraction){framerate}/1 ! "
+        f"nvvidconv flip-method={flip_method} ! "
+        f"{nvmm_caps} ! "
+        "tee name=camera_tee "
+        f"camera_tee. ! queue name=gpu_queue {queue_policy} ! "
+        f"{nvmm_caps} ! "
+        f"appsink name=gpu_sink {appsink_policy}"
+    )
+
+    if enable_preview:
+        pipeline += (
+            f" camera_tee. ! queue name=preview_queue {queue_policy} ! "
+            f"{nvmm_caps} ! "
+            f"nvjpegenc quality={jpeg_quality} ! "
+            f"appsink name=preview_sink {appsink_policy}"
+        )
+
+    return pipeline

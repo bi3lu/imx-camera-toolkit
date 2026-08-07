@@ -20,12 +20,18 @@ class GpuBufferHandle:
     advanced to the next frame.
     """
 
-    def __init__(self, resource: object) -> None:
-        """Wrap one non-null opaque GPU resource without taking ownership."""
+    def __init__(self, resource: object, *, owner: object | None = None) -> None:
+        """Wrap one non-null GPU resource and retain its lifetime owner.
+
+        ``owner`` is commonly the ``Gst.Sample`` from which a ``Gst.Buffer``
+        was borrowed. Keeping both references until invalidation prevents the
+        buffer pool from recycling the payload while a consumer is using it.
+        """
         if resource is None:
             raise ValueError("resource must not be None")
 
         self._resource: object | None = resource
+        self._owner: object | None = owner
         self._lock = Lock()
 
     @property
@@ -46,6 +52,7 @@ class GpuBufferHandle:
         """Drop the borrowed resource reference permanently."""
         with self._lock:
             self._resource = None
+            self._owner = None
 
 
 @dataclass(slots=True)
