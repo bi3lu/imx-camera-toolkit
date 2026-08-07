@@ -1,0 +1,577 @@
+"""High-level NVMM camera with a borrowed latest-frame contract."""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from collections import deque
+from math import isfinite
+from pathlib import Path
+from typing import Protocol
+
+from .backends import GpuGStreamerCaptureBackend
+from .camera import CameraRecoveryPolicy
+from .config import CameraConfig, load_camera_config
+from .errors import (
+    CameraConfigurationError,
+    CameraDependencyError,
+    CameraError,
+    CameraOpenError,
+    CameraReadError,
+    CameraRecoveryError,
+)
+from .models import (
+    CameraStats,
+    FrameFormat,
+    GpuFrame,
+    MemoryType,
+    MetricsRecorder,
+    PipelineMetrics,
+    PipelineStage,
+)
+from .pipeline import build_gpu_gstreamer_pipeline, normalize_argus_properties
+from .publishing import EncodedJPEGPublisher, GpuFramePublisher
+
+logger = logging.getLogger(__name__)
+
+
+class _GpuBackend(Protocol):
+    """Backend operations required by :class:`GpuCamera`."""
+
+    @property
+    def backend_name(self) -> str:
+        """Stable backend identifier."""
+        ...
+
+    def open(self) -> None:
+        """Open both pipeline branches."""
+        ...
+
+    def read(self) -> tuple[bool, GpuFrame | None]:
+        """Pull one borrowed NVMM frame."""
+        ...
+
+    def read_preview(self) -> bytes | None:
+        """Pull one independently encoded preview frame."""
+        ...
+
+    def close(self) -> None:
+        """Close both branches as one pipeline."""
+        ...
+
+
+class GpuCamera:
+    """Capture newest NV12 frames in NVMM without a CPU image conversion.
+
+    ``GpuCamera`` is an explicit opt-in API. It never changes ``Camera`` or its
+    BGR/NumPy ``raw_frame`` behavior. The inference branch yields borrowed
+    :class:`GpuFrame` leases, while the optional preview branch is isolated by
+    a leaky GStreamer queue and NVIDIA JPEG encoder.
+    """
+
+    STATS_WINDOW_NS = 1_000_000_000
+
+    def __init__(
+        self,
+        config: CameraConfig | None = None,
+        *,
+        config_path: str | Path | None = None,
+        recovery_policy: CameraRecoveryPolicy | None = None,
+        enable_preview: bool | None = None,
+        argus_properties: tuple[str, ...] = (),
+    ) -> None:
+        """Initialize an NVMM pipeline without opening the camera."""
+        if config is not None and config_path is not None:
+            raise CameraConfigurationError(
+                "config and config_path cannot be used together"
+            )
+
+        if enable_preview is not None and not isinstance(enable_preview, bool):
+            raise CameraConfigurationError("enable_preview must be a boolean")
+
+        base_config = config or load_camera_config(config_path)
+        resolved_preview = (
+            base_config.enable_preview
+            if enable_preview is None
+            else enable_preview
+        )
+        self._config = CameraConfig(
+            sensor_id=base_config.sensor_id,
+            capture_width=base_config.capture_width,
+            capture_height=base_config.capture_height,
+            output_width=base_config.output_width,
+            output_height=base_config.output_height,
+            fps=base_config.fps,
+            flip_method=base_config.flip_method,
+            sensor_mode=base_config.sensor_mode,
+            enable_preview=resolved_preview,
+            quality=base_config.quality,
+            max_fps=base_config.max_fps,
+            output_format=FrameFormat.NV12_NVMM,
+        )
+        config_properties = (
+            ()
+            if self._config.sensor_mode is None
+            else (f"sensor-mode={self._config.sensor_mode}",)
+        )
+        self._argus_properties = normalize_argus_properties(
+            (*config_properties, *argus_properties)
+        )
+        self._pipeline = build_gpu_gstreamer_pipeline(
+            sensor_id=self._config.sensor_id,
+            capture_width=self._config.capture_width,
+            capture_height=self._config.capture_height,
+            output_width=self._config.output_width,
+            output_height=self._config.output_height,
+            framerate=self._config.fps,
+            flip_method=self._config.flip_method,
+            enable_preview=self._config.enable_preview,
+            jpeg_quality=self._config.quality,
+            argus_properties=self._argus_properties,
+        )
+        self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
+        self._gpu_publisher = GpuFramePublisher()
+        self._preview_publisher = EncodedJPEGPublisher(self._config.preview_fps)
+        self._metrics = MetricsRecorder()
+        self._backend: _GpuBackend | None = None
+        self._thread: threading.Thread | None = None
+        self._running = threading.Event()
+        self._lifecycle_lock = threading.RLock()
+        self._stats_lock = threading.Lock()
+        self._capture_timestamps_ns: deque[int] = deque()
+        self._sequence = 0
+
+        self.frames_captured = 0
+        self.dropped_frames = 0
+        self._last_frame_timestamp_ns: int | None = None
+        self._last_capture_timestamp_ns: int | None = None
+        self._consecutive_failures = 0
+        self.last_error: Exception | None = None
+        self.recovery_attempts = 0
+        self.recoveries = 0
+        self.last_recovery_error: Exception | None = None
+
+    @property
+    def config(self) -> CameraConfig:
+        """Resolved NV12/NVMM camera configuration."""
+        return self._config
+
+    @property
+    def pipeline(self) -> str:
+        """GStreamer pipeline used for the next open operation."""
+        return self._pipeline
+
+    @property
+    def running(self) -> bool:
+        """Whether the capture worker is active."""
+        return self._running.is_set()
+
+    @property
+    def active_backend(self) -> str | None:
+        """Name of the active NVMM backend."""
+        with self._lifecycle_lock:
+            if not self.running or self._backend is None:
+                return None
+
+            return self._backend.backend_name
+
+    @property
+    def frame_format(self) -> FrameFormat:
+        """Explicit GPU output format."""
+        return FrameFormat.NV12_NVMM
+
+    @property
+    def memory_type(self) -> MemoryType:
+        """NVMM memory domain retained through the inference appsink."""
+        return MemoryType.NVMM
+
+    @property
+    def frame_resolution(self) -> tuple[int, int]:
+        """GPU frame width and height."""
+        return self._config.output_width, self._config.output_height
+
+    @property
+    def preview_enabled(self) -> bool:
+        """Whether the independent JPEG branch is part of the pipeline."""
+        return self._config.enable_preview
+
+    @property
+    def gpu_frame_number(self) -> int:
+        """Sequence of the newest borrowed GPU frame."""
+        return self._gpu_publisher.frame_number
+
+    @property
+    def frame_available(self) -> bool:
+        """Whether a GPU frame has been published."""
+        return self._gpu_publisher.latest_frame is not None
+
+    @property
+    def frame_number(self) -> int:
+        """Sequence of the newest JPEG preview frame."""
+        return self._preview_publisher.frame_number
+
+    @property
+    def jpeg(self) -> bytes | None:
+        """Newest independently encoded preview JPEG."""
+        return self._preview_publisher.jpeg
+
+    def latest_jpeg(self) -> bytes | None:
+        """Return newest preview JPEG without affecting the GPU branch."""
+        return self._preview_publisher.jpeg
+
+    @property
+    def frames_encoded(self) -> int:
+        """Number of published hardware-encoded preview frames."""
+        return self._preview_publisher.frames_encoded
+
+    @property
+    def last_frame_time(self) -> float | None:
+        """Wall-clock time of the newest preview JPEG."""
+        return self._preview_publisher.last_frame_time
+
+    @property
+    def pipeline_metrics(self) -> PipelineMetrics:
+        """Immutable per-stage timing aggregates."""
+        return self._metrics.snapshot()
+
+    @property
+    def consumer_dropped_frames(self) -> dict[str, int]:
+        """Latest-frame drops reported per consumer."""
+        return dict(self._metrics.consumer_drops())
+
+    def record_stage_latency(
+        self,
+        stage: PipelineStage | str,
+        duration_ns: int,
+    ) -> None:
+        """Record latency owned by an external inference consumer."""
+        self._metrics.record_stage(stage, duration_ns)
+
+    def record_consumer_drop(self, consumer: str, count: int = 1) -> None:
+        """Record frames skipped by a named latest-frame consumer."""
+        self._metrics.record_consumer_drop(consumer, count)
+
+    def stats(self) -> CameraStats:
+        """Return an immutable NVMM capture diagnostics snapshot."""
+        running = self.running
+        now_ns = time.monotonic_ns()
+        with self._stats_lock:
+            self._prune_capture_timestamps(now_ns)
+            capture_fps = self._capture_fps() if running else 0.0
+            return CameraStats(
+                captured_frames=self.frames_captured,
+                dropped_frames=self.dropped_frames,
+                capture_fps=capture_fps,
+                last_frame_timestamp_ns=self._last_frame_timestamp_ns,
+                recovery_count=self.recoveries,
+                consecutive_failures=self._consecutive_failures,
+                running=running,
+                pipeline=self._metrics.snapshot(),
+                consumer_dropped_frames=self._metrics.consumer_drops(),
+                last_capture_timestamp_ns=self._last_capture_timestamp_ns,
+            )
+
+    def start(self) -> None:
+        """Open both pipeline branches and start the latest-frame worker."""
+        if not self._backend_available():
+            raise CameraDependencyError(
+                "GpuCamera requires PyGObject GStreamer on NVIDIA Jetson"
+            )
+
+        with self._lifecycle_lock:
+            if self.running:
+                return
+
+            self._release_finished_capture()
+            backend = self._create_backend()
+
+            try:
+                backend.open()
+
+            except CameraError:
+                backend.close()
+                raise
+
+            except Exception as error:
+                backend.close()
+                raise CameraOpenError(
+                    f"Could not open the NVMM camera backend: {error}"
+                ) from error
+
+            self._backend = backend
+            self.last_error = None
+            self._running.set()
+            self._thread = threading.Thread(
+                target=self._capture_loop,
+                name="imx-gpu-camera-capture",
+                daemon=True,
+            )
+            self._thread.start()
+
+    def _backend_available(self) -> bool:
+        """Whether the platform can create the configured GPU backend."""
+        return GpuGStreamerCaptureBackend.available()
+
+    def _create_backend(self) -> _GpuBackend:
+        """Create one backend owning inference and preview branches."""
+        return GpuGStreamerCaptureBackend(
+            self._pipeline,
+            self._config.output_width,
+            self._config.output_height,
+            enable_preview=self._config.enable_preview,
+        )
+
+    def _capture_loop(self) -> None:
+        """Publish newest GPU and preview frames with bounded buffering."""
+        consecutive_read_failures = 0
+        while self.running:
+            try:
+                backend = self._backend
+
+                if backend is None:
+                    break
+
+                success, backend_frame = backend.read()
+
+                if not success or backend_frame is None:
+                    consecutive_read_failures = self._record_drop(failed_read=True)
+                    if (
+                        consecutive_read_failures
+                        >= self._recovery_policy.max_consecutive_read_failures
+                    ):
+                        raise CameraReadError(
+                            "NVMM backend stopped producing GPU frames"
+                        )
+                    time.sleep(0.02)
+                    continue
+
+                consecutive_read_failures = 0
+                frame = self._assign_sequence(backend_frame)
+
+                self._record_capture(frame)
+                self._gpu_publisher.publish(frame)
+
+                if self._config.enable_preview:
+                    encoder_started_ns = time.monotonic_ns()
+                    jpeg = backend.read_preview()
+
+                    if jpeg is not None:
+                        published = self._preview_publisher.publish(jpeg)
+
+                        if published:
+                            self._metrics.record_stage(
+                                PipelineStage.ENCODER,
+                                time.monotonic_ns() - encoder_started_ns,
+                            )
+
+                        else:
+                            self._metrics.record_consumer_drop("preview")
+
+                self._metrics.record_stage(
+                    PipelineStage.END_TO_END,
+                    max(time.monotonic_ns() - frame.timestamp_ns, 0),
+                )
+
+            except Exception as error:
+                self.last_error = error
+                logger.exception("NVMM camera capture failed")
+
+                if not self._recover_backend():
+                    if self.running:
+                        self.last_error = CameraRecoveryError(
+                            "NVMM camera recovery attempts were exhausted"
+                        )
+
+                    self._running.clear()
+
+        self._gpu_publisher.notify_waiters()
+        self._preview_publisher.notify_waiters()
+
+    def _assign_sequence(self, frame: GpuFrame) -> GpuFrame:
+        """Assign a camera-lifetime sequence that survives backend recovery."""
+        self._sequence += 1
+        return GpuFrame(
+            sequence=self._sequence,
+            timestamp_ns=frame.timestamp_ns,
+            capture_timestamp_ns=frame.capture_timestamp_ns,
+            width=frame.width,
+            height=frame.height,
+            format=frame.format,
+            memory_type=frame.memory_type,
+            dmabuf_fd=frame.dmabuf_fd,
+            buffer=frame.buffer,
+        )
+
+    def _record_capture(self, frame: GpuFrame) -> None:
+        """Record one successful NVMM source read."""
+        with self._stats_lock:
+            self.frames_captured += 1
+            self._last_frame_timestamp_ns = frame.timestamp_ns
+            self._last_capture_timestamp_ns = frame.capture_timestamp_ns
+            self._consecutive_failures = 0
+            self._capture_timestamps_ns.append(frame.timestamp_ns)
+            self._prune_capture_timestamps(frame.timestamp_ns)
+
+    def _record_drop(self, *, failed_read: bool = False) -> int:
+        """Record one omitted frame or failed read."""
+        with self._stats_lock:
+            self.dropped_frames += 1
+
+            if failed_read:
+                self._consecutive_failures += 1
+
+            return self._consecutive_failures
+
+    def _prune_capture_timestamps(self, now_ns: int) -> None:
+        """Discard capture timestamps older than the FPS window."""
+        oldest_ns = now_ns - self.STATS_WINDOW_NS
+
+        while (
+            self._capture_timestamps_ns
+            and self._capture_timestamps_ns[0] < oldest_ns
+        ):
+            self._capture_timestamps_ns.popleft()
+
+    def _capture_fps(self) -> float:
+        """Calculate recent successful GPU capture rate."""
+        if len(self._capture_timestamps_ns) < 2:
+            return 0.0
+
+        elapsed_ns = self._capture_timestamps_ns[-1] - self._capture_timestamps_ns[0]
+
+        if elapsed_ns <= 0:
+            return 0.0
+
+        return (len(self._capture_timestamps_ns) - 1) * 1_000_000_000 / elapsed_ns
+
+    def _recover_backend(self) -> bool:
+        """Recreate the full tee pipeline after an error in either branch."""
+        for attempt in range(self._recovery_policy.max_attempts):
+            if not self.running:
+                return False
+
+            if attempt:
+                time.sleep(self._recovery_policy.initial_backoff * (2**attempt))
+
+            with self._stats_lock:
+                self.recovery_attempts += 1
+
+            with self._lifecycle_lock:
+                if not self.running:
+                    return False
+
+                try:
+                    self._release_backend()
+                    backend = self._create_backend()
+                    backend.open()
+                    self._backend = backend
+
+                except Exception as error:
+                    self.last_recovery_error = error
+                    logger.warning(
+                        "NVMM recovery attempt %s/%s failed: %s",
+                        attempt + 1,
+                        self._recovery_policy.max_attempts,
+                        error,
+                    )
+                    continue
+
+            with self._stats_lock:
+                self.recoveries += 1
+                self._consecutive_failures = 0
+
+            self.last_recovery_error = None
+            self.last_error = None
+            return True
+
+        return False
+
+    def read(self, timeout: float | None = None) -> GpuFrame | None:
+        """Return the newest borrowed NVMM frame without CPU conversion."""
+        resolved_timeout = 2.0 if timeout is None else timeout
+        if (
+            isinstance(resolved_timeout, bool)
+            or not isinstance(resolved_timeout, (int, float))
+            or not isfinite(resolved_timeout)
+            or resolved_timeout < 0
+        ):
+            raise CameraConfigurationError(
+                "timeout must be a finite non-negative number"
+            )
+
+        if not self.running:
+            raise CameraReadError("GPU camera is not running; call start() first")
+
+        return self._gpu_publisher.wait_for_frame(
+            -1,
+            float(resolved_timeout),
+            lambda: self.running,
+        )
+
+    def latest_frame(self) -> GpuFrame | None:
+        """Return the newest borrowed NVMM frame immediately."""
+        return self._gpu_publisher.latest_frame
+
+    def wait_for_jpeg(
+        self,
+        previous_frame_number: int,
+        timeout: float = 2.0,
+    ) -> tuple[int, bytes | None]:
+        """Wait for a JPEG from the independent hardware preview branch."""
+        if timeout < 0:
+            raise CameraConfigurationError("timeout must be non-negative")
+
+        return self._preview_publisher.wait_for_jpeg(
+            previous_frame_number,
+            timeout,
+            lambda: self.running,
+        )
+
+    def _release_finished_capture(self) -> None:
+        """Release resources left by a completed worker."""
+        if self._thread is not None and self._thread.is_alive():
+            raise CameraOpenError("GPU camera capture thread is still stopping")
+
+        self._release_backend()
+        self._thread = None
+
+    def _release_backend(self) -> None:
+        """Close the one pipeline that owns both branches."""
+        if self._backend is not None:
+            self._backend.close()
+
+        self._backend = None
+
+    def stop(self) -> None:
+        """Stop and close inference and preview branches together."""
+        with self._lifecycle_lock:
+            self._running.clear()
+            self._gpu_publisher.notify_waiters()
+            self._preview_publisher.notify_waiters()
+            thread = self._thread
+
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=3.0)
+
+            if thread.is_alive():
+                logger.warning("GPU camera thread did not stop within 3 seconds")
+                return
+
+        with self._lifecycle_lock:
+            self._release_backend()
+            self._thread = None
+            self._gpu_publisher.clear()
+            self._preview_publisher.clear()
+
+    def __enter__(self) -> GpuCamera:
+        """Start capture and return this camera."""
+        self.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        """Close both branches on context-manager exit."""
+        self.stop()
+
+
+__all__ = ["GpuCamera"]

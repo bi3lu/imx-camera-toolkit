@@ -64,13 +64,16 @@ class CameraConfig:
 
     @property
     def output_memory(self) -> MemoryType:
-        """Memory domain used by the configured compatible camera path."""
+        """Memory domain selected by the explicit output format."""
+        if self.output_format is FrameFormat.NV12_NVMM:
+            return MemoryType.NVMM
+
         return MemoryType.CPU
 
     @property
     def copies_to_host_memory(self) -> bool:
         """Whether capture materializes an owned frame in host RAM."""
-        return True
+        return self.output_format is FrameFormat.BGR_CPU
 
     @classmethod
     def from_profile(cls, name: str) -> CameraConfig:
@@ -130,12 +133,6 @@ def validate_camera_config(config: CameraConfig) -> None:
 
     if not isinstance(config.output_format, FrameFormat):
         raise CameraConfigurationError("output_format must be a FrameFormat")
-
-    if config.output_format is not FrameFormat.BGR_CPU:
-        raise CameraConfigurationError(
-            "Camera supports only FrameFormat.BGR_CPU; use a dedicated GPU "
-            "capture source for NV12_NVMM"
-        )
 
     if config.max_fps is not None and (
         isinstance(config.max_fps, bool)
@@ -217,9 +214,9 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
                 raise CameraConfigurationError("max_fps must be a number or null")
 
         elif key == "output_format":
-            if value != FrameFormat.BGR_CPU.value:
+            if value not in {item.value for item in FrameFormat}:
                 raise CameraConfigurationError(
-                    "output_format must be BGR_CPU for Camera"
+                    "output_format must be BGR_CPU or NV12_NVMM"
                 )
 
         elif isinstance(default_value, int):

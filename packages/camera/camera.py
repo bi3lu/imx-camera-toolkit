@@ -212,6 +212,12 @@ class Camera:
         )
         validate_camera_config(resolved_config)
 
+        if resolved_config.output_format is not FrameFormat.BGR_CPU:
+            raise CameraConfigurationError(
+                "Camera supports only FrameFormat.BGR_CPU; use GpuCamera for "
+                "NV12_NVMM"
+            )
+
         self._config = resolved_config
         self._enable_preview = resolved_config.enable_preview
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
