@@ -9,10 +9,15 @@ from .errors import (
 from .metrics import PreviewClientStats, ProductionPreviewStats
 from .overlay import CudaOverlayRenderer, OverlayRectangle, RectangleMapper
 from .pipeline import build_hls_transport_pipeline, build_webrtc_peer_pipeline
-from .transport import EncodedVideoSource, ProductionPreviewServer
+from .transport import (
+    DescribedEncodedVideoSource,
+    EncodedVideoSource,
+    ProductionPreviewServer,
+)
 
 __all__ = [
     "EncodedVideoSource",
+    "DescribedEncodedVideoSource",
     "CudaOverlayRenderer",
     "OverlayRectangle",
     "PreviewClientStats",

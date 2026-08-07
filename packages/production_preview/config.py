@@ -33,6 +33,7 @@ class ProductionPreviewConfig:
     hls_target_duration: int = 1
     hls_playlist_length: int = 3
     hls_max_files: int = 5
+    stream_description_timeout_seconds: float = 2.0
 
     def __post_init__(self) -> None:
         """Validate transport limits without importing optional runtimes."""
@@ -52,15 +53,21 @@ class ProductionPreviewConfig:
                     f"{name} must be a positive integer"
                 )
 
-        if (
-            isinstance(self.client_timeout_seconds, bool)
-            or not isinstance(self.client_timeout_seconds, (int, float))
-            or not isfinite(self.client_timeout_seconds)
-            or self.client_timeout_seconds <= 0
+        for name in (
+            "client_timeout_seconds",
+            "stream_description_timeout_seconds",
         ):
-            raise ProductionPreviewConfigurationError(
-                "client_timeout_seconds must be finite and positive"
-            )
+            value = getattr(self, name)
+
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or value <= 0
+            ):
+                raise ProductionPreviewConfigurationError(
+                    f"{name} must be finite and positive"
+                )
 
         for name in (
             "hls_target_duration",

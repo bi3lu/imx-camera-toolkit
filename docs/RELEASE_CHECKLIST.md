@@ -20,7 +20,10 @@ self-hosted runner labeled `jetson`. Select the connected IMX219 or IMX477 and
 provide a local ONNX model path. The workflow must verify:
 
 - NVMM capture at 1280x720 and 1920x1080 at 30 FPS;
-- simultaneous TensorRT and H.264 hardware preview;
+- simultaneous TensorRT and H.264 production preview using the resolved
+  NVENC/x264 backend;
+- WebRTC decode smoke test with matching SDP fmtp, real RTP counters, a
+  late-joining peer, and a subscription beginning mid-GOP;
 - TensorRT/ONNX Runtime output parity;
 - native CUDA interop build against the installed JetPack headers;
 - benchmark JSON containing CPU, GPU, FPS, drops, mean latency, and p95 latency.

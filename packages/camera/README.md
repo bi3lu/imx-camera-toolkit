@@ -194,22 +194,24 @@ by `MJPEGStream`, so the encoded branch can feed browser clients without a BGR
 round trip. Any error or shutdown closes the complete tee pipeline; recovery
 recreates both branches together.
 
-## Production hardware video branch
+## Production video encoder branch
 
-`HardwareVideoConfig` adds a third, optional tee branch without changing the
+`VideoEncoderConfig` adds a third, optional tee branch without changing the
 JPEG debug path or borrowed inference frames:
 
 ```python
 from imx_camera_toolkit import (
     GpuCamera,
-    HardwareVideoConfig,
+    VideoEncoderBackend,
+    VideoEncoderConfig,
     VideoCodec,
 )
 
 camera = GpuCamera(
     enable_preview=True,  # optional MJPEG debug output remains available
-    video_config=HardwareVideoConfig(
+    video_config=VideoEncoderConfig(
         codec=VideoCodec.H264,
+        backend=VideoEncoderBackend.AUTO,
         bitrate_bps=4_000_000,
         keyframe_interval=30,
     ),
@@ -217,10 +219,18 @@ camera = GpuCamera(
 )
 ```
 
-NV12 remains `memory:NVMM` through `nvv4l2h264enc` or `nvv4l2h265enc`.
+`AUTO` prefers `nvv4l2h264enc`/`nvv4l2h265enc` and falls back to `x264enc` for
+H.264 when NVENC is absent. Jetson Orin Nano therefore uses x264. Capture,
+inference, and overlay remain NVMM; only its encoder branch converts to I420
+system memory. `HardwareVideoConfig` remains a compatibility alias.
 `subscribe_video(name)` gives a transport one latest compressed access-unit
 slot. `video_stats` exposes recent encoder FPS and encoded bitrate without
 retaining a per-frame history.
+
+For a custom encoder, pass `encoder_pipeline_factory` returning a public
+`VideoEncoderPipeline`. `set_video_overlay()` rebuilds from that factory, so
+applications never need to patch `GpuCamera._pipeline`. Negotiated output is
+available as the immutable `encoded_stream_description` contract.
 
 An injected `VideoOverlayRenderer` must declare `MemoryType.NVMM`. When it is
 active, the branch first makes an isolated device-side copy, then invokes the
