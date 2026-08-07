@@ -14,6 +14,21 @@ class CaptureBackend(ABC):
         """Return the live Argus GObject when the backend exposes one."""
         return None
 
+    @property
+    def backend_name(self) -> str:
+        """Stable backend identifier exposed through diagnostics."""
+        return type(self).__name__
+
+    @property
+    def capture_timestamp_ns(self) -> int | None:
+        """Latest hardware or pipeline capture timestamp, when available."""
+        return None
+
+    @property
+    def transfer_duration_ns(self) -> int | None:
+        """Latest device-to-host materialization duration, when measured."""
+        return None
+
     @abstractmethod
     def open(self) -> None:
         """Open the capture source.

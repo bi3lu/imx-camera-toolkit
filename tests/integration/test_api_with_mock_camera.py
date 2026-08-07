@@ -12,6 +12,8 @@ from packages.testing.mock_camera import MockCamera
 def test_health_and_snapshot_with_mock_camera() -> None:
     """API health and snapshot endpoints must use one supplied mock camera."""
     camera = MockCamera(auto_start=False)
+    camera.record_stage_latency("inference", 2_000_000)
+    camera.record_consumer_drop("inference", 3)
     application = create_app(camera)  # type: ignore[arg-type]
 
     with TestClient(application) as client:
@@ -22,6 +24,26 @@ def test_health_and_snapshot_with_mock_camera() -> None:
         assert health.json()["capture_fps"] == 0.0
         assert health.json()["last_frame_timestamp_ns"] is None
         assert health.json()["consecutive_failures"] == 0
+        assert health.json()["active_backend"] == "mock"
+        assert health.json()["frame_format"] == "BGR_CPU"
+        assert health.json()["frame_memory_type"] == "CPU"
+        assert health.json()["frame_resolution"] == {
+            "width": 1280,
+            "height": 720,
+        }
+        assert health.json()["consumer_dropped_frames"] == {"inference": 3}
+        assert set(health.json()["stage_latency_ns"]) == {
+            "transfer",
+            "inference",
+            "encoder",
+            "end_to_end",
+        }
+        assert health.json()["stage_latency_ns"]["inference"] == {
+            "samples": 1,
+            "last": 2_000_000,
+            "mean": 2_000_000.0,
+            "max": 2_000_000,
+        }
 
         camera.publish_jpeg(b"\xff\xd8mock\xff\xd9")
         snapshot = client.get("/api/camera/snapshot")

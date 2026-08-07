@@ -35,7 +35,16 @@ from .errors import (
     CameraRecoveryError,
     CameraTimeoutError,
 )
-from .models import CameraFrame, CameraStats, Frame
+from .models import (
+    CameraFrame,
+    CameraStats,
+    Frame,
+    FrameFormat,
+    MemoryType,
+    MetricsRecorder,
+    PipelineMetrics,
+    PipelineStage,
+)
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
@@ -240,10 +249,12 @@ class Camera:
         self._lifecycle_lock = threading.RLock()
         self._stats_lock = threading.Lock()
         self._capture_timestamps_ns: deque[int] = deque()
+        self._metrics = MetricsRecorder()
 
         self.frames_captured = 0
         self.dropped_frames = 0
         self._last_frame_timestamp_ns: int | None = None
+        self._last_capture_timestamp_ns: int | None = None
         self._consecutive_failures = 0
         self.last_error: Exception | None = None
         self.recovery_attempts = 0
@@ -306,7 +317,60 @@ class Camera:
                 recovery_count=self.recoveries,
                 consecutive_failures=self._consecutive_failures,
                 running=running,
+                pipeline=self._metrics.snapshot(),
+                consumer_dropped_frames=self._metrics.consumer_drops(),
+                last_capture_timestamp_ns=self._last_capture_timestamp_ns,
             )
+
+    @property
+    def active_backend(self) -> str | None:
+        """Stable name of the currently opened capture backend."""
+        with self._lifecycle_lock:
+            if not self.running or self._backend is None:
+                return None
+            return self._backend.backend_name
+
+    @property
+    def frame_format(self) -> FrameFormat:
+        """Explicit output format for the legacy CPU camera path."""
+        return FrameFormat.BGR_CPU
+
+    @property
+    def memory_type(self) -> MemoryType:
+        """Memory domain used by frames from this camera."""
+        return MemoryType.CPU
+
+    @property
+    def frame_resolution(self) -> tuple[int, int]:
+        """Output frame width and height in pixels."""
+        return self._config.output_width, self._config.output_height
+
+    @property
+    def pipeline_metrics(self) -> PipelineMetrics:
+        """Return immutable per-stage latency aggregates."""
+        return self._metrics.snapshot()
+
+    @property
+    def consumer_dropped_frames(self) -> dict[str, int]:
+        """Return a copy of latest-frame drops reported per consumer."""
+        return dict(self._metrics.consumer_drops())
+
+    def record_stage_latency(
+        self,
+        stage: PipelineStage | str,
+        duration_ns: int,
+    ) -> None:
+        """Record model-agnostic transfer, inference, encoder, or E2E latency.
+
+        Capture records the stages it owns. External inference consumers may
+        use the same public method for their own stage without introducing a
+        model or TensorRT dependency into the toolkit.
+        """
+        self._metrics.record_stage(stage, duration_ns)
+
+    def record_consumer_drop(self, consumer: str, count: int = 1) -> None:
+        """Record frames skipped by one named latest-frame consumer."""
+        self._metrics.record_consumer_drop(consumer, count)
 
     def _prune_capture_timestamps(self, now_ns: int) -> None:
         """Discard timestamps outside the fixed recent-FPS sampling window."""
@@ -332,11 +396,16 @@ class Camera:
 
         return (len(self._capture_timestamps_ns) - 1) * 1_000_000_000 / elapsed_ns
 
-    def _record_capture(self, timestamp_ns: int) -> None:
+    def _record_capture(
+        self,
+        timestamp_ns: int,
+        capture_timestamp_ns: int | None = None,
+    ) -> None:
         """Record one successful source read for diagnostics."""
         with self._stats_lock:
             self.frames_captured += 1
             self._last_frame_timestamp_ns = timestamp_ns
+            self._last_capture_timestamp_ns = capture_timestamp_ns
             self._consecutive_failures = 0
             self._capture_timestamps_ns.append(timestamp_ns)
             self._prune_capture_timestamps(timestamp_ns)
@@ -588,23 +657,36 @@ class Camera:
 
                 consecutive_read_failures = 0
                 timestamp_ns = time.monotonic_ns()
-                self._record_capture(timestamp_ns)
+                self._record_capture(timestamp_ns, backend.capture_timestamp_ns)
+
+                if backend.transfer_duration_ns is not None:
+                    self._metrics.record_stage(
+                        PipelineStage.TRANSFER,
+                        backend.transfer_duration_ns,
+                    )
+
                 processed_frame = self._process_frame(frame)
 
                 if processed_frame is None:
                     self._record_dropped_frame()
                     continue
 
-                self._publish_frame(processed_frame, timestamp_ns)
+                self._publish_frame(
+                    processed_frame,
+                    timestamp_ns,
+                    capture_timestamp_ns=backend.capture_timestamp_ns,
+                )
 
             except Exception as error:
                 self.last_error = error
                 logger.exception("IMX camera capture failed")
+
                 if not self._recover_backend():
                     if self.running:
                         self.last_error = CameraRecoveryError(
                             "camera recovery attempts were exhausted"
                         )
+
                     self._running.clear()
 
         self._publisher.notify_waiters()
@@ -666,17 +748,39 @@ class Camera:
                 self._v4l2_controls.set_exposure,
             )
 
-    def _publish_frame(self, frame: object, timestamp_ns: int) -> None:
+    def _publish_frame(
+        self,
+        frame: object,
+        timestamp_ns: int,
+        *,
+        capture_timestamp_ns: int | None = None,
+    ) -> None:
         """Publish a raw frame and optionally encode it for preview clients."""
         self._raw_publisher.publish(
             frame,
             width=self._config.output_width,
             height=self._config.output_height,
             timestamp_ns=timestamp_ns,
+            capture_timestamp_ns=capture_timestamp_ns,
         )
 
         if self._enable_preview:
-            self._publisher.publish(frame)
+            encoder_started_ns = time.monotonic_ns()
+            encoded = self._publisher.publish(frame)
+            encoder_duration_ns = time.monotonic_ns() - encoder_started_ns
+
+            if encoded:
+                self._metrics.record_stage(
+                    PipelineStage.ENCODER,
+                    encoder_duration_ns,
+                )
+            else:
+                self._metrics.record_consumer_drop("preview")
+
+        self._metrics.record_stage(
+            PipelineStage.END_TO_END,
+            max(time.monotonic_ns() - timestamp_ns, 0),
+        )
 
     def wait_for_jpeg(
         self,
@@ -1037,6 +1141,10 @@ __all__ = [
     "CameraOpenError",
     "CameraReadError",
     "Frame",
+    "FrameFormat",
+    "MemoryType",
+    "PipelineMetrics",
+    "PipelineStage",
     "CameraConfig",
     "CameraRecoveryPolicy",
     "CameraRecoveryError",

@@ -6,7 +6,14 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from packages.camera.models import CameraStats
+from packages.camera.models import (
+    CameraStats,
+    FrameFormat,
+    MemoryType,
+    MetricsRecorder,
+    PipelineMetrics,
+    PipelineStage,
+)
 
 
 @dataclass
@@ -29,12 +36,24 @@ class MockCamera:
     recoveries: int = 0
     consecutive_failures: int = 0
     last_recovery_error: Exception | None = None
+    output_width: int = 1280
+    output_height: int = 720
     _running: bool = field(default=False, init=False, repr=False)
     _jpeg: bytes | None = field(default=None, init=False, repr=False)
     _frame_number: int = field(default=0, init=False, repr=False)
     _last_frame_timestamp_ns: int | None = field(default=None, init=False, repr=False)
+    _last_capture_timestamp_ns: int | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     _condition: threading.Condition = field(
         default_factory=threading.Condition,
+        init=False,
+        repr=False,
+    )
+    _metrics: MetricsRecorder = field(
+        default_factory=MetricsRecorder,
         init=False,
         repr=False,
     )
@@ -68,6 +87,48 @@ class MockCamera:
         with self._condition:
             return self._jpeg
 
+    @property
+    def active_backend(self) -> str | None:
+        """Return the synthetic backend name while the mock is running."""
+        return "mock" if self.running else None
+
+    @property
+    def frame_format(self) -> FrameFormat:
+        """Explicit format matching the production CPU camera."""
+        return FrameFormat.BGR_CPU
+
+    @property
+    def memory_type(self) -> MemoryType:
+        """Memory domain matching the production CPU camera."""
+        return MemoryType.CPU
+
+    @property
+    def frame_resolution(self) -> tuple[int, int]:
+        """Synthetic output resolution reported by health checks."""
+        return self.output_width, self.output_height
+
+    @property
+    def pipeline_metrics(self) -> PipelineMetrics:
+        """Return immutable synthetic stage metrics."""
+        return self._metrics.snapshot()
+
+    @property
+    def consumer_dropped_frames(self) -> dict[str, int]:
+        """Return synthetic per-consumer drop counters."""
+        return dict(self._metrics.consumer_drops())
+
+    def record_stage_latency(
+        self,
+        stage: PipelineStage | str,
+        duration_ns: int,
+    ) -> None:
+        """Record a synthetic pipeline-stage duration."""
+        self._metrics.record_stage(stage, duration_ns)
+
+    def record_consumer_drop(self, consumer: str, count: int = 1) -> None:
+        """Record synthetic latest-frame drops for one consumer."""
+        self._metrics.record_consumer_drop(consumer, count)
+
     def stats(self) -> CameraStats:
         """Return stable diagnostics compatible with the production camera."""
         with self._condition:
@@ -79,6 +140,9 @@ class MockCamera:
                 recovery_count=self.recoveries,
                 consecutive_failures=self.consecutive_failures,
                 running=self._running,
+                pipeline=self._metrics.snapshot(),
+                consumer_dropped_frames=self._metrics.consumer_drops(),
+                last_capture_timestamp_ns=self._last_capture_timestamp_ns,
             )
 
     def start(self) -> None:
@@ -122,6 +186,7 @@ class MockCamera:
             self._frame_number += 1
             self.frames_captured += 1
             self._last_frame_timestamp_ns = time.monotonic_ns()
+            self._last_capture_timestamp_ns = self._last_frame_timestamp_ns
             self.frames_encoded += 1
             self.last_frame_time = time.time()
             self._condition.notify_all()

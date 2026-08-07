@@ -23,6 +23,11 @@ class OpenCVCaptureBackend(CaptureBackend):
         self._pipeline = pipeline
         self._capture: Any | None = None
 
+    @property
+    def backend_name(self) -> str:
+        """Stable health identifier for the OpenCV fallback."""
+        return "opencv"
+
     def open(self) -> None:
         """Open the configured GStreamer pipeline with OpenCV."""
         if cv2_module is None:
