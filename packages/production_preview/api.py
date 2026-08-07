@@ -81,7 +81,7 @@ def create_production_preview_app(
     application = FastAPI(
         title="IMX Production Preview",
         description="Shared hardware encode with WebRTC or HLS delivery",
-        version="0.4.0",
+        version="0.5.0",
         lifespan=lifespan,
     )
     application.state.production_preview = server

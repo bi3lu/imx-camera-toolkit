@@ -283,7 +283,7 @@ wheels = [
 
 [[package]]
 name = "imx-camera-toolkit"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "." }
 
 [package.optional-dependencies]

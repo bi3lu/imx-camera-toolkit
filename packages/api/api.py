@@ -54,7 +54,7 @@ class APIConfig:
 
     title: str = "IMX Camera API"
     description: str = "Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera."
-    version: str = "0.4.0"
+    version: str = "0.5.0"
     snapshot_timeout: float = 2.0
 
 

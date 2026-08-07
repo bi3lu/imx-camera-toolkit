@@ -32,7 +32,7 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 
 - Confirm `GpuCamera` still requires `experimental=True`.
 - Update the tested hardware matrix without promoting untested sensors.
-- Review `CHANGELOG.md` and package version consistency.
+- Review package version consistency and the release notes in the pull request.
 - Build wheel and source distribution from a clean checkout.
 - Inspect wheel contents for native sources, browser assets, and public modules.
 - Create a signed tag only after both CI workflows pass.

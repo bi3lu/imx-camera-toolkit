@@ -147,7 +147,7 @@ from packages.testing import MockFrameSource as InternalMockFrameSource
 
 def test_public_namespace_reexports_stable_library_types() -> None:
     """External imports must resolve to the existing implementation classes."""
-    assert __version__ == "0.4.0"
+    assert __version__ == "0.5.0"
     assert CameraPreview.__module__ == "imx_camera_toolkit.preview"
     assert PreviewServer.__module__ == "packages.preview.server"
     assert PreviewSource.__module__ == "packages.preview.server"
