@@ -32,12 +32,16 @@ fallback:
 
 ```bash
 sudo apt-get install nvidia-l4t-gstreamer gstreamer1.0-plugins-bad \
-  gstreamer1.0-plugins-ugly gstreamer1.0-nice
-gst-inspect-1.0 x264enc h264parse rtph264pay webrtcbin nicesrc nicesink hlssink2
+  gstreamer1.0-plugins-ugly gstreamer1.0-nice gstreamer1.0-libav
+gst-inspect-1.0 x264enc h264parse rtph264pay rtph264depay webrtcbin \
+  nicesrc nicesink avdec_h264 videoconvert appsink hlssink2
 ```
 
+`gstreamer1.0-libav` and the receive-side elements are needed by the repository's
+two-peer WebRTC E2E test; browser clients perform decoding themselves.
+
 NVIDIA documents direct NVMM input for both
-[`nvv4l2h264enc` and `nvv4l2h265enc`](https://docs.nvidia.com/jetson/archives/r36.2/DeveloperGuide/SD/Multimedia/AcceleratedGstreamer.html).
+[`nvv4l2h264enc` and `nvv4l2h265enc`](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/SD/Multimedia/AcceleratedGstreamer.html).
 GStreamer's [`webrtcbin`](https://gstreamer.freedesktop.org/documentation/webrtc/)
 implements peer connection and RTC statistics, while
 [`hlssink2`](https://gstreamer.freedesktop.org/documentation/hls/hlssink2.html)
@@ -102,7 +106,8 @@ HLS is simpler to deploy behind an ordinary reverse proxy and supports either
 H.264 or H.265. It trades latency for rolling one-second segments. The bundled
 page uses native browser HLS; deployments targeting browsers without native
 HLS should put their preferred JavaScript HLS player in front of the same
-playlist endpoint:
+playlist endpoint. H.265 requires NVENC; the built-in x264 fallback on Orin
+Nano supports H.264 only:
 
 ```python
 from pathlib import Path
@@ -184,8 +189,8 @@ units; use `frames_pushed` or `rtp_packets_sent` explicitly.
 
 The no-camera tests validate pipeline caps, encoder selection, transport
 sharing, metrics, safe HLS paths, and CUDA overlay dispatch. Run the opt-in
-Jetson acceptance test with an ONNX model to measure 720p/30 hardware encoding
-while TensorRT is active:
+Jetson acceptance test with an ONNX model to measure 720p/30 production
+encoding while TensorRT is active:
 
 ```bash
 IMX_PRODUCTION_PREVIEW_HARDWARE=1 \
@@ -193,5 +198,7 @@ IMX_TENSORRT_ONNX=/opt/models/model.onnx \
 uv run pytest tests/hardware/test_production_video_hardware.py
 ```
 
-It requires at least 25 encode FPS, successful TensorRT inference, and less
-than half of one CPU core consumed by the process during the sample window.
+Both backends require at least 25 encode FPS and successful TensorRT inference.
+When NVENC is selected, the test additionally requires less than half of one
+CPU core during the sample window. The x264 fallback is software encoding and
+is therefore not subject to the NVENC CPU ceiling.

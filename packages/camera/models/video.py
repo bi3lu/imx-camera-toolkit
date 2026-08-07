@@ -1,4 +1,4 @@
-"""Contracts for optional hardware-encoded production preview frames."""
+"""Contracts for optional encoded production preview frames."""
 
 from __future__ import annotations
 
@@ -245,7 +245,7 @@ class EncodedVideoFrame:
 
 @dataclass(frozen=True, slots=True)
 class VideoEncodeStats:
-    """Fixed-size hardware encoder throughput snapshot."""
+    """Fixed-size video encoder throughput snapshot."""
 
     encoded_frames: int = 0
     encoded_bytes: int = 0

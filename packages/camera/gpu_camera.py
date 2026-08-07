@@ -76,7 +76,7 @@ class _GpuBackend(Protocol):
         ...
 
     def read_video(self) -> EncodedVideoFrame | None:
-        """Pull one independently hardware-encoded access unit."""
+        """Pull one independently encoded access unit."""
         ...
 
     def close(self) -> None:
@@ -293,7 +293,7 @@ class GpuCamera:
 
     @property
     def video_stats(self) -> VideoEncodeStats:
-        """Recent hardware encode FPS/bitrate and cumulative output counts."""
+        """Recent video encode FPS/bitrate and cumulative output counts."""
         return self._video_publisher.stats(time.monotonic_ns())
 
     def set_video_overlay(
@@ -415,7 +415,7 @@ class GpuCamera:
 
     @property
     def frames_encoded(self) -> int:
-        """Number of published hardware-encoded preview frames."""
+        """Number of published encoded preview frames."""
         return self._preview_publisher.frames_encoded
 
     @property

@@ -24,7 +24,7 @@ pytestmark = [pytest.mark.hardware, pytest.mark.benchmark]
 def test_720p_production_preview_runs_during_tensorrt(
     tmp_path: Path,
 ) -> None:
-    """Hardware encode must sustain preview without consuming most of one CPU."""
+    """Production encode must sustain preview; NVENC must remain CPU-light."""
     if os.getenv("IMX_PRODUCTION_PREVIEW_HARDWARE") != "1":
         pytest.skip("set IMX_PRODUCTION_PREVIEW_HARDWARE=1 on the target Jetson")
 
