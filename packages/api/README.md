@@ -4,6 +4,11 @@ FastAPI application exposing a shared NVIDIA Jetson CSI camera as individual
 JPEG snapshots and a live MJPEG stream. It combines the `camera` package with
 the framework-neutral MJPEG iterator from the `stream` package.
 
+This API remains the debug/simple transport. Production H.264/H.265 WebRTC and
+HLS endpoints live in the optional
+[`production_preview`](../production_preview/README.md) package so enabling
+them never changes existing MJPEG URLs or OpenCV behavior.
+
 ## Requirements
 
 - A Jetson-compatible camera setup supported by the `camera` package.
@@ -64,7 +69,7 @@ FastAPI exposes interactive documentation at `/docs` and the OpenAPI schema at
 | Endpoint | Description |
 | --- | --- |
 | `GET /` | Customizable HTML camera preview. |
-| `GET /api/health` | Camera state, frame availability, capture metrics, and the latest background error. |
+| `GET /api/health` | Camera state, active backend, frame format/memory/resolution, stage latency, per-consumer drops, capture metrics, and the latest background error. |
 | `GET /api/camera/snapshot` | Latest JPEG camera image. |
 | `GET /api/camera/mjpeg` | Live `multipart/x-mixed-replace` MJPEG response. |
 

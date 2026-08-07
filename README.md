@@ -19,8 +19,11 @@ IMX Camera Toolkit is a camera-capture and image-transport foundation. It does
 not provide inference models, model loaders, trackers, batching, CUDA-stream
 management, DeepStream pipelines, ROS 2 integration, multi-camera
 synchronization, or telemetry backends. Applications retain ownership of those
-policies and receive an opaque raw `Frame.image` payload for their own chosen
-vision stack.
+policies and receive a BGR/CPU `Frame.image` payload for their own chosen vision
+stack. Optional GPU sources use the separate borrowed `GpuFrame` contract.
+
+Start with the [CPU/GPU and browser mode guide](docs/GPU_PATH_GUIDE.md) before
+selecting `Camera`, experimental `GpuCamera`, MJPEG, WebRTC, or HLS.
 
 ## System architecture
 
@@ -57,6 +60,9 @@ intermediate frames.
 | [`packages/camera`](packages/camera/README.md) | CSI camera acquisition through `nvarguscamerasrc`, frame conversion, JPEG encoding, and frame synchronization. |
 | [`packages/camera_control`](packages/camera_control/README.md) | Validated runtime exposure, gain, white-balance, denoise, sensor-mode, and HDR control for NVIDIA Argus cameras. |
 | [`packages/frames`](packages/frames/README.md) | Minimal `FrameSource` protocol and adapter from the toolkit camera to external processing pipelines. |
+| [`packages/inference`](packages/inference/README.md) | Model-neutral inference contracts, validated TensorRT engine caching, and optional NvBufSurface/CUDA interop. |
+| [`packages/consumers`](packages/consumers/README.md) | Independent latest-frame slots, worker consumers, and inference-preview adaptation. |
+| [`packages/production_preview`](packages/production_preview/README.md) | Optional shared hardware H.264/H.265 encoding with WebRTC, HLS, GPU overlays, and client metrics. |
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
 | [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
@@ -79,13 +85,15 @@ required because it integrates with NVIDIA's camera and GStreamer stack.
 
 ## Compatibility matrix
 
-| JetPack | Jetson | Camera module | Profile / Argus mode | Capture | Output | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| 6.2.2 | Orin Nano | IMX219-77 | `imx219-1080p` / 2 | 1920×1080 at 30 FPS | 1280×720 | tested |
-| 6.2.2 | Orin Nano | IMX477 | — | — | — | planned |
+| JetPack | Jetson | Camera module | API / Argus mode | Capture and output | Status |
+| --- | --- | --- | --- | --- | --- |
+| 6.2.2 | Orin Nano | IMX219-77 | `Camera`, `imx219-1080p` / 2 | 1920×1080 → 1280×720 at 30 FPS, BGR/CPU | tested |
+| 6.2.2 | Orin Nano | IMX219-77 | `GpuCamera` / 4 | 1280×720 at 30 FPS, NV12/NVMM + JPEG | tested |
+| 6.2.2 | Orin Nano | IMX219-77 | `GpuCamera` / 2 | 1920×1080 at 30 FPS, NV12/NVMM + JPEG | tested |
+| 6.2.2 | Orin Nano | IMX477 | `GpuCamera` | 1280×720 and 1920×1080 at 30 FPS | planned |
 
-Only the first row has been verified on the stated hardware. “Planned” is not
-a support claim and must not be treated as a working profile.
+Only rows marked `tested` have been verified on the stated hardware. “Planned”
+is not a support claim and must not be treated as a working configuration.
 
 ## Installation
 
@@ -103,6 +111,13 @@ Install the optional browser preview stack when FastAPI and Uvicorn are needed:
 
 ```bash
 uv add "imx-camera-toolkit[preview]"
+```
+
+Install the production WebRTC/HLS HTTP layer separately; JetPack continues to
+provide GStreamer, the hardware encoders, and CUDA:
+
+```bash
+uv add "imx-camera-toolkit[production-preview]"
 ```
 
 Clone the repository and create a virtual environment that can access the
@@ -140,7 +155,7 @@ Add the stable branch to the consuming project's `pyproject.toml`:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.4.0"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.0"
 ]
 ```
 
@@ -160,7 +175,7 @@ To consume the Git dependency with the browser-preview extra, declare it as:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.4.0"
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.0"
 ]
 ```
 
@@ -202,12 +217,166 @@ with Camera(CameraConfig()) as camera:
         result = my_tensor_rt_engine(frame.image)
 ```
 
-`read()` returns a formal `Frame` with an opaque `image`, monotonic `sequence`,
+`read()` returns a formal CPU `Frame` with a BGR `image`, monotonic `sequence`,
 nanosecond `timestamp_ns`, optional hardware `capture_timestamp_ns`, dimensions,
 and pixel `format`. It retains only the newest BGR frame, may skip stale frames,
 and never performs JPEG encoding or inference. The default `copy=True` gives
 the caller an independent image buffer; `copy=False` returns a read-only shared
-payload for zero-copy-oriented pipelines.
+payload for copy-avoiding CPU pipelines.
+
+`copy=False` avoids an additional CPU-buffer copy only. It does not turn the
+BGR payload into CUDA or NVMM memory and is not a GPU zero-copy guarantee.
+
+### CPU and GPU frame contracts
+
+The existing `Camera` and `Frame` contracts remain the OpenCV-compatible CPU
+path. Their explicit output identity is `FrameFormat.BGR_CPU` in
+`MemoryType.CPU`, while the legacy `frame.format` field remains `"BGR"`.
+
+Optional GPU-first capture sources expose `GpuFrame` with
+`FrameFormat.NV12_NVMM` and `MemoryType.NVMM`. A GPU frame has no `image` or
+implicit NumPy conversion. It carries exactly one borrowed DMA-BUF descriptor
+or a checked `GpuBufferHandle` around `Gst.Buffer` or `NvBufSurface`.
+
+GPU buffers remain owned by capture. A consumer must complete its work before
+capture publishes the next frame; publishing a successor invalidates the
+previous frame lease. Calling `gpu_frame.payload()` after invalidation raises
+`GpuFrameExpiredError`.
+
+### GPU-first capture
+
+Use `GpuCamera` to opt into the Jetson NVMM path without changing the compatible
+`Camera` API:
+
+```python
+from imx_camera_toolkit import CameraConfig, GpuCamera
+
+with GpuCamera(
+    CameraConfig(
+        capture_width=1920,
+        capture_height=1080,
+        output_width=1920,
+        output_height=1080,
+        fps=30,
+        enable_preview=True,
+    ),
+    experimental=True,
+) as camera:
+    frame = camera.read(timeout=1.0)
+
+    if frame is not None:
+        result = my_tensor_rt_consumer(frame.payload())
+```
+
+The inference branch stays `NV12/NVMM` through a one-buffer leaky queue and
+`gpu_sink`. A separate one-buffer leaky branch feeds `nvjpegenc` and the MJPEG
+preview source. Neither branch can accumulate stale frames. The GPU backend
+checks the negotiated NVMM/NV12 caps and forwards the borrowed `Gst.Buffer`
+without `buffer.map()`, NumPy conversion, or a host-memory image copy.
+
+`GpuCamera` remains model-agnostic: applications own TensorRT engines,
+preprocessing, CUDA synchronization, and model/GPU/TensorRT-aware engine cache
+validation. See [the camera documentation](packages/camera/README.md#gpu-first-nvmm-capture)
+for the pipeline contract and opt-in IMX219/IMX477 hardware validation commands.
+
+### Optional TensorRT runner
+
+The `tensorrt` extra adds a reference `TensorRTRunner` without making any model
+framework a core dependency. On JetPack 6.2.2 it uses a small pybind11/CUDA
+extension to import `NvBufSurface` through EGLImage, preprocess NV12 directly
+into a TensorRT device binding, and execute on one runner-owned CUDA stream.
+Camera pixels never become a BGR/NumPy host image and are never uploaded from
+RAM.
+
+```bash
+uv sync --extra tensorrt
+sudo apt-get install python-gi-dev libgstreamer1.0-dev \
+  libgstreamer-plugins-base1.0-dev cmake ninja-build
+uv run imx-camera-build-interop
+```
+
+The runner supports dynamic min/opt/max input profiles and caches local engine
+bytes only beside matching metadata for the ONNX hash, TensorRT version,
+compute capability, precision, input name, and complete shape profile.
+Model-specific decoding and overlays remain application-owned. See
+[GPU inference integration](packages/inference/README.md) for usage and the
+TensorRT/ONNX Runtime parity test.
+
+### Production preview
+
+MJPEG/OpenCV remains the intentionally simple debug transport. For deployed
+Jetson applications, pass `HardwareVideoConfig` to `GpuCamera` to add an
+independent `nvv4l2h264enc` or `nvv4l2h265enc` branch directly from NVMM.
+WebRTC is the preferred low-latency browser mode; HLS provides a rolling,
+reverse-proxy-friendly alternative.
+
+The production transport shares one encoder among all clients and exposes
+encode FPS, actual bitrate, active clients, and per-client drop rates. Optional
+`CudaOverlayRenderer` draws normalized rectangles on an isolated NVMM surface;
+the existing `InferencePreviewSource` remains the CPU/JPEG fallback. See
+[production browser preview](packages/production_preview/README.md) for
+installation, signaling, HLS storage, overlay wiring, and the 720p/30 +
+TensorRT acceptance benchmark.
+
+Model-agnostic code can depend only on the public union:
+
+```python
+from imx_camera_toolkit import FrameFormat, GpuFrame
+from imx_camera_toolkit.frames import CaptureFrame
+
+def consume(frame: CaptureFrame) -> object:
+    if isinstance(frame, GpuFrame):
+        assert frame.format is FrameFormat.NV12_NVMM
+        return gpu_engine(frame.payload())
+
+    assert frame.output_format is FrameFormat.BGR_CPU
+    return cpu_engine(frame.image)
+```
+
+`PipelineStage` and `Camera.record_stage_latency()` provide fixed-size timing
+aggregates for transfer, inference, encoder, and end-to-end latency. External
+consumers can report their inference timing and skipped latest frames without
+adding inference code to the toolkit:
+
+```python
+camera.record_stage_latency("inference", inference_duration_ns)
+camera.record_consumer_drop("primary-inference", skipped_frames)
+```
+
+`/api/health` exposes those aggregates together with the active backend,
+explicit frame format and memory domain, output resolution, capture timestamp,
+and per-consumer drop counters.
+
+### Asynchronous latest-frame consumers
+
+Both camera variants expose `subscribe_latest(name)`. Every subscription owns
+one replaceable slot, so capture never invokes consumer code or waits for a
+slow model. `FrameConsumer` executes arbitrary CPU work on its own thread;
+`InferenceConsumer` prepares and runs a model-neutral `InferenceRunner` on a
+dedicated thread. Give each expensive inference consumer its own runner;
+`TensorRTRunner` then gives each one an independent CUDA stream.
+
+```python
+from imx_camera_toolkit import GpuCamera
+from imx_camera_toolkit.consumers import InferenceConsumer
+
+with GpuCamera(experimental=True) as camera:
+    inference = InferenceConsumer(
+        camera.subscribe_latest("primary-inference"),
+        runner,
+    )
+
+    with inference:
+        serve_application(inference)
+```
+
+`InferenceResult.frame_timestamp_ns` always identifies the monotonic timestamp
+of the exact input frame. `InferencePreviewSource` reads the independent JPEG
+branch at preview speed and passes every fresh JPEG, the newest result, and a
+`PreviewOverlayContext` to an application renderer. Its `detection_age_ns`
+property can be exposed directly in UI telemetry. The renderer remains
+model-specific; capture remains unaware of boxes, masks, YOLO, or other output
+schemas. See [consumer integration](packages/consumers/README.md).
 
 ### Diagnostics
 
@@ -353,14 +522,16 @@ uv run pytest -m "not benchmark"
 Deterministic capture and MJPEG framing benchmarks are deliberately separate
 from the normal test suite. They measure toolkit overhead only; they do not
 represent sensor, ISP, JPEG encoder, network, or browser performance. A
-separate, explicit hardware benchmark compares capture with JPEG preview
-disabled and enabled, reports dropped source frames, and records mean raw-frame
-delivery latency.
+separate, explicit hardware benchmark compares BGR/CPU capture-only, capture
+plus JPEG, and optionally capture plus an application-owned CPU model. It
+reports dropped source frames and mean raw-frame delivery latency.
 
 ```bash
 uv run pytest -m benchmark
 uv run imx-camera benchmark all --frames 1000 --json
 uv run imx-camera benchmark camera --frames 300
+uv run imx-camera benchmark camera --frames 300 \
+  --cpu-model my_application.models:cpu_model
 ```
 
 GitHub Actions runs linting and strict type checking in a dedicated job, unit
@@ -381,6 +552,8 @@ uv run imx-camera snapshot snapshot.jpg
 uv run imx-camera preview --host 0.0.0.0 --port 8000
 uv run imx-camera benchmark capture --frames 1000
 uv run imx-camera benchmark camera --frames 300
+uv run imx-camera benchmark camera --frames 300 \
+  --cpu-model my_application.models:cpu_model
 ```
 
 `diagnose --hardware` checks for the locally installed Argus GStreamer element
@@ -391,10 +564,13 @@ camera and should therefore not run concurrently with another camera process.
 
 The `capture`, `streaming`, and `all` benchmark targets use `MockCamera`, so
 they are repeatable on both Jetson and non-Jetson development machines. The
-`camera` target is an explicit physical-camera benchmark. It compares raw
-capture with and without JPEG preview, and reports local capture throughput,
-dropped frames, and mean frame-delivery latency. Neither benchmark measures
-network or browser throughput.
+`camera` target is an explicit physical-camera benchmark. It always measures
+BGR/CPU capture-only and capture plus JPEG. With `--cpu-model MODULE:CALLABLE`,
+it also loads an application-owned callable and passes each BGR host image to
+it, measuring capture plus the actual CPU model without making that model a
+toolkit dependency. These benchmarks report local capture throughput, dropped
+frames, and mean delivery latency; they do not measure network or browser
+throughput.
 
 ## Examples
 
@@ -549,10 +725,13 @@ built-in defaults.
 
 `CameraConfig` is the preferred immutable contract for passing and comparing
 camera settings between components. It contains the sensor, capture/output
-dimensions, `fps`, flip method, optional sensor mode, and preview setting:
+dimensions, `fps`, flip method, optional sensor mode, output format, and preview
+setting. The compatible `Camera` accepts only `FrameFormat.BGR_CPU`: GStreamer
+converts NV12/NVMM to BGR and the backend materializes an owned array in host
+RAM before Python receives it.
 
 ```python
-from imx_camera_toolkit import Camera, CameraConfig
+from imx_camera_toolkit import Camera, CameraConfig, FrameFormat
 
 camera = Camera(
     CameraConfig(
@@ -561,6 +740,7 @@ camera = Camera(
         capture_height=1080,
         output_width=1280,
         output_height=720,
+        output_format=FrameFormat.BGR_CPU,
         fps=30,
         enable_preview=False,
     )
@@ -569,6 +749,8 @@ camera = Camera(
 
 Constructor arguments remain available for backwards compatibility and take
 precedence over the relevant YAML or explicit configuration values.
+`copy=False` only suppresses the subsequent Python API copy of this BGR host
+array; it is not a GPU zero-copy mode.
 
 ### Hardware profiles
 

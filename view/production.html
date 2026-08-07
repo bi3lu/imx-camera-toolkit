@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>IMX Production Preview</title>
+  <style>
+    html, body { margin: 0; width: 100%; height: 100%; background: #090b0f; }
+    body { display: grid; place-items: center; font: 14px system-ui, sans-serif; }
+    video { width: min(100vw, 1280px); max-height: 100vh; background: #000; }
+    #status { position: fixed; top: 12px; left: 12px; color: #fff;
+      background: #000a; padding: 6px 9px; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <video id="preview" autoplay muted playsinline controls></video>
+  <div id="status">Connecting…</div>
+  <script>
+    const video = document.getElementById("preview");
+    const status = document.getElementById("status");
+    let clientId = null;
+    let peer = null;
+    let candidateCursor = 0;
+
+    async function request(path, options = {}) {
+      const response = await fetch(path, options);
+      if (!response.ok) throw new Error(await response.text());
+      if (response.status === 204) return null;
+      return response.json();
+    }
+
+    async function pollCandidates() {
+      if (!clientId || !peer) return;
+      const response = await request(
+        `/api/preview/webrtc/${clientId}/candidates?after=${candidateCursor}`
+      );
+      for (const candidate of response.candidates) {
+        await peer.addIceCandidate(candidate);
+      }
+      candidateCursor = response.next;
+      setTimeout(pollCandidates, 250);
+    }
+
+    async function connect() {
+      const session = await request("/api/preview/session", {method: "POST"});
+      clientId = session.client_id;
+      if (session.transport === "hls") {
+        video.src = session.playlist_url;
+        status.textContent = "HLS";
+        await video.play();
+        return;
+      }
+
+      peer = new RTCPeerConnection();
+      peer.ontrack = event => { video.srcObject = event.streams[0]; };
+      peer.onconnectionstatechange = () => {
+        status.textContent = `WebRTC: ${peer.connectionState}`;
+      };
+      peer.onicecandidate = event => {
+        if (!event.candidate) return;
+        request(`/api/preview/webrtc/${clientId}/candidate`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(event.candidate.toJSON())
+        }).catch(console.error);
+      };
+      await peer.setRemoteDescription(session.offer);
+      const answer = await peer.createAnswer();
+      await peer.setLocalDescription(answer);
+      await request(`/api/preview/webrtc/${clientId}/answer`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(answer)
+      });
+      pollCandidates();
+    }
+
+    addEventListener("beforeunload", () => {
+      if (clientId) fetch(`/api/preview/session/${clientId}`, {
+        method: "DELETE", keepalive: true
+      });
+      if (peer) peer.close();
+    });
+    connect().catch(error => { status.textContent = `Preview error: ${error}`; });
+  </script>
+</body>
+</html>

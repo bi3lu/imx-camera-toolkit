@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from math import isfinite
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeAlias, runtime_checkable
 
-from packages.camera.models import Frame
+from packages.camera.models import Frame, GpuFrame
+
+CaptureFrame: TypeAlias = Frame | GpuFrame
 
 
 @runtime_checkable
@@ -26,6 +28,29 @@ class FrameSource(Protocol):
         Returns:
             Newest available frame, or ``None`` after the timeout.
         """
+        ...
+
+
+@runtime_checkable
+class GpuFrameSource(Protocol):
+    """Provider of one newest borrowed GPU frame at a time.
+
+    Calling :meth:`read` may invalidate the frame returned by the preceding
+    call. Consumers must therefore finish GPU work that uses a frame before
+    requesting its successor.
+    """
+
+    def read(self, timeout: float | None = None) -> GpuFrame | None:
+        """Return the newest borrowed GPU frame, or ``None`` on timeout."""
+        ...
+
+
+@runtime_checkable
+class CaptureFrameSource(Protocol):
+    """Model-agnostic source that may return CPU or GPU frames."""
+
+    def read(self, timeout: float | None = None) -> CaptureFrame | None:
+        """Return the newest frame in the source's declared memory domain."""
         ...
 
 

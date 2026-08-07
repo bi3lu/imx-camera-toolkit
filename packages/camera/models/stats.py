@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
+
+from .metrics import PipelineMetrics
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +31,9 @@ class CameraStats:
     recovery_count: int
     consecutive_failures: int
     running: bool
+    pipeline: PipelineMetrics = field(default_factory=PipelineMetrics)
+    consumer_dropped_frames: tuple[tuple[str, int], ...] = ()
+    last_capture_timestamp_ns: int | None = None
 
     def __post_init__(self) -> None:
         """Validate scalar diagnostics without inspecting camera resources."""
@@ -62,5 +67,36 @@ class CameraStats:
                 "last_frame_timestamp_ns must be a non-negative integer or None"
             )
 
+        if self.last_capture_timestamp_ns is not None and (
+            isinstance(self.last_capture_timestamp_ns, bool)
+            or not isinstance(self.last_capture_timestamp_ns, int)
+            or self.last_capture_timestamp_ns < 0
+        ):
+            raise ValueError(
+                "last_capture_timestamp_ns must be a non-negative integer or None"
+            )
+
         if not isinstance(self.running, bool):
             raise ValueError("running must be a boolean")
+
+        if not isinstance(self.pipeline, PipelineMetrics):
+            raise ValueError("pipeline must be a PipelineMetrics snapshot")
+
+        consumer_names: set[str] = set()
+
+        for item in self.consumer_dropped_frames:
+            if not isinstance(item, tuple) or len(item) != 2:
+                raise ValueError("consumer_dropped_frames must contain pairs")
+
+            consumer, count = item
+
+            if not isinstance(consumer, str) or not consumer.strip():
+                raise ValueError("consumer names must be non-empty strings")
+
+            if consumer in consumer_names:
+                raise ValueError("consumer names must be unique")
+
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                raise ValueError("consumer drop counts must be non-negative integers")
+
+            consumer_names.add(consumer)

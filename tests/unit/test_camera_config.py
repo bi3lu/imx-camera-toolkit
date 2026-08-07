@@ -10,9 +10,12 @@ from imx_camera_toolkit import (
     Camera,
     CameraConfig,
     CameraProfileStatus,
+    FrameFormat,
+    MemoryType,
     get_camera_profile,
     list_camera_profiles,
 )
+from packages.camera.config.loader import _read_config_values
 
 
 def test_camera_config_has_documented_defaults() -> None:
@@ -23,11 +26,14 @@ def test_camera_config_has_documented_defaults() -> None:
         capture_height=1080,
         output_width=1280,
         output_height=720,
+        output_format=FrameFormat.BGR_CPU,
         fps=30,
         flip_method=0,
         sensor_mode=None,
         enable_preview=False,
     )
+    assert CameraConfig().output_memory is MemoryType.CPU
+    assert CameraConfig().copies_to_host_memory is True
 
 
 def test_camera_uses_explicit_camera_config() -> None:
@@ -53,6 +59,18 @@ def test_camera_uses_explicit_camera_config() -> None:
     assert "framerate=(fraction)40/1" in camera.pipeline
 
 
+def test_default_camera_keeps_the_compatible_bgr_cpu_pipeline() -> None:
+    """Existing users must continue receiving one latest BGR host array."""
+    camera = Camera()
+
+    assert camera.config.output_format is FrameFormat.BGR_CPU
+    assert "video/x-raw(memory:NVMM)" in camera.pipeline
+    assert "format=(string)NV12" in camera.pipeline
+    assert "format=(string)BGRx" in camera.pipeline
+    assert "video/x-raw, format=(string)BGR" in camera.pipeline
+    assert "appsink name=camera_sink max-buffers=1 drop=true" in camera.pipeline
+
+
 def test_camera_config_is_frozen_and_serializable() -> None:
     """The public model must be safe to share, compare, and serialize."""
     config = CameraConfig()
@@ -70,6 +88,7 @@ def test_camera_config_is_frozen_and_serializable() -> None:
         ({"sensor_mode": -1}, "sensor_mode"),
         ({"enable_preview": 1}, "enable_preview"),
         ({"max_fps": 0}, "max_fps"),
+        ({"output_format": "BGR_CPU"}, "FrameFormat"),
     ],
 )
 def test_camera_config_rejects_invalid_values(
@@ -95,6 +114,40 @@ def test_legacy_positional_quality_and_preview_rate_remain_supported() -> None:
 
     assert camera.config.quality == 80
     assert camera.config.max_fps == 20.0
+
+
+def test_camera_config_preserves_legacy_positional_field_order() -> None:
+    """Appending output_format must not shift existing positional settings."""
+    config = CameraConfig(1, 1920, 1080, 640, 360, 25, 2, None, False, 70, 15.0)
+
+    assert config.sensor_id == 1
+    assert config.output_height == 360
+    assert config.fps == 25
+    assert config.flip_method == 2
+    assert config.quality == 70
+    assert config.max_fps == 15.0
+    assert config.output_format is FrameFormat.BGR_CPU
+
+
+def test_yaml_values_resolve_the_explicit_bgr_cpu_output() -> None:
+    """String-based configuration must resolve to the public format enum."""
+    config = _read_config_values({"output_format": "BGR_CPU"})
+
+    assert config.output_format is FrameFormat.BGR_CPU
+    assert config.output_memory is MemoryType.CPU
+
+    gpu_config = _read_config_values({"output_format": "NV12_NVMM"})
+    assert gpu_config.output_format is FrameFormat.NV12_NVMM
+    assert gpu_config.output_memory is MemoryType.NVMM
+    assert gpu_config.copies_to_host_memory is False
+
+
+def test_legacy_camera_rejects_gpu_output_without_changing_its_semantics() -> None:
+    """NVMM selection must require the separate GpuCamera API."""
+    config = CameraConfig(output_format=FrameFormat.NV12_NVMM)
+
+    with pytest.raises(ValueError, match="GpuCamera"):
+        Camera(config)
 
 
 def test_imx219_77_profile_is_explicitly_tested() -> None:
