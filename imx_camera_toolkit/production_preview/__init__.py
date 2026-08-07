@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from packages.production_preview import (
     CudaOverlayRenderer,
+    DescribedEncodedVideoSource,
     EncodedVideoSource,
     OverlayRectangle,
     PreviewClientStats,
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "EncodedVideoSource",
+    "DescribedEncodedVideoSource",
     "CudaOverlayRenderer",
     "OverlayRectangle",
     "PreviewClientStats",
