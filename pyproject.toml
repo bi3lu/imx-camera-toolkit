@@ -11,10 +11,21 @@ preview = [
     "fastapi>=0.116,<1.0",
     "uvicorn>=0.35,<1.0",
 ]
+tensorrt = [
+    "numpy>=1.24,<2.0",
+    "pybind11>=2.11,<3.0",
+]
+tensorrt-test = [
+    "numpy>=1.24,<2.0",
+    "onnx>=1.16,<2.0",
+    "onnxruntime>=1.18,<1.24",
+    "pybind11>=2.11,<3.0",
+]
 
 [project.scripts]
 imx-camera = "packages.cli:main"
 imx-camera-toolkit = "packages.cli:main"
+imx-camera-build-interop = "packages.inference.build:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -22,6 +33,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 force-include = {
+    "native" = "native",
     "view/advanced.html" = "view/advanced.html",
     "view/simple.html" = "view/simple.html",
 }
