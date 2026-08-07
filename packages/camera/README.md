@@ -73,8 +73,8 @@ uv sync
 
 ## Stable raw-frame API
 
-`Camera.read()` is the primary integration API for external image-processing
-pipelines. It returns a `Frame` containing an opaque processed BGR image and
+`Camera.read()` is the primary CPU integration API for external image-processing
+pipelines. It returns a `Frame` containing a processed BGR image and
 metadata. It does not encode JPEG data and does not perform inference.
 
 ```python
@@ -100,7 +100,7 @@ with Camera(config) as camera:
 
 | Field | Meaning |
 | --- | --- |
-| `image` | Opaque BGR payload; it may be a NumPy array, CUDA buffer, DMA-BUF, or another future backend type. |
+| `image` | Host-memory BGR payload, normally a NumPy array. |
 | `sequence` | Monotonically increasing capture identifier. |
 | `timestamp_ns` | Monotonic acquisition timestamp in nanoseconds. |
 | `capture_timestamp_ns` | Optional hardware-provided capture timestamp; currently `None` for the standard backend. |
@@ -127,8 +127,36 @@ frame = camera.read(timeout=1.0, copy=False)
 
 By default, `copy=True` returns an independent BGR image copy owned by the
 caller. With `copy=False`, `frame.image` is the camera's shared image payload.
-This avoids a copy for TensorRT, DeepStream, OpenCV, and CUDA pipelines, but
-the caller must treat the shared payload as read-only.
+This avoids one additional host-memory copy for CPU consumers and preprocessing,
+but the caller must treat the shared payload as read-only.
+
+This is host-memory copy avoidance only; it does not guarantee GPU zero-copy.
+GPU-first sources use the separate public `GpuFrame` contract and never replace
+`raw_frame` with an NVMM buffer.
+
+## GPU frame contract
+
+`GpuFrame` identifies `FrameFormat.NV12_NVMM` in `MemoryType.NVMM` and exposes
+one borrowed DMA-BUF descriptor or checked `GpuBufferHandle` around an opaque
+`Gst.Buffer`/`NvBufSurface` resource.
+It intentionally has no NumPy `image` field. Capture owns the buffer, and the
+consumer must finish using it before requesting the next frame. A source calls
+`invalidate()` on the previous frame when its successor is published;
+subsequent `payload()` access raises `GpuFrameExpiredError`.
+
+Public `GpuFrameSource` and `CaptureFrameSource` protocols allow applications
+to implement CPU/GPU consumers without importing capture internals. Test code
+can use `MockFrameSource`, `mock_cpu_frame`, and `mock_gpu_frame` from
+`imx_camera_toolkit.testing` without Jetson hardware.
+
+## Pipeline observability
+
+`Camera.stats()` includes fixed-size latency aggregates for transfer,
+inference, encoder, and end-to-end processing, plus immutable per-consumer drop
+counters. Capture records stages it owns. External model consumers report
+their own work through `record_stage_latency("inference", duration_ns)` and
+`record_consumer_drop(name, count)`; neither method retains frames or creates a
+queue.
 
 `read_image(timeout=..., copy=...)` is available for compatibility-oriented
 code that requires only the image payload. New integrations should use `read()`

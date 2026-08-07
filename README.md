@@ -19,8 +19,8 @@ IMX Camera Toolkit is a camera-capture and image-transport foundation. It does
 not provide inference models, model loaders, trackers, batching, CUDA-stream
 management, DeepStream pipelines, ROS 2 integration, multi-camera
 synchronization, or telemetry backends. Applications retain ownership of those
-policies and receive an opaque raw `Frame.image` payload for their own chosen
-vision stack.
+policies and receive a BGR/CPU `Frame.image` payload for their own chosen vision
+stack. Optional GPU sources use the separate borrowed `GpuFrame` contract.
 
 ## System architecture
 
@@ -202,12 +202,60 @@ with Camera(CameraConfig()) as camera:
         result = my_tensor_rt_engine(frame.image)
 ```
 
-`read()` returns a formal `Frame` with an opaque `image`, monotonic `sequence`,
+`read()` returns a formal CPU `Frame` with a BGR `image`, monotonic `sequence`,
 nanosecond `timestamp_ns`, optional hardware `capture_timestamp_ns`, dimensions,
 and pixel `format`. It retains only the newest BGR frame, may skip stale frames,
 and never performs JPEG encoding or inference. The default `copy=True` gives
 the caller an independent image buffer; `copy=False` returns a read-only shared
-payload for zero-copy-oriented pipelines.
+payload for copy-avoiding CPU pipelines.
+
+`copy=False` avoids an additional CPU-buffer copy only. It does not turn the
+BGR payload into CUDA or NVMM memory and is not a GPU zero-copy guarantee.
+
+### CPU and GPU frame contracts
+
+The existing `Camera` and `Frame` contracts remain the OpenCV-compatible CPU
+path. Their explicit output identity is `FrameFormat.BGR_CPU` in
+`MemoryType.CPU`, while the legacy `frame.format` field remains `"BGR"`.
+
+Optional GPU-first capture sources expose `GpuFrame` with
+`FrameFormat.NV12_NVMM` and `MemoryType.NVMM`. A GPU frame has no `image` or
+implicit NumPy conversion. It carries exactly one borrowed DMA-BUF descriptor
+or a checked `GpuBufferHandle` around `Gst.Buffer` or `NvBufSurface`.
+
+GPU buffers remain owned by capture. A consumer must complete its work before
+requesting the next frame from the source; publishing a successor invalidates
+the previous frame lease. Calling `gpu_frame.payload()` after invalidation
+raises `GpuFrameExpiredError`.
+
+Model-agnostic code can depend only on the public union:
+
+```python
+from imx_camera_toolkit import FrameFormat, GpuFrame
+from imx_camera_toolkit.frames import CaptureFrame
+
+def consume(frame: CaptureFrame) -> object:
+    if isinstance(frame, GpuFrame):
+        assert frame.format is FrameFormat.NV12_NVMM
+        return gpu_engine(frame.payload())
+
+    assert frame.output_format is FrameFormat.BGR_CPU
+    return cpu_engine(frame.image)
+```
+
+`PipelineStage` and `Camera.record_stage_latency()` provide fixed-size timing
+aggregates for transfer, inference, encoder, and end-to-end latency. External
+consumers can report their inference timing and skipped latest frames without
+adding inference code to the toolkit:
+
+```python
+camera.record_stage_latency("inference", inference_duration_ns)
+camera.record_consumer_drop("primary-inference", skipped_frames)
+```
+
+`/api/health` exposes those aggregates together with the active backend,
+explicit frame format and memory domain, output resolution, capture timestamp,
+and per-consumer drop counters.
 
 ### Diagnostics
 

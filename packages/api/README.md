@@ -64,7 +64,7 @@ FastAPI exposes interactive documentation at `/docs` and the OpenAPI schema at
 | Endpoint | Description |
 | --- | --- |
 | `GET /` | Customizable HTML camera preview. |
-| `GET /api/health` | Camera state, frame availability, capture metrics, and the latest background error. |
+| `GET /api/health` | Camera state, active backend, frame format/memory/resolution, stage latency, per-consumer drops, capture metrics, and the latest background error. |
 | `GET /api/camera/snapshot` | Latest JPEG camera image. |
 | `GET /api/camera/mjpeg` | Live `multipart/x-mixed-replace` MJPEG response. |
 
