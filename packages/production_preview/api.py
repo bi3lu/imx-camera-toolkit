@@ -51,7 +51,7 @@ def _serialize_health(server: ProductionPreviewServer) -> dict[str, object]:
             {
                 "client_id": client.client_id,
                 "transport": client.transport.value,
-                "frames_sent": client.frames_sent,
+                "frames_sent": client.frames_pushed,
                 "bytes_sent": client.bytes_sent,
                 "frames_pushed": client.frames_pushed,
                 "pushed_bytes": client.pushed_bytes,

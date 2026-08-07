@@ -413,9 +413,26 @@ def test_appsrc_acceptance_is_not_reported_as_rtp_delivery() -> None:
     assert client.frames_pushed == 1
     assert client.rtp_packets_sent == 0
     assert client.rtp_bytes_sent == 0
-    assert client.frames_sent == 0
+    with pytest.warns(DeprecationWarning, match="frames_sent is deprecated"):
+        assert client.frames_sent == 1
     assert client.media_status == "failed"
     assert client.last_bus_error == "h264parse: not-negotiated"
+
+
+def test_deprecated_frames_sent_keeps_frame_units() -> None:
+    """Legacy frame counts must never expose packet fragmentation as frames."""
+    registry = ClientMetricsRegistry(timeout_seconds=30.0, max_clients=1)
+    registry.connect("peer", PreviewTransport.WEBRTC)
+    registry.record_pushed("peer", 4_000)
+    for _ in range(9):
+        registry.record_rtp("peer", 1_200)
+
+    client = registry.snapshot()[0]
+
+    assert client.frames_pushed == 1
+    assert client.rtp_packets_sent == 9
+    with pytest.warns(DeprecationWarning, match="frames_sent is deprecated"):
+        assert client.frames_sent == 1
 
 
 def test_browser_view_handles_streamless_tracks_and_reconnects() -> None:
