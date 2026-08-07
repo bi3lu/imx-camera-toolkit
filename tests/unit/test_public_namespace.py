@@ -18,18 +18,25 @@ from imx_camera_toolkit import (
     CameraStats,
     CameraTimeoutError,
     Frame,
+    FrameConsumer,
     FrameFormat,
     FrameSpec,
     GpuBufferHandle,
     GpuCamera,
     GpuFrame,
     GpuFrameExpiredError,
+    InferenceConsumer,
+    InferencePreviewSource,
     InferenceResult,
+    InferenceResultSource,
     InferenceRunner,
+    LatestFrameSubscription,
     MemoryType,
     MetricsRecorder,
+    OverlayRenderer,
     PipelineMetrics,
     PipelineStage,
+    PreviewOverlayContext,
     PreviewServer,
     PreviewSource,
     ShapeProfile,
@@ -102,6 +109,17 @@ from packages.camera_control.camera_control import (
 from packages.camera_control.camera_control import (
     CameraSettings as InternalCameraSettings,
 )
+from packages.consumers import FrameConsumer as InternalFrameConsumer
+from packages.consumers import InferenceConsumer as InternalInferenceConsumer
+from packages.consumers import (
+    InferencePreviewSource as InternalInferencePreviewSource,
+)
+from packages.consumers import InferenceResultSource as InternalInferenceResultSource
+from packages.consumers import (
+    LatestFrameSubscription as InternalLatestFrameSubscription,
+)
+from packages.consumers import OverlayRenderer as InternalOverlayRenderer
+from packages.consumers import PreviewOverlayContext as InternalPreviewOverlayContext
 from packages.frames import CameraFrameSource as InternalCameraFrameSource
 from packages.frames import CaptureFrameSource as InternalCaptureFrameSource
 from packages.frames import FrameSource as InternalFrameSource
@@ -142,6 +160,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert CameraRecoveryError is InternalRecoveryError
     assert CameraFrame is InternalCameraFrame
     assert Frame is InternalFrame
+    assert FrameConsumer is InternalFrameConsumer
     assert FrameFormat is InternalFrameFormat
     assert FrameSpec is InternalFrameSpec
     assert GpuBufferHandle is InternalGpuBufferHandle
@@ -149,11 +168,17 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert GpuFrame is InternalGpuFrame
     assert GpuFrameExpiredError is InternalGpuFrameExpiredError
     assert InferenceResult is InternalInferenceResult
+    assert InferenceConsumer is InternalInferenceConsumer
+    assert InferencePreviewSource is InternalInferencePreviewSource
+    assert InferenceResultSource is InternalInferenceResultSource
     assert InferenceRunner is InternalInferenceRunner
+    assert LatestFrameSubscription is InternalLatestFrameSubscription
     assert MemoryType is InternalMemoryType
     assert MetricsRecorder is InternalMetricsRecorder
     assert PipelineMetrics is InternalPipelineMetrics
     assert PipelineStage is InternalPipelineStage
+    assert OverlayRenderer is InternalOverlayRenderer
+    assert PreviewOverlayContext is InternalPreviewOverlayContext
     assert StageMetrics is InternalStageMetrics
     assert ShapeProfile is InternalShapeProfile
     assert TensorOutput is InternalTensorOutput
