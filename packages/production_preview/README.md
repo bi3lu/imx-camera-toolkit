@@ -1,6 +1,6 @@
 # Production browser preview
 
-The production preview path shares one Jetson hardware encoder between browser
+The production preview path shares one selected encoder between browser
 clients. It is an explicit addition to `GpuCamera`; the existing OpenCV/JPEG
 snapshot and MJPEG APIs remain available as the simple debug path.
 
@@ -8,14 +8,15 @@ snapshot and MJPEG APIs remain available as the simple debug path.
 NV12/NVMM camera tee
   +-> gpu_sink -> TensorRT consumer
   +-> nvjpegenc -> MJPEG debug (optional)
-  +-> nvv4l2h264enc/nvv4l2h265enc -> encoded latest slots
+  +-> NVENC or nvvidconv -> I420 -> x264enc -> encoded latest slots
        +-> RTP -> webrtcbin per client
        +-> h264parse/h265parse -> hlssink2 rolling segments
 ```
 
-Raw production-preview pixels do not enter OpenCV, NumPy, or host RAM. The
-encoder branch copies only the compressed access unit at its appsink, then
-shares that output rather than creating one encoder per browser.
+Capture, TensorRT, and GPU overlays remain NV12/NVMM. With NVENC, raw preview
+pixels never enter host RAM. On Jetson Orin Nano, which has no NVENC, only the
+isolated encoder branch crosses through `nvvidconv` to I420 system memory for
+x264. Every client still shares that single encoded output.
 
 ## Runtime installation
 
@@ -25,17 +26,22 @@ Install the optional HTTP layer:
 uv sync --extra production-preview
 ```
 
-JetPack supplies the accelerated encoder. WebRTC additionally needs the
-GStreamer WebRTC/RTP plugins and libnice; HLS needs the bad-plugins HLS sink:
+WebRTC additionally needs the GStreamer WebRTC/RTP plugins and libnice; HLS
+needs the bad-plugins HLS sink. Install the ugly plugins for Orin Nano's x264
+fallback:
 
 ```bash
 sudo apt-get install nvidia-l4t-gstreamer gstreamer1.0-plugins-bad \
-  gstreamer1.0-nice
-gst-inspect-1.0 nvv4l2h264enc nvv4l2h265enc webrtcbin nicesrc hlssink2
+  gstreamer1.0-plugins-ugly gstreamer1.0-nice gstreamer1.0-libav
+gst-inspect-1.0 x264enc h264parse rtph264pay rtph264depay webrtcbin \
+  nicesrc nicesink avdec_h264 videoconvert appsink hlssink2
 ```
 
+`gstreamer1.0-libav` and the receive-side elements are needed by the repository's
+two-peer WebRTC E2E test; browser clients perform decoding themselves.
+
 NVIDIA documents direct NVMM input for both
-[`nvv4l2h264enc` and `nvv4l2h265enc`](https://docs.nvidia.com/jetson/archives/r36.2/DeveloperGuide/SD/Multimedia/AcceleratedGstreamer.html).
+[`nvv4l2h264enc` and `nvv4l2h265enc`](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/SD/Multimedia/AcceleratedGstreamer.html).
 GStreamer's [`webrtcbin`](https://gstreamer.freedesktop.org/documentation/webrtc/)
 implements peer connection and RTC statistics, while
 [`hlssink2`](https://gstreamer.freedesktop.org/documentation/hls/hlssink2.html)
@@ -47,7 +53,12 @@ WebRTC is the preferred low-latency mode. H.264 is required because H.265
 WebRTC decoding is not consistently available across browsers.
 
 ```python
-from imx_camera_toolkit import GpuCamera, HardwareVideoConfig, VideoCodec
+from imx_camera_toolkit import (
+    GpuCamera,
+    VideoCodec,
+    VideoEncoderBackend,
+    VideoEncoderConfig,
+)
 from imx_camera_toolkit.production_preview import (
     ProductionPreviewConfig,
     ProductionPreviewServer,
@@ -57,8 +68,9 @@ import uvicorn
 
 camera = GpuCamera(
     enable_preview=False,
-    video_config=HardwareVideoConfig(
+    video_config=VideoEncoderConfig(
         codec=VideoCodec.H264,
+        backend=VideoEncoderBackend.AUTO,
         bitrate_bps=4_000_000,
         keyframe_interval=30,
     ),
@@ -77,13 +89,25 @@ outside the local network. Each peer receives its own single encoded-frame
 slot and leaky RTP queue; slow peers cannot delay capture, inference, encoding,
 or another peer.
 
+`AUTO` selects `nvv4l2h264enc` where NVENC exists and otherwise selects
+`x264enc`. Explicit `NVENC` and `X264` policies fail preflight with the complete
+missing-element list instead of surfacing an opaque `parse_launch()` error.
+`HardwareVideoConfig` remains a compatibility alias for
+`VideoEncoderConfig`.
+
+The transport waits for the encoder's real SPS before offering H.264. Its
+`profile-level-id`, profile, and level therefore match the selected encoder;
+no profile value is hardcoded. Each new peer also ignores delta frames until
+an IDR and receives a private timestamp axis starting at PTS/DTS zero.
+
 ## HLS
 
 HLS is simpler to deploy behind an ordinary reverse proxy and supports either
 H.264 or H.265. It trades latency for rolling one-second segments. The bundled
 page uses native browser HLS; deployments targeting browsers without native
 HLS should put their preferred JavaScript HLS player in front of the same
-playlist endpoint:
+playlist endpoint. H.265 requires NVENC; the built-in x264 fallback on Orin
+Nano supports H.264 only:
 
 ```python
 from pathlib import Path
@@ -149,18 +173,24 @@ production `GpuCamera` rejects a host-memory renderer on its NVMM branch.
 
 `GET /api/preview/health` reports:
 
-- recent hardware `encode_fps` and actual encoded `bitrate_bps`;
+- selected encoder backend, negotiated caps/SPS status, encode FPS and bitrate;
 - cumulative encoded frames and bytes;
 - active browser client count;
-- frames/segments sent, bytes sent, dropped frames, and drop rate per client.
+- access units accepted by appsrc separately from RTP packets/bytes;
+- parser/payloader flow, signaling/ICE/connection state and latest bus error;
+- browser feedback for packets, bytes, decoded frames, loss, jitter, and RTT.
 
-WebRTC counts both overwritten per-peer slots and leaky RTP queue overruns. HLS
-counts segment gaps observed by each registered browser.
+`appsrc.push-buffer == OK` increments only `frames_pushed`; it is never treated
+as successful RTP delivery. WebRTC counts packet buffers after `rtph264pay`,
+monitors its pipeline bus continuously, and marks media failed or stalled even
+when ICE itself is connected. HLS counts segment gaps observed by each browser.
+The legacy `frames_sent` property is deprecated and retains frame/access-unit
+units; use `frames_pushed` or `rtp_packets_sent` explicitly.
 
 The no-camera tests validate pipeline caps, encoder selection, transport
 sharing, metrics, safe HLS paths, and CUDA overlay dispatch. Run the opt-in
-Jetson acceptance test with an ONNX model to measure 720p/30 hardware encoding
-while TensorRT is active:
+Jetson acceptance test with an ONNX model to measure 720p/30 production
+encoding while TensorRT is active:
 
 ```bash
 IMX_PRODUCTION_PREVIEW_HARDWARE=1 \
@@ -168,5 +198,7 @@ IMX_TENSORRT_ONNX=/opt/models/model.onnx \
 uv run pytest tests/hardware/test_production_video_hardware.py
 ```
 
-It requires at least 25 encode FPS, successful TensorRT inference, and less
-than half of one CPU core consumed by the process during the sample window.
+Both backends require at least 25 encode FPS and successful TensorRT inference.
+When NVENC is selected, the test additionally requires less than half of one
+CPU core during the sample window. The x264 fallback is software encoding and
+is therefore not subject to the NVENC CPU ceiling.

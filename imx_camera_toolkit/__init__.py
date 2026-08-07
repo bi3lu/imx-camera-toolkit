@@ -22,6 +22,7 @@ from .camera import (
     CameraRecoveryError,
     CameraStats,
     CameraTimeoutError,
+    EncodedStreamDescription,
     EncodedVideoFrame,
     Frame,
     FrameFormat,
@@ -36,9 +37,14 @@ from .camera import (
     PipelineStage,
     StageMetrics,
     VideoCodec,
+    VideoEncoderBackend,
+    VideoEncoderConfig,
+    VideoEncoderPipeline,
+    VideoEncoderPipelineFactory,
     VideoEncodeStats,
     VideoOverlayRenderer,
     build_gpu_gstreamer_pipeline,
+    build_video_encoder_pipeline,
     get_camera_profile,
     list_camera_profiles,
 )
@@ -68,7 +74,7 @@ if TYPE_CHECKING:
     from .preview import preview as preview
     from .preview import serve as serve
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 __all__ = [
     "Camera",
@@ -84,6 +90,7 @@ __all__ = [
     "CameraRecoveryError",
     "CameraStats",
     "CameraTimeoutError",
+    "EncodedStreamDescription",
     "EncodedVideoFrame",
     "Frame",
     "FrameConsumer",
@@ -111,9 +118,14 @@ __all__ = [
     "TensorOutput",
     "TensorRTRunner",
     "VideoCodec",
+    "VideoEncoderBackend",
+    "VideoEncoderConfig",
+    "VideoEncoderPipeline",
+    "VideoEncoderPipelineFactory",
     "VideoEncodeStats",
     "VideoOverlayRenderer",
     "build_gpu_gstreamer_pipeline",
+    "build_video_encoder_pipeline",
     "get_camera_profile",
     "list_camera_profiles",
     "__version__",

@@ -51,7 +51,11 @@ jobs:
         run: |
           test -f "$IMX_TENSORRT_ONNX"
           command -v tegrastats
-          gst-inspect-1.0 nvarguscamerasrc nvv4l2h264enc
+          command -v nvpmodel
+          command -v jetson_clocks
+          gst-inspect-1.0 nvarguscamerasrc nvvidconv x264enc h264parse \
+            rtph264pay rtph264depay webrtcbin nicesrc nicesink avdec_h264 \
+            videoconvert appsink hlssink2
       - name: Create environment with JetPack system packages
         run: |
           uv venv --system-site-packages --allow-existing .venv
@@ -60,9 +64,34 @@ jobs:
         run: uv run imx-camera-build-interop
       - name: Run physical camera and encoder tests
         run: uv run pytest -m hardware tests/hardware
+      - name: Run WebRTC peer roundtrip
+        run: uv run pytest tests/integration/test_gstreamer_webrtc_roundtrip.py
       - name: Compare TensorRT and ONNX Runtime outputs
         run: uv run pytest tests/integration/test_tensorrt_onnx_parity.py
+      - name: Record Jetson release metadata
+        run: |
+          mkdir -p release-evidence
+          nvpmodel -q > release-evidence/nvpmodel.txt 2>&1
+          jetson_clocks --show > release-evidence/jetson-clocks.txt 2>&1
+          cat /etc/nv_tegra_release > release-evidence/jetson-linux.txt
+          grep -H . /sys/devices/virtual/thermal/thermal_zone*/type \
+            /sys/devices/virtual/thermal/thermal_zone*/temp \
+            > release-evidence/cooling.txt
+          sha256sum "$IMX_TENSORRT_ONNX" > release-evidence/model.sha256
+          uv run python -c "import tensorrt; print(tensorrt.__version__)" \
+            > release-evidence/tensorrt-version.txt
+          printf 'sensor=%s\nsensor_id=%s\n' \
+            "$IMX_CAMERA_SENSOR" "$IMX_CAMERA_SENSOR_ID" \
+            > release-evidence/camera.txt
       - name: Record 720p and 1080p resource report
-        run: >-
-          uv run imx-camera benchmark jetson --resolution all --backend all
-          --frames 300 --fps 30 --json
+        run: |
+          uv run imx-camera benchmark jetson --resolution all --backend all \
+            --frames 300 --fps 30 --json \
+            > release-evidence/benchmark.json
+      - name: Archive Jetson release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jetson-validation-${{ inputs.sensor }}-${{ github.sha }}
+          path: release-evidence
+          if-no-files-found: error

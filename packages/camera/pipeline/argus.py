@@ -6,7 +6,102 @@ import re
 from collections.abc import Sequence
 
 from ..errors import CameraConfigurationError
-from ..models.video import HardwareVideoConfig, VideoCodec
+from ..models.video import (
+    EncodedStreamDescription,
+    HardwareVideoConfig,
+    VideoCodec,
+    VideoEncoderBackend,
+    VideoEncoderConfig,
+    VideoEncoderPipeline,
+    VideoEncoderPipelineFactory,
+)
+
+
+def build_video_encoder_pipeline(
+    config: VideoEncoderConfig,
+    width: int,
+    height: int,
+    framerate: int,
+    *,
+    backend: VideoEncoderBackend | None = None,
+) -> VideoEncoderPipeline:
+    """Build the standard NVENC or x264 production encoder segment.
+
+    The input to the returned segment is NV12/NVMM.  NVENC consumes it
+    directly.  x264 performs the sole device-to-host conversion in the whole
+    camera graph and requests I420 system-memory video.
+    """
+    selected = backend or config.backend
+
+    if selected is VideoEncoderBackend.AUTO:
+        # Pipeline-only callers have no registry to inspect.  Runtime camera
+        # startup resolves AUTO against Gst.ElementFactory before parsing.
+        selected = VideoEncoderBackend.NVENC
+
+    description = EncodedStreamDescription(
+        codec=config.codec,
+        width=width,
+        height=height,
+        fps=framerate,
+    )
+    parser = "h264parse" if config.codec is VideoCodec.H264 else "h265parse"
+    media_type = "video/x-h264" if config.codec is VideoCodec.H264 else "video/x-h265"
+
+    if selected is VideoEncoderBackend.X264:
+        if config.codec is not VideoCodec.H264:
+            raise CameraConfigurationError("x264 backend supports only H.264")
+
+        pipeline = (
+            "nvvidconv ! "
+            "video/x-raw, "
+            f"width=(int){width}, height=(int){height}, "
+            "format=(string)I420, "
+            f"framerate=(fraction){framerate}/1 ! "
+            "x264enc name=video_encoder tune=zerolatency "
+            f"speed-preset={config.software_preset} "
+            f"bitrate={max(config.bitrate_bps // 1000, 1)} "
+            f"key-int-max={config.keyframe_interval} byte-stream=true aud=true ! "
+            f"{parser} config-interval=-1 ! "
+            f"{media_type}, stream-format=(string)byte-stream, "
+            "alignment=(string)au ! "
+            "appsink name=video_sink max-buffers=1 drop=true sync=false "
+            "enable-last-sample=false wait-on-eos=false"
+        )
+        return VideoEncoderPipeline(
+            pipeline=pipeline,
+            backend=selected.value,
+            description=description,
+            required_elements=("nvvidconv", "x264enc", parser, "appsink"),
+        )
+
+    if selected is not VideoEncoderBackend.NVENC:
+        raise CameraConfigurationError(f"unsupported encoder backend: {selected}")
+
+    encoder = (
+        "nvv4l2h264enc"
+        if config.codec is VideoCodec.H264
+        else "nvv4l2h265enc"
+    )
+    pipeline = (
+        f"{encoder} name=video_encoder control-rate=1 "
+        f"bitrate={config.bitrate_bps} "
+        f"iframeinterval={config.keyframe_interval} "
+        f"idrinterval={config.keyframe_interval} "
+        "insert-sps-pps=1 insert-vui=1 "
+        f"maxperf-enable={int(config.max_performance)} "
+        f"MeasureEncoderLatency={int(config.measure_latency)} ! "
+        f"{parser} config-interval=-1 ! "
+        f"{media_type}, stream-format=(string)byte-stream, "
+        "alignment=(string)au ! "
+        "appsink name=video_sink max-buffers=1 drop=true sync=false "
+        "enable-last-sample=false wait-on-eos=false"
+    )
+    return VideoEncoderPipeline(
+        pipeline=pipeline,
+        backend=selected.value,
+        description=description,
+        required_elements=(encoder, parser, "appsink"),
+    )
 
 
 def normalize_argus_properties(properties: Sequence[str]) -> tuple[str, ...]:
@@ -127,6 +222,8 @@ def build_gpu_gstreamer_pipeline(
     jpeg_quality: int = 65,
     video_config: HardwareVideoConfig | None = None,
     enable_video_overlay: bool = False,
+    encoder_backend: VideoEncoderBackend | None = None,
+    encoder_pipeline_factory: VideoEncoderPipelineFactory | None = None,
     argus_properties: Sequence[str] = (),
 ) -> str:
     """Build an NV12/NVMM pipeline with isolated inference and preview branches.
@@ -179,8 +276,20 @@ def build_gpu_gstreamer_pipeline(
 
     if enable_video_overlay and video_config is None:
         raise CameraConfigurationError(
-            "video overlay requires a hardware video configuration"
+            "video overlay requires a video encoder configuration"
         )
+
+    if encoder_backend is not None and not isinstance(
+        encoder_backend, VideoEncoderBackend
+    ):
+        raise CameraConfigurationError(
+            "encoder_backend must be a VideoEncoderBackend or None"
+        )
+
+    if encoder_pipeline_factory is not None and not callable(
+        encoder_pipeline_factory
+    ):
+        raise CameraConfigurationError("encoder_pipeline_factory must be callable")
 
     source_properties = normalize_argus_properties(argus_properties)
     source_arguments = " ".join(source_properties)
@@ -223,16 +332,6 @@ def build_gpu_gstreamer_pipeline(
         )
 
     if video_config is not None:
-        if video_config.codec is VideoCodec.H264:
-            encoder = "nvv4l2h264enc"
-            parser = "h264parse"
-            encoded_caps = "video/x-h264"
-
-        else:
-            encoder = "nvv4l2h265enc"
-            parser = "h265parse"
-            encoded_caps = "video/x-h265"
-
         overlay = ""
 
         if enable_video_overlay:
@@ -242,21 +341,33 @@ def build_gpu_gstreamer_pipeline(
                 "identity name=video_overlay_hook ! "
             )
 
+        encoder_pipeline = (
+            build_video_encoder_pipeline(
+                video_config,
+                output_width,
+                output_height,
+                framerate,
+                backend=encoder_backend,
+            )
+            if encoder_pipeline_factory is None
+            else encoder_pipeline_factory(
+                video_config,
+                output_width,
+                output_height,
+                framerate,
+            )
+        )
+
+        if not isinstance(encoder_pipeline, VideoEncoderPipeline):
+            raise CameraConfigurationError(
+                "encoder_pipeline_factory must return VideoEncoderPipeline"
+            )
+
         pipeline += (
             f" camera_tee. ! queue name=video_queue {queue_policy} ! "
             f"{nvmm_caps} ! "
             f"{overlay}"
-            f"{encoder} name=video_encoder control-rate=1 "
-            f"bitrate={video_config.bitrate_bps} "
-            f"iframeinterval={video_config.keyframe_interval} "
-            f"idrinterval={video_config.keyframe_interval} "
-            "insert-sps-pps=1 insert-vui=1 "
-            f"maxperf-enable={int(video_config.max_performance)} "
-            f"MeasureEncoderLatency={int(video_config.measure_latency)} ! "
-            f"{parser} config-interval=-1 ! "
-            f"{encoded_caps}, stream-format=(string)byte-stream, "
-            "alignment=(string)au ! "
-            f"appsink name=video_sink {appsink_policy}"
+            f"{encoder_pipeline.pipeline}"
         )
 
     return pipeline

@@ -11,8 +11,9 @@ import pytest
 from imx_camera_toolkit import (
     CameraConfig,
     GpuCamera,
-    HardwareVideoConfig,
     VideoCodec,
+    VideoEncoderBackend,
+    VideoEncoderConfig,
 )
 from imx_camera_toolkit.consumers import InferenceConsumer
 from imx_camera_toolkit.inference import ShapeProfile, TensorRTRunner
@@ -20,10 +21,10 @@ from imx_camera_toolkit.inference import ShapeProfile, TensorRTRunner
 pytestmark = [pytest.mark.hardware, pytest.mark.benchmark]
 
 
-def test_720p_hardware_preview_remains_lightweight_during_tensorrt(
+def test_720p_production_preview_runs_during_tensorrt(
     tmp_path: Path,
 ) -> None:
-    """Hardware encode must sustain preview without consuming most of one CPU."""
+    """Production encode must sustain preview; NVENC must remain CPU-light."""
     if os.getenv("IMX_PRODUCTION_PREVIEW_HARDWARE") != "1":
         pytest.skip("set IMX_PRODUCTION_PREVIEW_HARDWARE=1 on the target Jetson")
 
@@ -47,6 +48,9 @@ def test_720p_hardware_preview_remains_lightweight_during_tensorrt(
         ),
         inference_shape=(1, 3, 640, 640),
     )
+    requested_backend = VideoEncoderBackend(
+        os.getenv("IMX_VIDEO_ENCODER_BACKEND", "auto")
+    )
     camera = GpuCamera(
         CameraConfig(
             capture_width=1280,
@@ -56,8 +60,9 @@ def test_720p_hardware_preview_remains_lightweight_during_tensorrt(
             fps=30,
             enable_preview=False,
         ),
-        video_config=HardwareVideoConfig(
+        video_config=VideoEncoderConfig(
             codec=VideoCodec.H264,
+            backend=requested_backend,
             bitrate_bps=4_000_000,
             keyframe_interval=30,
         ),
@@ -76,7 +81,13 @@ def test_720p_hardware_preview_remains_lightweight_during_tensorrt(
             elapsed_cpu = time.process_time() - started_cpu
             elapsed_wall = time.monotonic() - started_wall
             video = camera.video_stats
+            selected_backend = camera.video_encoder_backend
 
     assert video.encode_fps >= 25.0
     assert inference.processed_frames > 0
-    assert elapsed_cpu / elapsed_wall < 0.5
+
+    if selected_backend == VideoEncoderBackend.NVENC.value:
+        assert elapsed_cpu / elapsed_wall < 0.5
+
+    else:
+        assert selected_backend == VideoEncoderBackend.X264.value

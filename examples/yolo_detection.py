@@ -11,9 +11,9 @@ import uvicorn
 from imx_camera_toolkit import (
     CameraConfig,
     GpuCamera,
-    HardwareVideoConfig,
     ShapeProfile,
     TensorRTRunner,
+    VideoEncoderConfig,
 )
 from imx_camera_toolkit.consumers import InferenceConsumer
 from imx_camera_toolkit.inference import InferenceResult
@@ -74,7 +74,7 @@ def main() -> None:
             output_height=720,
             fps=30,
         ),
-        video_config=HardwareVideoConfig(),
+        video_config=VideoEncoderConfig(),
         experimental=True,
     )
     inference = InferenceConsumer(

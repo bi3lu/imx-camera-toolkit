@@ -11,9 +11,14 @@ from .metrics import (
 )
 from .stats import CameraStats
 from .video import (
+    EncodedStreamDescription,
     EncodedVideoFrame,
     HardwareVideoConfig,
     VideoCodec,
+    VideoEncoderBackend,
+    VideoEncoderConfig,
+    VideoEncoderPipeline,
+    VideoEncoderPipelineFactory,
     VideoEncodeStats,
     VideoOverlayRenderer,
 )
@@ -23,6 +28,7 @@ __all__ = [
     "CameraStats",
     "Frame",
     "FrameFormat",
+    "EncodedStreamDescription",
     "EncodedVideoFrame",
     "GpuBufferHandle",
     "GpuFrame",
@@ -34,6 +40,10 @@ __all__ = [
     "PipelineStage",
     "StageMetrics",
     "VideoCodec",
+    "VideoEncoderBackend",
+    "VideoEncoderConfig",
+    "VideoEncoderPipeline",
+    "VideoEncoderPipelineFactory",
     "VideoEncodeStats",
     "VideoOverlayRenderer",
 ]

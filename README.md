@@ -62,7 +62,7 @@ intermediate frames.
 | [`packages/frames`](packages/frames/README.md) | Minimal `FrameSource` protocol and adapter from the toolkit camera to external processing pipelines. |
 | [`packages/inference`](packages/inference/README.md) | Model-neutral inference contracts, validated TensorRT engine caching, and optional NvBufSurface/CUDA interop. |
 | [`packages/consumers`](packages/consumers/README.md) | Independent latest-frame slots, worker consumers, and inference-preview adaptation. |
-| [`packages/production_preview`](packages/production_preview/README.md) | Optional shared hardware H.264/H.265 encoding with WebRTC, HLS, GPU overlays, and client metrics. |
+| [`packages/production_preview`](packages/production_preview/README.md) | Optional shared H.264/H.265 encoding through NVENC or, for H.264, x264, with WebRTC, HLS, GPU overlays, and client metrics. |
 | [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
 | [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
 | [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
@@ -90,6 +90,7 @@ required because it integrates with NVIDIA's camera and GStreamer stack.
 | 6.2.2 | Orin Nano | IMX219-77 | `Camera`, `imx219-1080p` / 2 | 1920×1080 → 1280×720 at 30 FPS, BGR/CPU | tested |
 | 6.2.2 | Orin Nano | IMX219-77 | `GpuCamera` / 4 | 1280×720 at 30 FPS, NV12/NVMM + JPEG | tested |
 | 6.2.2 | Orin Nano | IMX219-77 | `GpuCamera` / 2 | 1920×1080 at 30 FPS, NV12/NVMM + JPEG | tested |
+| 6.2.2 | Orin Nano | IMX219-77 | `GpuCamera` + WebRTC / 4 | 1280×720 at 30 FPS, H.264/x264 | tested |
 | 6.2.2 | Orin Nano | IMX477 | `GpuCamera` | 1280×720 and 1920×1080 at 30 FPS | planned |
 
 Only rows marked `tested` have been verified on the stated hardware. “Planned”
@@ -114,7 +115,8 @@ uv add "imx-camera-toolkit[preview]"
 ```
 
 Install the production WebRTC/HLS HTTP layer separately; JetPack continues to
-provide GStreamer, the hardware encoders, and CUDA:
+provide GStreamer and CUDA. Orin Nano additionally needs the system x264
+GStreamer plugin because that SoC does not expose NVENC:
 
 ```bash
 uv add "imx-camera-toolkit[production-preview]"
@@ -150,12 +152,12 @@ uv run python -c "import cv2; print(cv2.__version__)"
 
 ## Using the toolkit as a Git dependency
 
-Add the stable branch to the consuming project's `pyproject.toml`:
+Pin the v0.5.1 release tag in the consuming project's `pyproject.toml`:
 
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.0"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.1"
 ]
 ```
 
@@ -175,7 +177,7 @@ To consume the Git dependency with the browser-preview extra, declare it as:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.0"
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.1"
 ]
 ```
 
@@ -305,8 +307,12 @@ TensorRT/ONNX Runtime parity test.
 ### Production preview
 
 MJPEG/OpenCV remains the intentionally simple debug transport. For deployed
-Jetson applications, pass `HardwareVideoConfig` to `GpuCamera` to add an
-independent `nvv4l2h264enc` or `nvv4l2h265enc` branch directly from NVMM.
+Jetson applications, pass `VideoEncoderConfig` to `GpuCamera`. Backend `AUTO`
+uses NVENC where present and falls back to CPU x264 on Orin Nano while keeping
+capture, inference, and overlay in NVMM. `HardwareVideoConfig` is retained as
+a compatibility alias. The built-in x264 backend supports H.264 only, so H.265
+requires NVENC and is not available on Orin Nano through the built-in backends.
+
 WebRTC is the preferred low-latency browser mode; HLS provides a rolling,
 reverse-proxy-friendly alternative.
 

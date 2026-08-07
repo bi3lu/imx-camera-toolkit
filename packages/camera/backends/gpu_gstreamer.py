@@ -12,6 +12,7 @@ from ..errors import (
     CameraReadError,
 )
 from ..models import (
+    EncodedStreamDescription,
     EncodedVideoFrame,
     FrameFormat,
     GpuBufferHandle,
@@ -45,6 +46,8 @@ class GpuGStreamerCaptureBackend:
         enable_preview: bool,
         video_config: HardwareVideoConfig | None = None,
         video_overlay: VideoOverlayRenderer | None = None,
+        stream_description: EncodedStreamDescription | None = None,
+        video_encoder_backend: str | None = None,
     ) -> None:
         """Initialize an unopened pipeline backend."""
         self._pipeline_description = pipeline
@@ -53,6 +56,8 @@ class GpuGStreamerCaptureBackend:
         self._enable_preview = enable_preview
         self._video_config = video_config
         self._video_overlay = video_overlay
+        self._stream_description = stream_description
+        self._video_encoder_backend = video_encoder_backend
         self._pipeline: Any | None = None
         self._source: Any | None = None
         self._gpu_sink: Any | None = None
@@ -70,10 +75,30 @@ class GpuGStreamerCaptureBackend:
         """Whether PyGObject GStreamer is importable without requiring NumPy."""
         return Gst is not None
 
+    @classmethod
+    def element_available(cls, name: str) -> bool:
+        """Return whether a named GStreamer factory exists."""
+        return Gst is not None and Gst.ElementFactory.find(name) is not None
+
+    @classmethod
+    def missing_elements(cls, names: tuple[str, ...]) -> tuple[str, ...]:
+        """Return all missing factories in stable input order."""
+        return tuple(name for name in names if not cls.element_available(name))
+
     @property
     def backend_name(self) -> str:
         """Stable backend name reported through health diagnostics."""
         return "gstreamer-nvmm"
+
+    @property
+    def video_encoder_backend(self) -> str | None:
+        """Resolved production encoder implementation."""
+        return self._video_encoder_backend
+
+    @property
+    def encoded_stream_description(self) -> EncodedStreamDescription | None:
+        """Newest encoder output caps and H.264 parameter sets."""
+        return self._stream_description
 
     @property
     def argus_source(self) -> Any | None:
@@ -217,7 +242,7 @@ class GpuGStreamerCaptureBackend:
         return bytes(buffer.extract_dup(0, buffer.get_size()))
 
     def read_video(self) -> EncodedVideoFrame | None:
-        """Pull one newest hardware-encoded access unit without raw pixels."""
+        """Pull one newest encoded access unit without raw pixels."""
         if self._overlay_error is not None:
             error = self._overlay_error
             self._overlay_error = None
@@ -237,8 +262,11 @@ class GpuGStreamerCaptureBackend:
         if buffer is None:
             raise CameraReadError("video appsink sample has no Gst.Buffer")
 
+        data = bytes(buffer.extract_dup(0, buffer.get_size()))
+        self._update_stream_description(sample.get_caps(), data)
         self._video_sequence += 1
         pts_ns = None if buffer.pts == Gst.CLOCK_TIME_NONE else int(buffer.pts)
+        dts_ns = None if buffer.dts == Gst.CLOCK_TIME_NONE else int(buffer.dts)
         duration_ns = (
             None if buffer.duration == Gst.CLOCK_TIME_NONE else int(buffer.duration)
         )
@@ -246,10 +274,63 @@ class GpuGStreamerCaptureBackend:
             sequence=self._video_sequence,
             timestamp_ns=time.monotonic_ns(),
             codec=self._video_config.codec,
-            data=bytes(buffer.extract_dup(0, buffer.get_size())),
+            data=data,
             keyframe=not buffer.has_flags(Gst.BufferFlags.DELTA_UNIT),
             pts_ns=pts_ns,
+            dts_ns=dts_ns,
             duration_ns=duration_ns,
+            stream_description=self._stream_description,
+        )
+
+    def _update_stream_description(self, caps: object, data: bytes) -> None:
+        """Refresh portable stream metadata from negotiated caps and SPS/PPS."""
+        if self._video_config is None:
+            return
+
+        previous = self._stream_description
+        profile = None if previous is None else previous.profile
+        level = None if previous is None else previous.level
+        stream_format = "byte-stream" if previous is None else previous.stream_format
+        alignment = "au" if previous is None else previous.alignment
+        codec_data = None if previous is None else previous.codec_data
+
+        if caps is not None:
+            structure = caps.get_structure(0)  # type: ignore[attr-defined]
+
+            if structure is not None:
+                profile = structure.get_string("profile") or profile
+                level = structure.get_string("level") or level
+                stream_format = (
+                    structure.get_string("stream-format") or stream_format
+                )
+                alignment = structure.get_string("alignment") or alignment
+
+                if structure.has_field("codec_data"):
+                    value = structure.get_value("codec_data")
+
+                    if value is not None and hasattr(value, "extract_dup"):
+                        codec_data = bytes(value.extract_dup(0, value.get_size()))
+
+        sps = None if previous is None else previous.sps
+        pps = None if previous is None else previous.pps
+
+        if self._video_config.codec.value == "H264":
+            found_sps, found_pps = _h264_parameter_sets(data)
+            sps = found_sps or sps
+            pps = found_pps or pps
+
+        self._stream_description = EncodedStreamDescription(
+            codec=self._video_config.codec,
+            stream_format=stream_format,
+            alignment=alignment,
+            profile=profile,
+            level=level,
+            width=self._output_width,
+            height=self._output_height,
+            fps=None if previous is None else previous.fps,
+            codec_data=codec_data,
+            sps=sps,
+            pps=pps,
         )
 
     def _render_video_overlay(self, _: object, info: object) -> object:
@@ -321,3 +402,40 @@ class GpuGStreamerCaptureBackend:
         self._overlay_pad = None
         self._overlay_probe_id = None
         self._overlay_error = None
+
+
+def _h264_parameter_sets(data: bytes) -> tuple[bytes | None, bytes | None]:
+    """Extract raw SPS/PPS NAL units from an Annex-B access unit."""
+    starts: list[tuple[int, int]] = []
+    index = 0
+
+    while index <= len(data) - 3:
+        if data[index : index + 4] == b"\x00\x00\x00\x01":
+            starts.append((index, 4))
+            index += 4
+
+        elif data[index : index + 3] == b"\x00\x00\x01":
+            starts.append((index, 3))
+            index += 3
+
+        else:
+            index += 1
+
+    sps: bytes | None = None
+    pps: bytes | None = None
+
+    for position, (start, prefix_size) in enumerate(starts):
+        end = starts[position + 1][0] if position + 1 < len(starts) else len(data)
+        nal = data[start + prefix_size : end]
+
+        if not nal:
+            continue
+        nal_type = nal[0] & 0x1F
+
+        if nal_type == 7:
+            sps = nal
+
+        elif nal_type == 8:
+            pps = nal
+
+    return sps, pps

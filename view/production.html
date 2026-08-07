@@ -21,67 +21,231 @@
     let clientId = null;
     let peer = null;
     let candidateCursor = 0;
+    let candidateTimer = null;
+    let statsTimer = null;
+    let reconnectTimer = null;
+    let reconnectAttempt = 0;
+    let generation = 0;
+    let connecting = false;
+    let stopped = false;
+    let lastMediaProgressAt = performance.now();
+    let lastPacketsReceived = 0;
+
+    class HttpError extends Error {
+      constructor(statusCode, message) {
+        super(message);
+        this.statusCode = statusCode;
+      }
+    }
 
     async function request(path, options = {}) {
       const response = await fetch(path, options);
-      if (!response.ok) throw new Error(await response.text());
+      if (!response.ok) {
+        throw new HttpError(response.status, await response.text());
+      }
       if (response.status === 204) return null;
       return response.json();
     }
 
-    async function pollCandidates() {
-      if (!clientId || !peer) return;
-      const response = await request(
-        `/api/preview/webrtc/${clientId}/candidates?after=${candidateCursor}`
-      );
-      for (const candidate of response.candidates) {
-        await peer.addIceCandidate(candidate);
+    function clearTimers() {
+      clearTimeout(candidateTimer);
+      clearTimeout(statsTimer);
+      candidateTimer = null;
+      statsTimer = null;
+    }
+
+    function closeSession() {
+      clearTimers();
+      const oldClientId = clientId;
+      clientId = null;
+      candidateCursor = 0;
+      if (peer) peer.close();
+      peer = null;
+      video.onerror = null;
+      video.srcObject = null;
+      video.removeAttribute("src");
+      if (oldClientId) {
+        fetch(`/api/preview/session/${oldClientId}`, {
+          method: "DELETE", keepalive: true
+        }).catch(() => {});
       }
-      candidateCursor = response.next;
-      setTimeout(pollCandidates, 250);
+    }
+
+    function scheduleReconnect(reason) {
+      if (stopped || reconnectTimer) return;
+      generation += 1;
+      connecting = false;
+      closeSession();
+      const delay = Math.min(500 * (2 ** reconnectAttempt), 8000);
+      reconnectAttempt += 1;
+      status.textContent = `${reason}; reconnecting in ${delay} ms`;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect().catch(error => scheduleReconnect(`Preview error: ${error}`));
+      }, delay);
+    }
+
+    async function pollCandidates(sessionGeneration) {
+      if (sessionGeneration !== generation || !clientId || !peer) return;
+      const activeClientId = clientId;
+      const activePeer = peer;
+      try {
+        const response = await request(
+          `/api/preview/webrtc/${activeClientId}/candidates?after=${candidateCursor}`
+        );
+        if (sessionGeneration !== generation || peer !== activePeer) return;
+        for (const candidate of response.candidates) {
+          await activePeer.addIceCandidate(candidate);
+        }
+        candidateCursor = response.next;
+        candidateTimer = setTimeout(
+          () => pollCandidates(sessionGeneration), 250
+        );
+      } catch (error) {
+        if (error.statusCode === 404 || error.statusCode === 410) {
+          scheduleReconnect("Signaling session expired");
+        } else {
+          scheduleReconnect(`Candidate polling failed: ${error}`);
+        }
+      }
+    }
+
+    async function updateMediaStats(sessionGeneration) {
+      if (sessionGeneration !== generation || !peer) return;
+      const activeClientId = clientId;
+      const activePeer = peer;
+      let packetsReceived = 0;
+      let bytesReceived = 0;
+      let framesReceived = 0;
+      let framesDecoded = 0;
+      let packetsLost = 0;
+      let jitterMs = null;
+      let rttMs = null;
+      for (const report of (await activePeer.getStats()).values()) {
+        if (report.type === "inbound-rtp" &&
+            (report.kind ?? report.mediaType) === "video") {
+          packetsReceived += report.packetsReceived || 0;
+          bytesReceived += report.bytesReceived || 0;
+          framesReceived += report.framesReceived || 0;
+          framesDecoded += report.framesDecoded || 0;
+          packetsLost += report.packetsLost || 0;
+          if (Number.isFinite(report.jitter)) jitterMs = report.jitter * 1000;
+        }
+        if (report.type === "remote-inbound-rtp" &&
+            Number.isFinite(report.roundTripTime)) {
+          rttMs = report.roundTripTime * 1000;
+        }
+      }
+      if (sessionGeneration !== generation || peer !== activePeer) return;
+      if (packetsReceived > lastPacketsReceived) {
+        lastMediaProgressAt = performance.now();
+        lastPacketsReceived = packetsReceived;
+      }
+      const idleSeconds = (performance.now() - lastMediaProgressAt) / 1000;
+      let mediaState = packetsReceived > 0 ? "active" : "starting";
+      if (idleSeconds > 4) mediaState = packetsReceived > 0 ? "stalled" : "failed";
+      status.textContent =
+        `WebRTC: ${activePeer.connectionState}; media ${mediaState}; ` +
+        `packets ${packetsReceived}; bytes ${bytesReceived}; ` +
+        `frames ${framesReceived}/${framesDecoded}; idle ${idleSeconds.toFixed(1)}s`;
+      request(`/api/preview/webrtc/${activeClientId}/feedback`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          packets_received: packetsReceived,
+          bytes_received: bytesReceived,
+          frames_received: framesReceived,
+          frames_decoded: framesDecoded,
+          packets_lost: packetsLost,
+          jitter_ms: jitterMs,
+          rtt_ms: rttMs
+        })
+      }).catch(error => {
+        if (error.statusCode === 404 || error.statusCode === 410) {
+          scheduleReconnect("Signaling session expired");
+        }
+      });
+      statsTimer = setTimeout(() => updateMediaStats(sessionGeneration), 1000);
     }
 
     async function connect() {
+      if (stopped || connecting) return;
+      connecting = true;
+      closeSession();
+      const sessionGeneration = ++generation;
       const session = await request("/api/preview/session", {method: "POST"});
+      if (sessionGeneration !== generation) {
+        fetch(`/api/preview/session/${session.client_id}`, {
+          method: "DELETE"
+        }).catch(() => {});
+        return;
+      }
       clientId = session.client_id;
       if (session.transport === "hls") {
         video.src = session.playlist_url;
         status.textContent = "HLS";
-        await video.play();
+        video.onerror = () => scheduleReconnect("HLS media failed");
+        await video.play().catch(error => {
+          status.textContent = `HLS playback blocked: ${error}`;
+        });
+        connecting = false;
+        reconnectAttempt = 0;
         return;
       }
 
       peer = new RTCPeerConnection();
-      peer.ontrack = event => { video.srcObject = event.streams[0]; };
-      peer.onconnectionstatechange = () => {
-        status.textContent = `WebRTC: ${peer.connectionState}`;
+      const sessionPeer = peer;
+      const sessionClientId = clientId;
+      sessionPeer.ontrack = event => {
+        const stream = event.streams[0] ?? new MediaStream([event.track]);
+        video.srcObject = stream;
+        video.play().catch(error => {
+          status.textContent = `Playback blocked: ${error}`;
+        });
       };
-      peer.onicecandidate = event => {
+      sessionPeer.onconnectionstatechange = () => {
+        if (sessionGeneration !== generation) return;
+        if (sessionPeer.connectionState === "connected") reconnectAttempt = 0;
+        if (["failed", "disconnected"].includes(sessionPeer.connectionState)) {
+          scheduleReconnect(`WebRTC ${sessionPeer.connectionState}`);
+        }
+      };
+      sessionPeer.onicecandidate = event => {
+        if (sessionGeneration !== generation) return;
         if (!event.candidate) return;
-        request(`/api/preview/webrtc/${clientId}/candidate`, {
+        request(`/api/preview/webrtc/${sessionClientId}/candidate`, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify(event.candidate.toJSON())
-        }).catch(console.error);
+        }).catch(error => {
+          if (error.statusCode === 404 || error.statusCode === 410) {
+            scheduleReconnect("Signaling session expired");
+          } else {
+            console.error(error);
+          }
+        });
       };
-      await peer.setRemoteDescription(session.offer);
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-      await request(`/api/preview/webrtc/${clientId}/answer`, {
+      await sessionPeer.setRemoteDescription(session.offer);
+      const answer = await sessionPeer.createAnswer();
+      await sessionPeer.setLocalDescription(answer);
+      await request(`/api/preview/webrtc/${sessionClientId}/answer`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(answer)
       });
-      pollCandidates();
+      connecting = false;
+      lastMediaProgressAt = performance.now();
+      lastPacketsReceived = 0;
+      pollCandidates(sessionGeneration);
+      updateMediaStats(sessionGeneration);
     }
 
     addEventListener("beforeunload", () => {
-      if (clientId) fetch(`/api/preview/session/${clientId}`, {
-        method: "DELETE", keepalive: true
-      });
-      if (peer) peer.close();
+      stopped = true;
+      clearTimeout(reconnectTimer);
+      closeSession();
     });
-    connect().catch(error => { status.textContent = `Preview error: ${error}`; });
+    connect().catch(error => scheduleReconnect(`Preview error: ${error}`));
   </script>
 </body>
 </html>
