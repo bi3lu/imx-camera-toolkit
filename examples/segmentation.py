@@ -41,9 +41,7 @@ def main() -> None:
                 continue
 
             mask = next(
-                output
-                for output in result.outputs
-                if output.name == args.mask_output
+                output for output in result.outputs if output.name == args.mask_output
             )
             print(
                 f"frame={result.frame_sequence} mask={mask.name} "

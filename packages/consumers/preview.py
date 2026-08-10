@@ -202,9 +202,7 @@ class InferencePreviewSource:
                     )
                 previous_frame_number = frame_number
                 result = self._inference.latest_result
-                timestamp_ns = (
-                    None if result is None else result.frame_timestamp_ns
-                )
+                timestamp_ns = None if result is None else result.frame_timestamp_ns
                 context = PreviewOverlayContext(
                     preview_frame_number=frame_number,
                     result_frame_sequence=(
@@ -224,9 +222,7 @@ class InferencePreviewSource:
                 try:
                     rendered = self._renderer(jpeg, result, context)
                     if not isinstance(rendered, bytes) or not rendered:
-                        raise ValueError(
-                            "renderer must return non-empty JPEG bytes"
-                        )
+                        raise ValueError("renderer must return non-empty JPEG bytes")
 
                     published = self._publisher.publish(rendered)
 

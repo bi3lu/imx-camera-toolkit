@@ -23,9 +23,7 @@ def _encoded_caps(stream: VideoCodec | EncodedStreamDescription) -> str:
     """Return access-unit caps derived from the actual encoder description."""
     description = _description(stream)
     media_type = (
-        "video/x-h264"
-        if description.codec is VideoCodec.H264
-        else "video/x-h265"
+        "video/x-h264" if description.codec is VideoCodec.H264 else "video/x-h265"
     )
     fields = [
         f"stream-format=(string){description.stream_format}",
@@ -90,9 +88,7 @@ def build_webrtc_peer_pipeline(
         "clock-rate=(int)90000,payload=(int)96,packetization-mode=(string)1"
     )
     if description.profile_level_id is not None:
-        rtp_caps += (
-            ",profile-level-id=(string)" + description.profile_level_id
-        )
+        rtp_caps += ",profile-level-id=(string)" + description.profile_level_id
     return (
         "webrtcbin name=webrtc bundle-policy=max-bundle "
         f"latency={config.webrtc_latency_ms} "

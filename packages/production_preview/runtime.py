@@ -48,9 +48,7 @@ def load_gstreamer_runtime(
             if webrtc
             else ("appsrc", "queue", "hlssink2")
         ) + required_elements
-        missing = [
-            name for name in required if gst.ElementFactory.find(name) is None
-        ]
+        missing = [name for name in required if gst.ElementFactory.find(name) is None]
 
         if missing:
             formatted = ", ".join(missing)
@@ -58,9 +56,7 @@ def load_gstreamer_runtime(
                 f"required GStreamer element(s) unavailable: {formatted}"
             )
 
-        gst_sdp = (
-            importlib.import_module("gi.repository.GstSdp") if webrtc else None
-        )
+        gst_sdp = importlib.import_module("gi.repository.GstSdp") if webrtc else None
 
         gst_webrtc = (
             importlib.import_module("gi.repository.GstWebRTC") if webrtc else None

@@ -6,6 +6,7 @@ import logging
 import re
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -192,9 +193,7 @@ class HLSPackager:
 
         directory.mkdir(parents=True, exist_ok=True)
         parser = (
-            "h264parse"
-            if self._video_config.codec is VideoCodec.H264
-            else "h265parse"
+            "h264parse" if self._video_config.codec is VideoCodec.H264 else "h265parse"
         )
         runtime = load_gstreamer_runtime(required_elements=(parser,))
         pipeline_description = build_hls_transport_pipeline(
@@ -309,8 +308,7 @@ class WebRTCPeer:
         payloader = pipeline.get_by_name("peer_payloader")
 
         if any(
-            item is None
-            for item in (appsrc, webrtc, peer_queue, parser, payloader)
+            item is None for item in (appsrc, webrtc, peer_queue, parser, payloader)
         ):
             pipeline.set_state(runtime.Gst.State.NULL)
             raise ProductionPreviewDependencyError(
@@ -476,6 +474,7 @@ class WebRTCPeer:
             frame,
             self._timeline,
         )
+
         if pushed:
             self._metrics.record_pushed(self.client_id, len(frame.data))
 
@@ -483,6 +482,7 @@ class WebRTCPeer:
         """Mark successful access-unit flow beyond h264parse."""
         if self._runtime is None:
             return 0
+
         self._metrics.record_flow(self.client_id, parser="ok")
         return self._runtime.Gst.PadProbeReturn.OK
 
@@ -491,16 +491,20 @@ class WebRTCPeer:
         if self._runtime is None:
             return 0
         buffer = info.get_buffer()  # type: ignore[attr-defined]
+
         if buffer is not None:
             self._metrics.record_rtp(self.client_id, int(buffer.get_size()))
+
         return self._runtime.Gst.PadProbeReturn.OK
 
     def _monitor_bus(self) -> None:
         """Continuously surface asynchronous parser/RTP/WebRTC failures."""
         runtime = self._runtime
         pipeline = self._pipeline
+
         if runtime is None or pipeline is None:
             return
+
         gst = runtime.Gst
         bus = pipeline.get_bus()
         mask = gst.MessageType.ERROR | gst.MessageType.WARNING | gst.MessageType.EOS
@@ -536,8 +540,10 @@ class WebRTCPeer:
             if message.type == gst.MessageType.ERROR:
                 error, debug = message.parse_error()
                 detail = f"{source_name}: {error}"
+
                 if debug:
                     detail += f" ({debug})"
+
             else:
                 detail = f"{source_name}: end of stream"
 
@@ -638,6 +644,8 @@ class ProductionPreviewServer:
         self._hls: HLSPackager | None = None
         self._peers: dict[str, WebRTCPeer] = {}
         self._hls_last_segment: dict[str, int] = {}
+        self._remote_candidate_counts: dict[str, int] = {}
+        self._session_times: deque[float] = deque()
 
     @property
     def config(self) -> ProductionPreviewConfig:
@@ -687,9 +695,11 @@ class ProductionPreviewServer:
                 )
                 try:
                     hls.start()
+
                 except Exception:
                     hls.stop()
                     raise
+
                 self._hls = hls
 
             self._running = True
@@ -700,6 +710,8 @@ class ProductionPreviewServer:
             self._running = False
             peers = tuple(self._peers.values())
             self._peers.clear()
+            self._remote_candidate_counts.clear()
+            self._session_times.clear()
             hls = self._hls
             self._hls = None
 
@@ -713,6 +725,7 @@ class ProductionPreviewServer:
     def create_webrtc_session(self) -> tuple[str, str]:
         """Create one peer and return its identifier and SDP offer."""
         self._expire_clients()
+        self._consume_session_slot()
         stream_description = self._wait_for_stream_description()
         with self._lock:
             self._require_transport(PreviewTransport.WEBRTC)
@@ -737,10 +750,17 @@ class ProductionPreviewServer:
                 raise
 
             self._peers[client_id] = peer
+            self._remote_candidate_counts[client_id] = 0
             return client_id, offer
 
     def set_webrtc_answer(self, client_id: str, sdp: str) -> None:
         """Set an answer on an existing WebRTC peer."""
+        if not isinstance(sdp, str) or not sdp.strip():
+            raise ValueError("sdp must be a non-empty string")
+
+        if len(sdp.encode("utf-8")) > self._config.max_sdp_bytes:
+            raise ValueError("sdp exceeds max_sdp_bytes")
+
         self._peer(client_id).set_answer(sdp)
 
     def add_webrtc_candidate(
@@ -750,7 +770,28 @@ class ProductionPreviewServer:
         candidate: str,
     ) -> None:
         """Add a browser ICE candidate to an existing peer."""
-        self._peer(client_id).add_remote_candidate(mline_index, candidate)
+        if (
+            isinstance(mline_index, bool)
+            or not isinstance(mline_index, int)
+            or not 0 <= mline_index <= 65_535
+        ):
+            raise ValueError("mline_index must be between 0 and 65535")
+
+        if not isinstance(candidate, str) or not candidate.strip():
+            raise ValueError("candidate must be a non-empty string")
+
+        if len(candidate.encode("utf-8")) > self._config.max_ice_candidate_bytes:
+            raise ValueError("candidate exceeds max_ice_candidate_bytes")
+
+        with self._lock:
+            peer = self._peer(client_id)
+            count = self._remote_candidate_counts.get(client_id, 0)
+
+            if count >= self._config.max_ice_candidates_per_session:
+                raise ValueError("remote ICE candidate limit reached")
+
+            peer.add_remote_candidate(mline_index, candidate)
+            self._remote_candidate_counts[client_id] = count + 1
 
     def webrtc_candidates(
         self,
@@ -788,6 +829,8 @@ class ProductionPreviewServer:
     def create_hls_session(self) -> str:
         """Register an HLS browser for client-count and segment-drop metrics."""
         self._expire_clients()
+        self._consume_session_slot()
+
         with self._lock:
             self._require_transport(PreviewTransport.HLS)
             client_id = uuid4().hex
@@ -798,6 +841,7 @@ class ProductionPreviewServer:
     def hls_asset(self, client_id: str, asset: str) -> Path:
         """Resolve a safe playlist/segment and record per-client segment gaps."""
         self._expire_clients()
+
         with self._lock:
             self._require_transport(PreviewTransport.HLS)
             directory = self._config.hls_directory
@@ -843,10 +887,24 @@ class ProductionPreviewServer:
         with self._lock:
             peer = self._peers.pop(client_id, None)
             self._hls_last_segment.pop(client_id, None)
+            self._remote_candidate_counts.pop(client_id, None)
             self._metrics.disconnect(client_id)
 
         if peer is not None:
             peer.stop()
+
+    def _consume_session_slot(self) -> None:
+        """Bound global session creation independently of active clients."""
+        now = time.monotonic()
+
+        with self._lock:
+            while self._session_times and now - self._session_times[0] >= 1.0:
+                self._session_times.popleft()
+
+            if len(self._session_times) >= self._config.max_new_sessions_per_second:
+                raise RuntimeError("production preview session rate limit reached")
+
+            self._session_times.append(now)
 
     def stats(self) -> ProductionPreviewStats:
         """Return encode FPS/bitrate, client count, and per-client drops."""
@@ -876,10 +934,7 @@ class ProductionPreviewServer:
 
     def _wait_for_stream_description(self) -> EncodedStreamDescription:
         """Wait briefly for real H.264 SPS instead of guessing SDP fmtp."""
-        deadline = (
-            time.monotonic()
-            + self._config.stream_description_timeout_seconds
-        )
+        deadline = time.monotonic() + self._config.stream_description_timeout_seconds
         description = self._stream_description
 
         while True:
@@ -888,6 +943,7 @@ class ProductionPreviewServer:
                 "encoded_stream_description",
                 None,
             )
+
             if isinstance(latest, EncodedStreamDescription):
                 description = latest
                 self._stream_description = latest
@@ -918,6 +974,7 @@ class ProductionPreviewServer:
 
             for client_id in expired:
                 self._hls_last_segment.pop(client_id, None)
+                self._remote_candidate_counts.pop(client_id, None)
 
         for peer in peers:
             peer.stop()

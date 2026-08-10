@@ -72,8 +72,7 @@ def non_manual_control_properties(properties: Sequence[str]) -> tuple[str, ...]:
     return tuple(
         property_value
         for property_value in properties
-        if property_value.split("=", maxsplit=1)[0]
-        not in MANUAL_CONTROL_PROPERTY_NAMES
+        if property_value.split("=", maxsplit=1)[0] not in MANUAL_CONTROL_PROPERTY_NAMES
     )
 
 

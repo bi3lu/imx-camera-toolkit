@@ -226,13 +226,9 @@ class GpuFrame:
                     "GPU frame lease expired after a newer frame was published"
                 )
 
-            retained_buffer = (
-                None if self.buffer is None else self.buffer.retain()
-            )
+            retained_buffer = None if self.buffer is None else self.buffer.retain()
 
-            retained_fd = (
-                None if self.dmabuf_fd is None else os.dup(self.dmabuf_fd)
-            )
+            retained_fd = None if self.dmabuf_fd is None else os.dup(self.dmabuf_fd)
 
         retained = GpuFrame(
             sequence=self.sequence if sequence is None else sequence,

@@ -80,7 +80,7 @@ transport = ProductionPreviewServer(camera, ProductionPreviewConfig())
 app = create_production_preview_app(transport)
 
 with camera:
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 ```
 
 The bundled browser view performs server-offer SDP negotiation and trickle ICE
@@ -88,6 +88,12 @@ over small REST messages. Configure `stun_server` and `turn_server` for clients
 outside the local network. Each peer receives its own single encoded-frame
 slot and leaky RTP queue; slow peers cannot delay capture, inference, encoding,
 or another peer.
+
+`ProductionPreviewConfig` bounds SDP bytes, ICE candidate bytes, remote
+candidates per session, and global new sessions per second. Field deployment
+should pass the same `SecurityConfig` used by the camera API to
+`create_production_preview_app()`: signaling and HLS require `stream:read`,
+full client diagnostics require `admin`, and `/healthz` remains minimal.
 
 `AUTO` selects `nvv4l2h264enc` where NVENC exists and otherwise selects
 `x264enc`. Explicit `NVENC` and `X264` policies fail preflight with the complete
@@ -171,7 +177,7 @@ production `GpuCamera` rejects a host-memory renderer on its NVMM branch.
 
 ## Metrics and validation
 
-`GET /api/preview/health` reports:
+Authenticated `GET /debug/health` reports:
 
 - selected encoder backend, negotiated caps/SPS status, encode FPS and bitrate;
 - cumulative encoded frames and bytes;

@@ -71,9 +71,7 @@ class RawFramePublisher:
             self._frame = Frame(
                 image=frame,
                 sequence=self._frame_number,
-                timestamp_ns=(
-                    monotonic_ns() if timestamp_ns is None else timestamp_ns
-                ),
+                timestamp_ns=(monotonic_ns() if timestamp_ns is None else timestamp_ns),
                 capture_timestamp_ns=capture_timestamp_ns,
                 width=width,
                 height=height,

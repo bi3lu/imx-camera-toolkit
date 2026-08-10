@@ -6,7 +6,7 @@ import logging
 
 from imx_camera_toolkit.api import create_app
 
-HOST = "0.0.0.0"
+HOST = "127.0.0.1"
 PORT = 8000
 
 

@@ -1,27 +1,31 @@
 [project]
 name = "imx-camera-toolkit"
-version = "0.5.2"
+version = "0.6.0"
 description = "CSI IMX camera capture, control, and streaming toolkit for NVIDIA Jetson"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = []
 
 [project.optional-dependencies]
 preview = [
     "fastapi>=0.116,<1.0",
+    "pyyaml>=6.0,<7.0",
     "uvicorn>=0.35,<1.0",
 ]
 production-preview = [
     "fastapi>=0.116,<1.0",
+    "pyyaml>=6.0,<7.0",
     "uvicorn>=0.35,<1.0",
 ]
 tensorrt = [
+    "cryptography>=50.0,<51",
     "numpy>=1.24,<2.0",
     "pybind11>=2.11,<3.0",
 ]
 tensorrt-test = [
+    "cryptography>=50.0,<51",
     "numpy>=1.24,<2.0",
-    "onnx>=1.16,<2.0",
+    "onnx>=1.22,<2.0",
     "onnxruntime>=1.18,<1.24",
     "pybind11>=2.11,<3.0",
 ]
@@ -48,9 +52,12 @@ packages = ["packages", "imx_camera_toolkit"]
 
 [dependency-groups]
 dev = [
+    "black>=25.1,<27.0",
+    "cryptography>=50.0,<51",
     "httpx>=0.28,<1.0",
     "mypy>=1.15,<2.0",
-    "pytest>=8.3,<9.0",
+    "pre-commit>=4.3,<5.0",
+    "pytest>=9.0.3,<10.0",
     "pytest-cov>=6.0,<7.0",
     "ruff>=0.9,<1.0",
 ]
@@ -69,13 +76,24 @@ target-version = "py310"
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM"]
+select = ["E", "F", "I", "B", "UP", "SIM", "S"]
+ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["imx_camera_toolkit", "packages"]
 
 [tool.ruff.lint.per-file-ignores]
 "packages/api/api.py" = ["B008"]
+"packages/camera/controls/v4l2.py" = ["S603"]
+"packages/camera_control/capabilities/argus.py" = ["S603"]
+"packages/diagnostics.py" = ["S603"]
+"packages/inference/build.py" = ["S603", "S607"]
+"packages/telemetry.py" = ["S603"]
+"tests/**/*.py" = ["S101", "S104"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
 
 [tool.mypy]
 python_version = "3.10"

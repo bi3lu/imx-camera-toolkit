@@ -93,9 +93,7 @@ def main() -> None:
             left, top, right, bottom = (max(round(value), 0) for value in row[:4])
 
             if right > left and bottom > top:
-                overlays.append(
-                    OverlayRectangle(left, top, right - left, bottom - top)
-                )
+                overlays.append(OverlayRectangle(left, top, right - left, bottom - top))
         return tuple(overlays)
 
     overlay = CudaOverlayRenderer(inference, mapper=rectangles)
@@ -105,7 +103,7 @@ def main() -> None:
 
     try:
         with camera, inference:
-            uvicorn.run(app, host="0.0.0.0", port=args.port)
+            uvicorn.run(app, host="127.0.0.1", port=args.port)
 
     finally:
         overlay.close()

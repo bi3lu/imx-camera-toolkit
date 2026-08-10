@@ -57,10 +57,7 @@ class EncodedVideoPublisher:
                 if elapsed_ns > 0:
                     fps = (len(self._samples) - 1) * 1_000_000_000 / elapsed_ns
                     bitrate = (
-                        (
-                            sum(size for _, size in self._samples)
-                            - self._samples[0][1]
-                        )
+                        (sum(size for _, size in self._samples) - self._samples[0][1])
                         * 8
                         * 1_000_000_000
                         / elapsed_ns

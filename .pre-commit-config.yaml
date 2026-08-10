@@ -1,0 +1,45 @@
+fail_fast: true
+
+repos:
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+      - id: check-useless-excludes
+
+  - repo: local
+    hooks:
+      - id: whitespace
+        name: Check staged whitespace
+        entry: git diff --check --cached
+        language: system
+        pass_filenames: false
+
+      - id: uv-lock
+        name: Check uv lockfile
+        entry: uv lock --check
+        language: system
+        pass_filenames: false
+
+      - id: ruff
+        name: Ruff lint
+        entry: uv run --frozen ruff check .
+        language: system
+        pass_filenames: false
+
+      - id: black
+        name: Black format
+        entry: uv run --frozen black .
+        language: system
+        pass_filenames: false
+
+      - id: mypy
+        name: Mypy strict type check
+        entry: uv run --frozen mypy imx_camera_toolkit packages tests
+        language: system
+        pass_filenames: false
+
+      - id: pytest
+        name: Host unit and integration tests
+        entry: uv run --frozen pytest tests/unit tests/integration -m "not hardware and not benchmark" --no-cov
+        language: system
+        pass_filenames: false

@@ -84,6 +84,4 @@ class V4L2Controls:
 
         if result.returncode != 0:
             message = result.stderr.strip() or result.stdout.strip()
-            raise CameraReadError(
-                f"Could not apply V4L2 camera controls: {message}"
-            )
+            raise CameraReadError(f"Could not apply V4L2 camera controls: {message}")

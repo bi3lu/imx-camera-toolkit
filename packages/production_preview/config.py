@@ -34,6 +34,10 @@ class ProductionPreviewConfig:
     hls_playlist_length: int = 3
     hls_max_files: int = 5
     stream_description_timeout_seconds: float = 2.0
+    max_sdp_bytes: int = 64 * 1024
+    max_ice_candidate_bytes: int = 4 * 1024
+    max_ice_candidates_per_session: int = 64
+    max_new_sessions_per_second: int = 4
 
     def __post_init__(self) -> None:
         """Validate transport limits without importing optional runtimes."""
@@ -41,16 +45,29 @@ class ProductionPreviewConfig:
             raise ProductionPreviewConfigurationError(
                 "transport must be a PreviewTransport"
             )
-        for name in ("max_clients", "webrtc_latency_ms"):
+
+        integer_limits = {
+            "max_clients": 1024,
+            "webrtc_latency_ms": 60_000,
+            "hls_target_duration": 3_600,
+            "hls_playlist_length": 10_000,
+            "hls_max_files": 10_000,
+            "max_sdp_bytes": 1024 * 1024,
+            "max_ice_candidate_bytes": 64 * 1024,
+            "max_ice_candidates_per_session": 4096,
+            "max_new_sessions_per_second": 1000,
+        }
+
+        for name, maximum in integer_limits.items():
             value = getattr(self, name)
 
             if (
                 isinstance(value, bool)
                 or not isinstance(value, int)
-                or value <= 0
+                or not 0 < value <= maximum
             ):
                 raise ProductionPreviewConfigurationError(
-                    f"{name} must be a positive integer"
+                    f"{name} must be a positive integer no greater than {maximum}"
                 )
 
         for name in (
@@ -63,26 +80,10 @@ class ProductionPreviewConfig:
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
                 or not isfinite(value)
-                or value <= 0
+                or not 0 < value <= 3_600
             ):
                 raise ProductionPreviewConfigurationError(
                     f"{name} must be finite and positive"
-                )
-
-        for name in (
-            "hls_target_duration",
-            "hls_playlist_length",
-            "hls_max_files",
-        ):
-            value = getattr(self, name)
-
-            if (
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value <= 0
-            ):
-                raise ProductionPreviewConfigurationError(
-                    f"{name} must be a positive integer"
                 )
 
         if self.hls_playlist_length < 3:
@@ -98,9 +99,7 @@ class ProductionPreviewConfig:
         for name in ("stun_server", "turn_server"):
             value = getattr(self, name)
 
-            if value is not None and (
-                not isinstance(value, str) or not value.strip()
-            ):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ProductionPreviewConfigurationError(
                     f"{name} must be a non-empty string or None"
                 )
@@ -116,9 +115,8 @@ class ProductionPreviewConfig:
     def validate_codec(self, codec: VideoCodec) -> None:
         """Reject codec/transport pairs unsupported by common browsers."""
         if not isinstance(codec, VideoCodec):
-            raise ProductionPreviewConfigurationError(
-                "codec must be a VideoCodec"
-            )
+            raise ProductionPreviewConfigurationError("codec must be a VideoCodec")
+
         if self.transport is PreviewTransport.WEBRTC and codec is VideoCodec.H265:
             raise ProductionPreviewConfigurationError(
                 "WebRTC preview requires H.264 for broad browser compatibility; "

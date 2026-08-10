@@ -339,9 +339,7 @@ class GpuGStreamerCaptureBackend:
             if structure is not None:
                 profile = structure.get_string("profile") or profile
                 level = structure.get_string("level") or level
-                stream_format = (
-                    structure.get_string("stream-format") or stream_format
-                )
+                stream_format = structure.get_string("stream-format") or stream_format
                 alignment = structure.get_string("alignment") or alignment
 
                 if structure.has_field("codec_data"):
@@ -464,9 +462,7 @@ class GpuGStreamerCaptureBackend:
 def _is_argus_already_allocated(detail: object) -> bool:
     """Recognize Argus resource conflicts across common message spellings."""
     normalized = "".join(
-        character
-        for character in str(detail).lower()
-        if character.isalnum()
+        character for character in str(detail).lower() if character.isalnum()
     )
     return "alreadyallocated" in normalized
 

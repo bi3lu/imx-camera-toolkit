@@ -77,8 +77,37 @@ def _build_parser() -> argparse.ArgumentParser:
         aliases=("serve",),
         help="start the simple browser camera preview",
     )
-    preview.add_argument("--host", default="0.0.0.0")
+    preview.add_argument("--host", default="127.0.0.1")
     preview.add_argument("--port", type=int, default=8000)
+    preview.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="explicitly allow a non-loopback development bind",
+    )
+    preview.add_argument(
+        "--field-mode",
+        "--secure",
+        action="store_true",
+        help="require scoped auth, TLS, host checks, and rate limits",
+    )
+    preview.add_argument(
+        "--token-file",
+        type=Path,
+        help="0600/0640 JSON file containing hashed bearer-token grants",
+    )
+    preview.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        help="accepted Host header in field mode; repeat for multiple hosts",
+    )
+    preview.add_argument("--tls-certfile", type=Path)
+    preview.add_argument("--tls-keyfile", type=Path)
+    preview.add_argument(
+        "--behind-tls-proxy",
+        action="store_true",
+        help="require forwarded HTTPS from a loopback reverse proxy",
+    )
     _add_camera_arguments(preview)
 
     snapshot = subcommands.add_parser(
@@ -335,6 +364,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             fps=arguments.fps,
             host=arguments.host,
             port=arguments.port,
+            allow_remote=arguments.allow_remote,
+            field_mode=arguments.field_mode,
+            token_file=arguments.token_file,
+            allowed_hosts=tuple(arguments.allowed_host),
+            behind_tls_proxy=arguments.behind_tls_proxy,
+            ssl_certfile=arguments.tls_certfile,
+            ssl_keyfile=arguments.tls_keyfile,
         )
         return 0
 
