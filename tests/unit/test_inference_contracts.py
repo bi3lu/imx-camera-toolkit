@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from imx_camera_toolkit import FrameFormat, MemoryType
 from imx_camera_toolkit.inference import (
@@ -17,6 +21,7 @@ from imx_camera_toolkit.inference import (
     ShapeProfile,
     TensorOutput,
     TensorRTRunner,
+    verify_signed_model,
 )
 from imx_camera_toolkit.testing import mock_gpu_frame
 from packages.inference.cache import EngineCache, EngineCacheMetadata, sha256_file
@@ -204,6 +209,89 @@ def test_engine_cache_rejects_every_platform_specific_mismatch(tmp_path: Path) -
             ),
         )
     ) is None
+
+
+def test_engine_cache_discards_tampered_engine_bytes(tmp_path: Path) -> None:
+    """A digest mismatch must remove both rebuildable cache artifacts."""
+    profile = ShapeProfile(
+        minimum=(1, 3, 320, 320),
+        optimum=(1, 3, 640, 640),
+        maximum=(1, 3, 1280, 1280),
+    )
+    expected = EngineCacheMetadata(
+        onnx_sha256="1" * 64,
+        tensorrt_version="10.3.0",
+        compute_capability=(8, 7),
+        precision="fp16",
+        input_name="images",
+        shape_profile=profile,
+    )
+    cache = EngineCache(tmp_path, "model")
+    cache.store(b"trusted-engine", expected)
+    cache.engine_path.write_bytes(b"replaced-engine")
+
+    assert cache.load(expected) is None
+    assert not cache.engine_path.exists()
+    assert not cache.metadata_path.exists()
+
+
+def test_ed25519_manifest_authenticates_model_and_tensor_contract(
+    tmp_path: Path,
+) -> None:
+    """Only an exact signed manifest and matching ONNX digest are accepted."""
+    model_path = tmp_path / "model.onnx"
+    model_path.write_bytes(b"trusted-model")
+    manifest_path = tmp_path / "model.manifest.json"
+    signature_path = tmp_path / "model.manifest.sig"
+    public_key_path = tmp_path / "model-public.pem"
+    manifest_bytes = (
+        json.dumps(
+            {
+                "schema_version": 1,
+                "model_sha256": sha256_file(model_path),
+                "model_version": "2026.08.1",
+                "inputs": ["images"],
+                "outputs": ["boxes", "scores"],
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+    private_key = Ed25519PrivateKey.generate()
+    manifest_path.write_bytes(manifest_bytes)
+    signature_path.write_bytes(base64.b64encode(private_key.sign(manifest_bytes)))
+    public_key_path.write_bytes(
+        private_key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    for path in (model_path, manifest_path, signature_path, public_key_path):
+        path.chmod(0o644)
+
+    manifest = verify_signed_model(model_path, public_key_path)
+    assert manifest.model_version == "2026.08.1"
+    assert manifest.inputs == ("images",)
+    assert manifest.outputs == ("boxes", "scores")
+
+    model_path.write_bytes(b"tampered-model")
+    with pytest.raises(InferenceConfigurationError, match="digest"):
+        verify_signed_model(model_path, public_key_path)
+
+
+def test_tensorrt_runner_requires_a_key_for_signed_model_mode(tmp_path: Path) -> None:
+    """Required authenticity cannot silently degrade to digest-only caching."""
+    with pytest.raises(InferenceConfigurationError, match="public_key_path"):
+        TensorRTRunner(
+            tmp_path / "model.onnx",
+            cache_dir=tmp_path / "engines",
+            shape_profile=ShapeProfile(
+                minimum=(1, 3, 320, 320),
+                optimum=(1, 3, 640, 640),
+                maximum=(1, 3, 1280, 1280),
+            ),
+            require_signed_model=True,
+        )
 
 
 def test_frame_spec_preserves_gpu_capture_identity() -> None:

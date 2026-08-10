@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import time
 from collections.abc import Callable, Iterable
+from math import isfinite
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -25,6 +26,7 @@ from .errors import (
     InferenceError,
 )
 from .interop import CudaBuffer, CudaStream, InteropRuntime, NativeCudaInterop
+from .model_security import ModelManifest, verify_signed_model
 
 OverlayFactory = Callable[[tuple[TensorOutput, ...]], Iterable[object]]
 
@@ -57,6 +59,10 @@ class TensorRTRunner:
         interop: InteropRuntime | None = None,
         tensorrt_module: ModuleType | None = None,
         numpy_module: ModuleType | None = None,
+        require_signed_model: bool = False,
+        public_key_path: str | Path | None = None,
+        manifest_path: str | Path | None = None,
+        signature_path: str | Path | None = None,
     ) -> None:
         """Store build policy without importing optional dependencies."""
         self._onnx_path = Path(onnx_path)
@@ -74,6 +80,13 @@ class TensorRTRunner:
         self._interop = interop
         self._trt = tensorrt_module
         self._numpy = numpy_module
+        self._require_signed_model = require_signed_model
+        self._public_key_path = (
+            None if public_key_path is None else Path(public_key_path)
+        )
+        self._manifest_path = None if manifest_path is None else Path(manifest_path)
+        self._signature_path = None if signature_path is None else Path(signature_path)
+        self._model_manifest: ModelManifest | None = None
 
         self._frame_spec: FrameSpec | None = None
         self._runtime: Any | None = None
@@ -98,15 +111,30 @@ class TensorRTRunner:
                 "input_name must be a non-empty string or None"
             )
 
+        if not isinstance(self._require_signed_model, bool):
+            raise InferenceConfigurationError("require_signed_model must be a boolean")
+        if self._require_signed_model and self._public_key_path is None:
+            raise InferenceConfigurationError(
+                "require_signed_model requires public_key_path"
+            )
+        if (
+            self._manifest_path is not None or self._signature_path is not None
+        ) and self._public_key_path is None:
+            raise InferenceConfigurationError(
+                "manifest_path and signature_path require public_key_path"
+            )
+
         if self._precision not in {"fp16", "fp32"}:
             raise InferenceConfigurationError("precision must be fp16 or fp32")
 
         if (
             isinstance(self._workspace_size, bool)
             or not isinstance(self._workspace_size, int)
-            or self._workspace_size <= 0
+            or not 0 < self._workspace_size <= 1 << 40
         ):
-            raise InferenceConfigurationError("workspace_size must be positive")
+            raise InferenceConfigurationError(
+                "workspace_size must be between 1 and 1099511627776"
+            )
 
         if len(self._shape_profile.minimum) != 4:
             raise InferenceConfigurationError("TensorRT image profile must be rank 4")
@@ -139,11 +167,14 @@ class TensorRTRunner:
             ("standard_deviation", self._standard_deviation),
         ):
             if len(values) != 3 or not all(
-                isinstance(value, (int, float)) and not isinstance(value, bool)
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and isfinite(value)
+                and abs(value) <= 1_000_000
                 for value in values
             ):
                 raise InferenceConfigurationError(
-                    f"{name} must contain three numeric values"
+                    f"{name} must contain three finite bounded numeric values"
                 )
 
         if any(value == 0 for value in self._standard_deviation):
@@ -151,8 +182,13 @@ class TensorRTRunner:
                 "standard_deviation values must be non-zero"
             )
 
-        if not isinstance(self._scale, (int, float)) or isinstance(self._scale, bool):
-            raise InferenceConfigurationError("scale must be numeric")
+        if (
+            not isinstance(self._scale, (int, float))
+            or isinstance(self._scale, bool)
+            or not isfinite(self._scale)
+            or abs(self._scale) > 1_000_000
+        ):
+            raise InferenceConfigurationError("scale must be finite and bounded")
 
     @property
     def prepared(self) -> bool:
@@ -185,6 +221,20 @@ class TensorRTRunner:
                 f"ONNX model does not exist: {self._onnx_path}"
             )
 
+        manifest: ModelManifest | None = None
+        if self._public_key_path is not None:
+            manifest = verify_signed_model(
+                self._onnx_path,
+                self._public_key_path,
+                manifest_path=self._manifest_path,
+                signature_path=self._signature_path,
+            )
+            if self._input_name is not None and self._input_name not in manifest.inputs:
+                raise InferenceConfigurationError(
+                    "configured input_name is absent from the signed model manifest"
+                )
+        self._model_manifest = manifest
+
         self.close()
         self._closed = False
         trt = self._load_tensorrt()
@@ -196,6 +246,10 @@ class TensorRTRunner:
             self._input_name = self._discover_input_name(trt)
 
         input_name = self._input_name
+        if manifest is not None and input_name not in manifest.inputs:
+            raise InferenceConfigurationError(
+                "discovered input is absent from the signed model manifest"
+            )
 
         metadata = EngineCacheMetadata(
             onnx_sha256=sha256_file(self._onnx_path),
@@ -287,6 +341,11 @@ class TensorRTRunner:
         if not output_names:
             raise InferenceConfigurationError(
                 "TensorRT engine must expose at least one output tensor"
+            )
+
+        if manifest is not None and set(output_names) != set(manifest.outputs):
+            raise InferenceConfigurationError(
+                "TensorRT outputs differ from the signed model manifest"
             )
 
         input_dtype = tensor_dtypes.get(input_name)
@@ -421,8 +480,7 @@ class TensorRTRunner:
             raise EngineBuildError(f"TensorRT ONNX parser failed: {errors}")
 
         names = tuple(
-            str(network.get_input(index).name)
-            for index in range(network.num_inputs)
+            str(network.get_input(index).name) for index in range(network.num_inputs)
         )
         return self._select_input_name(names)
 
