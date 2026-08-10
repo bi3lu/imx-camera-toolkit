@@ -135,7 +135,7 @@ def create_production_preview_app(
     application = FastAPI(
         title="IMX Production Preview",
         description="Shared video encoding with WebRTC or HLS delivery",
-        version="0.5.2",
+        version="0.6.0",
         lifespan=lifespan,
         docs_url="/docs" if resolved_security.docs_enabled else None,
         redoc_url="/redoc" if resolved_security.docs_enabled else None,
