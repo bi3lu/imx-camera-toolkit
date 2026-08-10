@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(__file__).parents[1] / "config.yml"
 
+
 @dataclass(frozen=True, slots=True)
 class CameraConfig:
     """Validated static settings used to create an IMX camera pipeline.
@@ -135,8 +136,7 @@ def validate_camera_config(config: CameraConfig) -> None:
         raise CameraConfigurationError("output_format must be a FrameFormat")
 
     if config.max_fps is not None and (
-        isinstance(config.max_fps, bool)
-        or not isinstance(config.max_fps, (int, float))
+        isinstance(config.max_fps, bool) or not isinstance(config.max_fps, (int, float))
     ):
         raise CameraConfigurationError("max_fps must be a number or None")
 
@@ -151,13 +151,16 @@ def validate_camera_config(config: CameraConfig) -> None:
             "sensor_id must be greater than or equal to zero"
         )
 
-    if min(
-        config.capture_width,
-        config.capture_height,
-        config.output_width,
-        config.output_height,
-        config.fps,
-    ) <= 0:
+    if (
+        min(
+            config.capture_width,
+            config.capture_height,
+            config.output_width,
+            config.output_height,
+            config.fps,
+        )
+        <= 0
+    ):
         raise CameraConfigurationError(
             "frame dimensions and framerate must be greater than zero"
         )
@@ -187,9 +190,7 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
         )
 
     if "fps" in config_data and "capture_fps" in config_data:
-        raise CameraConfigurationError(
-            "use either fps or legacy capture_fps, not both"
-        )
+        raise CameraConfigurationError("use either fps or legacy capture_fps, not both")
 
     for key in valid_keys - {"capture_fps"}:
         value = config_data.get(key, getattr(defaults, key))
@@ -199,9 +200,7 @@ def _read_config_values(config_data: dict[str, Any]) -> CameraConfig:
             if value is not None and (
                 isinstance(value, bool) or not isinstance(value, int)
             ):
-                raise CameraConfigurationError(
-                    "sensor_mode must be an integer or null"
-                )
+                raise CameraConfigurationError("sensor_mode must be an integer or null")
 
         elif key == "enable_preview":
             if not isinstance(value, bool):

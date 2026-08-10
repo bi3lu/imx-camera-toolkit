@@ -160,9 +160,7 @@ class GpuCamera:
 
         base_config = config or load_camera_config(config_path)
         resolved_preview = (
-            base_config.enable_preview
-            if enable_preview is None
-            else enable_preview
+            base_config.enable_preview if enable_preview is None else enable_preview
         )
         self._config = CameraConfig(
             sensor_id=base_config.sensor_id,
@@ -198,9 +196,7 @@ class GpuCamera:
         self._frame_hub = self._new_frame_hub()
         self._preview_publisher = EncodedJPEGPublisher(self._config.preview_fps)
         self._video_publisher = EncodedVideoPublisher()
-        self._video_hub = LatestFrameHub[EncodedVideoFrame](
-            self.record_consumer_drop
-        )
+        self._video_hub = LatestFrameHub[EncodedVideoFrame](self.record_consumer_drop)
         self._metrics = MetricsRecorder()
         self._backend: _GpuBackend | None = None
         self._thread: threading.Thread | None = None
@@ -594,9 +590,7 @@ class GpuCamera:
             if self._video_config.codec is VideoCodec.H264
             else "nvv4l2h265enc"
         )
-        nvenc_available = GpuGStreamerCaptureBackend.element_available(
-            nvenc_element
-        )
+        nvenc_available = GpuGStreamerCaptureBackend.element_available(nvenc_element)
         x264_available = GpuGStreamerCaptureBackend.element_available("x264enc")
 
         if requested is VideoEncoderBackend.NVENC:
@@ -626,9 +620,7 @@ class GpuCamera:
             return VideoEncoderBackend.X264
 
         alternatives = (
-            " and x264enc"
-            if self._video_config.codec is VideoCodec.H264
-            else ""
+            " and x264enc" if self._video_config.codec is VideoCodec.H264 else ""
         )
         raise CameraDependencyError(
             "encoder backend auto unavailable; missing "
@@ -773,8 +765,7 @@ class GpuCamera:
         oldest_ns = now_ns - self.STATS_WINDOW_NS
 
         while (
-            self._capture_timestamps_ns
-            and self._capture_timestamps_ns[0] < oldest_ns
+            self._capture_timestamps_ns and self._capture_timestamps_ns[0] < oldest_ns
         ):
             self._capture_timestamps_ns.popleft()
 
@@ -848,8 +839,7 @@ class GpuCamera:
         now = time.monotonic()
         if (
             self._last_capture_error_log_at != 0.0
-            and now - self._last_capture_error_log_at
-            < self.ERROR_LOG_INTERVAL_SECONDS
+            and now - self._last_capture_error_log_at < self.ERROR_LOG_INTERVAL_SECONDS
         ):
             self._suppressed_capture_error_logs += 1
             return
@@ -1003,9 +993,7 @@ def _is_already_allocated_error(error: BaseException) -> bool:
     current: BaseException | None = error
     while current is not None:
         normalized = "".join(
-            character
-            for character in str(current).lower()
-            if character.isalnum()
+            character for character in str(current).lower() if character.isalnum()
         )
         if "alreadyallocated" in normalized:
             return True

@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(__file__).parents[1] / "config.yml"
 
+
 @dataclass(frozen=True)
 class CameraControlConfig:
     """Settings loaded from the camera-control YAML configuration.
@@ -108,9 +109,7 @@ def _parse_initial_settings(config_data: object) -> CameraSettings:
         awb_mode=awb_mode,
         awb_locked=config_data.get("awb_locked", defaults.awb_locked),
         denoise_mode=denoise_mode,
-        denoise_strength=config_data.get(
-            "denoise_strength", defaults.denoise_strength
-        ),
+        denoise_strength=config_data.get("denoise_strength", defaults.denoise_strength),
         sensor_mode=config_data.get("sensor_mode", defaults.sensor_mode),
         hdr_enabled=config_data.get("hdr_enabled", defaults.hdr_enabled),
     )
@@ -186,9 +185,7 @@ def load_camera_control_config(
         return DEFAULT_CAMERA_CONTROL_CONFIG
 
     if yaml is None:
-        logger.warning(
-            "PyYAML is unavailable; using built-in camera-control defaults"
-        )
+        logger.warning("PyYAML is unavailable; using built-in camera-control defaults")
         return DEFAULT_CAMERA_CONTROL_CONFIG
 
     try:

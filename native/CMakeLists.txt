@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_ARCHITECTURES 87 CACHE STRING "CUDA architectures to compile")
+option(IMX_CAMERA_ENABLE_HARDENING "Enable release compiler/linker hardening" ON)
+option(IMX_CAMERA_ENABLE_SANITIZERS "Enable host ASan and UBSan instrumentation" OFF)
 
 find_package(CUDAToolkit REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -47,6 +49,35 @@ target_link_libraries(
     PkgConfig::GSTREAMER
     ${NVBUFSURFACE_LIBRARY}
 )
+
+if(IMX_CAMERA_ENABLE_HARDENING)
+    target_compile_options(
+        _cuda_interop
+        PRIVATE
+        $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CXX>>:-fstack-protector-strong;-U_FORTIFY_SOURCE;-D_FORTIFY_SOURCE=3>
+        $<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:CUDA>>:-Xcompiler=-fstack-protector-strong;-U_FORTIFY_SOURCE;-D_FORTIFY_SOURCE=3>
+    )
+    target_link_options(
+        _cuda_interop
+        PRIVATE
+        $<$<CONFIG:Release>:LINKER:SHELL:-z relro -z now>
+    )
+endif()
+
+if(IMX_CAMERA_ENABLE_SANITIZERS)
+    target_compile_options(
+        _cuda_interop
+        PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-fsanitize=address;-fsanitize=undefined;-fno-omit-frame-pointer>
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fsanitize=address;-Xcompiler=-fsanitize=undefined;-Xcompiler=-fno-omit-frame-pointer>
+    )
+    target_link_options(
+        _cuda_interop
+        PRIVATE
+        -fsanitize=address
+        -fsanitize=undefined
+    )
+endif()
 
 if(DEFINED IMX_CAMERA_INTEROP_OUTPUT_DIRECTORY)
     set_target_properties(

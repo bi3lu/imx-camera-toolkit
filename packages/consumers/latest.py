@@ -256,9 +256,7 @@ class LatestFrameHub(Generic[T]):
             previous = self._latest
             self._latest = self._retain_item(item)
             subscriptions = tuple(self._subscriptions.values())
-            retained_items = tuple(
-                self._retain_item(item) for _ in subscriptions
-            )
+            retained_items = tuple(self._retain_item(item) for _ in subscriptions)
 
         if previous is not None:
             self._release_item(previous)
@@ -346,8 +344,7 @@ class FrameConsumer(Generic[T]):
             )
 
         if not isinstance(drop_exceptions, tuple) or any(
-            not isinstance(error_type, type)
-            or not issubclass(error_type, Exception)
+            not isinstance(error_type, type) or not issubclass(error_type, Exception)
             for error_type in drop_exceptions
         ):
             raise TypeError("drop_exceptions must contain exception classes")

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -91,9 +92,7 @@ def _encode_boundary(boundary: str) -> bytes:
         raise ValueError("boundary must contain only ASCII characters") from error
 
 
-def build_mjpeg_part(
-    jpeg: bytes, boundary: str = DEFAULT_MJPEG_BOUNDARY
-) -> bytes:
+def build_mjpeg_part(jpeg: bytes, boundary: str = DEFAULT_MJPEG_BOUNDARY) -> bytes:
     """Format one JPEG image as an MJPEG multipart body part.
 
     Args:
@@ -139,8 +138,8 @@ def _validate_stream_config(config: StreamConfig) -> None:
     if isinstance(config.timeout, bool) or not isinstance(config.timeout, (int, float)):
         raise ValueError("timeout must be a number")
 
-    if config.timeout <= 0:
-        raise ValueError("timeout must be greater than zero")
+    if not isfinite(config.timeout) or not 0 < config.timeout <= 3_600:
+        raise ValueError("timeout must be finite and between 0 and 3600")
 
     _encode_boundary(config.boundary)
 

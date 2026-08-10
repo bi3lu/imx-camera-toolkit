@@ -76,7 +76,7 @@ intermediate frames.
 - JetPack 6.2.2 with NVIDIA Argus, `nvarguscamerasrc`, and GStreamer support.
 - System OpenCV with GStreamer support. On JetPack this is normally supplied by
   the `python3-opencv` system package.
-- Python 3.10 or newer.
+- Python 3.10–3.12 (JetPack 6.2.2 provides Python 3.10).
 - [uv](https://docs.astral.sh/uv/) for dependency and virtual-environment
   management.
 
@@ -152,12 +152,12 @@ uv run python -c "import cv2; print(cv2.__version__)"
 
 ## Using the toolkit as a Git dependency
 
-Pin the v0.5.2 release tag in the consuming project's `pyproject.toml`:
+Pin the v0.6.0 release tag in the consuming project's `pyproject.toml`:
 
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.2"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.0"
 ]
 ```
 
@@ -177,7 +177,7 @@ To consume the Git dependency with the browser-preview extra, declare it as:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.2"
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.0"
 ]
 ```
 
@@ -332,6 +332,7 @@ Model-agnostic code can depend only on the public union:
 ```python
 from imx_camera_toolkit import FrameFormat, GpuFrame
 from imx_camera_toolkit.frames import CaptureFrame
+
 
 def consume(frame: CaptureFrame) -> object:
     if isinstance(frame, GpuFrame):
@@ -521,18 +522,31 @@ are available inside the project environment through `uv run`.
 
 ## Development quality checks
 
-The project uses Ruff for linting and import hygiene, and mypy in strict mode
-for static type verification. Unit and integration tests use an in-memory mock
-camera, so they run on ordinary development machines and in CI without a CSI
-sensor or a Jetson camera stack.
+The project uses Black for deterministic formatting, Ruff for linting and
+import hygiene, and mypy in strict mode for static type verification. Black
+and Ruff share an 88-character line length and Python 3.10 target; Ruff leaves
+line wrapping to Black. Unit and integration tests use an in-memory mock camera,
+so they run on ordinary development machines and in CI without a CSI sensor or
+a Jetson camera stack.
 
 Install development dependencies and run the standard quality gate:
 
 ```bash
 uv sync --extra preview --group dev
+uv run black --check .
 uv run ruff check .
 uv run mypy imx_camera_toolkit packages tests
 uv run pytest -m "not benchmark"
+```
+
+Install the local commit hooks once per clone. They reject staged whitespace
+errors or a stale lockfile, then run Ruff, Black, strict mypy, and the same host
+test selection as CI. Black rewrites files in place, so stage its changes and
+commit again when the hook formats a file:
+
+```bash
+uv run pre-commit install
+uv run pre-commit run --all-files
 ```
 
 Deterministic capture and MJPEG framing benchmarks are deliberately separate
@@ -565,7 +579,7 @@ uv run imx-camera info --json
 uv run imx-camera diagnose --hardware
 uv run imx-camera test --frames 30 --timeout 5
 uv run imx-camera snapshot snapshot.jpg
-uv run imx-camera preview --host 0.0.0.0 --port 8000
+uv run imx-camera preview --port 8000
 uv run imx-camera benchmark capture --frames 1000
 uv run imx-camera benchmark camera --frames 300
 uv run imx-camera benchmark camera --frames 300 \
@@ -617,7 +631,7 @@ preview()
 
 The facade starts a simple browser view and releases camera resources during
 server shutdown. Its defaults are sensor `0`, `1280x720`, `30` FPS,
-`0.0.0.0`, and port `8000`.
+`127.0.0.1`, and port `8000`.
 
 Configure the camera and server explicitly when needed:
 
@@ -654,33 +668,35 @@ Open the following address on the Jetson:
 http://localhost:8000/
 ```
 
-From another device, replace `localhost` with the Jetson host name or IP
-address.
+Remote development binds must be explicit, for example
+`--host 192.0.2.10 --allow-remote`. Use field mode rather than this unauthenticated
+development override on a deployed Jetson.
 
 The server also exposes FastAPI documentation at
 `http://localhost:8000/docs`.
 
 Camera hardware is opened during FastAPI startup and released during shutdown.
-The default server binds to `0.0.0.0:8000`; use an appropriate firewall or
-reverse proxy before exposing it beyond a trusted network.
+The default server binds only to `127.0.0.1:8000`.
 
 ## HTTP interface
 
-| Endpoint | Response | Purpose |
+| Endpoint | Required scope | Purpose |
 | --- | --- | --- |
-| `GET /` | `text/html` | Customizable browser preview containing the live camera feed. |
-| `GET /api/health` | `application/json` | Camera state, frame availability, counters, timestamps, and background capture errors. |
-| `GET /api/camera/control` | `application/json` | Current runtime controls, declared capabilities, sensor modes, and software-HDR state. |
-| `PATCH /api/camera/control` | `application/json` | Applies a validated partial update to exposure, gain, AWB, denoise, sensor mode, or native HDR. |
-| `GET /api/camera/control/profiles` | `application/json` | Lists process-local runtime-control profiles. |
-| `PUT /api/camera/control/profiles/{name}` | `application/json` | Stores the current runtime controls under a name. |
-| `POST /api/camera/control/profiles/{name}/apply` | `application/json` | Applies a stored runtime-control profile. |
-| `DELETE /api/camera/control/profiles/{name}` | No content | Deletes a stored runtime-control profile. |
-| `GET /api/camera/software-hdr` | `application/json` | Current software-HDR configuration and resolved exposure brackets. |
-| `PUT /api/camera/software-hdr` | `application/json` | Enables, disables, or configures Jetson-side three-exposure HDR fusion. |
-| `GET /api/camera/snapshot` | `image/jpeg` | Most recent JPEG frame. Supports the optional `after` frame-number parameter. |
-| `GET /api/camera/mjpeg` | `multipart/x-mixed-replace` | Continuous MJPEG stream suitable for a browser image element or another HTTP client. |
-| `GET /docs` | `text/html` | Interactive OpenAPI documentation supplied by FastAPI. |
+| `GET /healthz` | Public | Minimal process liveness without diagnostics. |
+| `GET /debug/health` | `admin` | Camera state, counters, timestamps, clients, and background errors. |
+| `GET /` | `stream:read` | Customizable browser preview. |
+| `GET /api/camera/snapshot` | `stream:read` | Most recent JPEG frame. |
+| `GET /api/camera/mjpeg` | `stream:read` | Continuous MJPEG stream. |
+| `GET /api/camera/control` | `camera:read` | Current controls, capabilities, modes, and software HDR. |
+| `PATCH /api/camera/control` | `camera:control` | Applies a validated partial camera-control update. |
+| `GET /api/camera/control/profiles` | `camera:read` | Lists process-local control profiles. |
+| `PUT` or `DELETE /api/camera/control/profiles/{name}` | `profiles:write` | Stores or deletes a profile. |
+| `POST /api/camera/control/profiles/{name}/apply` | `profiles:write` + `camera:control` | Applies a stored profile. |
+| `GET /api/camera/software-hdr` | `camera:read` | Current software-HDR configuration. |
+| `PUT /api/camera/software-hdr` | `camera:control` | Configures software HDR. |
+
+`GET /api/health` remains a deprecated, `admin`-protected alias. Interactive
+documentation is available only outside field mode.
 
 The snapshot endpoint returns `204 No Content` when the frame specified by
 `after` remains current after the configured wait period. It returns `503` when
@@ -855,7 +871,7 @@ its own template while retaining the same API factory.
 - GPU backend startup requires a first NVMM frame. Argus `AlreadyAllocated`
   failures are surfaced immediately as `CameraOpenError` instead of entering a
   recovery loop.
-- `/api/health` exposes `recovery_attempts`, `recoveries`, and
+- `/debug/health` exposes `recovery_attempts`, `recoveries`, and
   `last_recovery_error`, in addition to capture counters and `last_error`.
 - If recovery is exhausted, capture stops cleanly and the final error remains
   observable through the health endpoint.
@@ -867,18 +883,47 @@ its own template while retaining the same API factory.
 | `CameraDependencyError: System OpenCV with GStreamer support is required` | Recreate `.venv` with `uv venv --system-site-packages --allow-existing .venv`, then run `uv sync`. |
 | Camera cannot open | Verify the CSI connection, `sensor_id`, JetPack installation, and availability of `nvarguscamerasrc`. |
 | Argus cannot connect | Confirm that `nvargus-daemon` is running and that the process has access to the Jetson camera stack. Containers additionally require the Argus socket and relevant device access. |
-| No image at the preview endpoint | Inspect `/api/health` for `last_error`, camera state, and frame counters. |
-| Intermittent camera failures | Inspect `/api/health` for recovery counters and `last_recovery_error`. Run `uv run imx-camera diagnose --hardware` to verify Argus and V4L2 prerequisites. |
+| No image at the preview endpoint | Inspect authenticated `/debug/health` for `last_error`, camera state, and frame counters. |
+| Intermittent camera failures | Inspect authenticated `/debug/health` for recovery counters and `last_recovery_error`. Run `uv run imx-camera diagnose --hardware` to verify Argus and V4L2 prerequisites. |
 | Runtime control is rejected | Inspect `GET /api/camera/control` and declare only properties and sensor modes supported by the installed `nvarguscamerasrc` driver. |
 | Software HDR cannot start | Confirm that manual sensor exposure control is available. Disable software HDR before applying external manual exposure or gain settings. |
 | Remote browser cannot connect | Confirm network reachability to port `8000` and review host firewall or reverse-proxy configuration. |
 
 ## Security considerations
 
-The supplied API does not implement authentication, authorization, transport
-encryption, or request rate limiting. It is appropriate for local development
-and controlled networks. Production deployment should place the service behind
-a properly configured reverse proxy that provides access control and TLS.
+Field mode enables scoped bearer authentication, disables OpenAPI/Swagger,
+limits request bodies and request rates, validates `Host`, adds browser security
+headers, and hides detailed health data behind `admin`. Generate independent
+256-bit tokens for the minimum required scopes and store only their SHA-256
+digests in a root/process-owned `0600` or `0640` JSON file:
+
+```json
+{
+  "schema_version": 1,
+  "tokens": [
+    {"sha256": "<64 lowercase hex characters>", "scopes": ["stream:read"]},
+    {"sha256": "<another digest>", "scopes": ["admin"]}
+  ]
+}
+```
+
+Start a loopback service behind a TLS or mTLS reverse proxy:
+
+```bash
+uv run imx-camera preview --field-mode \
+  --token-file /etc/imx-camera/tokens.json \
+  --allowed-host camera.example --behind-tls-proxy
+```
+
+For a direct remote listener, field mode also requires an explicit Host
+allowlist and either `--tls-certfile` plus `--tls-keyfile`, or
+`--behind-tls-proxy` when the proxy forwards the HTTPS scheme. Never put an
+admin token in preview JavaScript; use a separate `stream:read` credential or
+let an authenticated reverse proxy enforce preview access. The recommended
+topology is TLS/mTLS on `:443` forwarding to `127.0.0.1:8000`.
+Deployment-specific device identity or signing keys can additionally be
+provisioned through Jetson OP-TEE secure storage; the toolkit intentionally
+does not copy those private keys into browser assets or ordinary YAML files.
 
 ## License
 

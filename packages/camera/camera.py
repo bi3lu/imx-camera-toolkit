@@ -190,26 +190,20 @@ class Camera:
                 base_config.capture_width if capture_width is None else capture_width
             ),
             capture_height=(
-                base_config.capture_height
-                if capture_height is None
-                else capture_height
+                base_config.capture_height if capture_height is None else capture_height
             ),
             output_width=(
                 base_config.output_width if output_width is None else output_width
             ),
             output_height=(
-                base_config.output_height
-                if output_height is None
-                else output_height
+                base_config.output_height if output_height is None else output_height
             ),
             fps=base_config.fps if resolved_fps is None else resolved_fps,
             flip_method=(
                 base_config.flip_method if flip_method is None else flip_method
             ),
             enable_preview=(
-                base_config.enable_preview
-                if enable_preview is None
-                else enable_preview
+                base_config.enable_preview if enable_preview is None else enable_preview
             ),
         )
         validate_camera_config(resolved_config)
@@ -550,9 +544,7 @@ class Camera:
                 if self.running:
                     raise RuntimeError("camera frame subscriptions are closed")
 
-                self._frame_hub = LatestFrameHub[Frame](
-                    self.record_consumer_drop
-                )
+                self._frame_hub = LatestFrameHub[Frame](self.record_consumer_drop)
 
             return self._frame_hub.subscribe(name)
 

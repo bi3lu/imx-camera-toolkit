@@ -225,9 +225,7 @@ def benchmark_camera_capture(
                 if model is not None:
                     model(frame.image)
 
-                latencies_ns.append(
-                    max(time.monotonic_ns() - frame.timestamp_ns, 0)
-                )
+                latencies_ns.append(max(time.monotonic_ns() - frame.timestamp_ns, 0))
 
         finally:
             cpu_seconds = time.process_time() - started_cpu
@@ -306,9 +304,7 @@ def benchmark_gpu_capture(
                 if consumer is not None:
                     consumer(frame)
 
-                latencies_ns.append(
-                    max(time.monotonic_ns() - frame.timestamp_ns, 0)
-                )
+                latencies_ns.append(max(time.monotonic_ns() - frame.timestamp_ns, 0))
 
         finally:
             cpu_seconds = time.process_time() - started_cpu

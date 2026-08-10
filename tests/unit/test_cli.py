@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -10,6 +12,8 @@ from packages import cli
 from packages.benchmarks import CameraBenchmarkResult
 from packages.camera.config import CameraConfig
 from packages.cli import main
+
+preview_module = importlib.import_module("imx_camera_toolkit.preview")
 
 
 def test_cli_runs_capture_benchmark_as_json(
@@ -29,9 +33,7 @@ def test_cli_info_and_hardware_test_use_structured_results(
     monkeypatch.setattr(
         cli,
         "diagnostics_as_dict",
-        lambda include_hardware: [
-            {"name": "python", "status": "ok", "detail": "3.10"}
-        ],
+        lambda include_hardware: [{"name": "python", "status": "ok", "detail": "3.10"}],
     )
     monkeypatch.setattr(cli, "run_camera_smoke_test", lambda **_: [])
 
@@ -46,6 +48,7 @@ def test_cli_camera_benchmark_can_load_an_application_cpu_model(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Camera benchmark must expose all CPU paths without owning a model."""
+
     def model(image: object) -> object:
         """Return an image as a deterministic application model."""
         return image
@@ -134,3 +137,41 @@ def test_cli_jetson_benchmark_defaults_to_cpu_gpu_and_two_resolutions(
         ("gpu", 1920, 1080),
     ]
     assert '"process_cpu_percent"' in capsys.readouterr().out
+
+
+def test_cli_preview_defaults_to_loopback_and_forwards_field_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI deployment choices must reach the validated preview facade."""
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        preview_module,
+        "preview",
+        lambda **values: calls.append(values),
+    )
+
+    assert main(("preview",)) == 0
+    assert calls[-1]["host"] == "127.0.0.1"
+    assert calls[-1]["allow_remote"] is False
+    assert calls[-1]["field_mode"] is False
+
+    assert (
+        main(
+            (
+                "preview",
+                "--host",
+                "0.0.0.0",
+                "--field-mode",
+                "--token-file",
+                "tokens.json",
+                "--allowed-host",
+                "camera.example",
+                "--behind-tls-proxy",
+            )
+        )
+        == 0
+    )
+    assert calls[-1]["field_mode"] is True
+    assert calls[-1]["token_file"] == Path("tokens.json")
+    assert calls[-1]["allowed_hosts"] == ("camera.example",)
+    assert calls[-1]["behind_tls_proxy"] is True

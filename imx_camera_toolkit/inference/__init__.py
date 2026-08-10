@@ -9,9 +9,11 @@ from packages.inference import (
     InferenceError,
     InferenceResult,
     InferenceRunner,
+    ModelManifest,
     ShapeProfile,
     TensorOutput,
     TensorRTRunner,
+    verify_signed_model,
 )
 
 __all__ = [
@@ -23,7 +25,9 @@ __all__ = [
     "InferenceError",
     "InferenceResult",
     "InferenceRunner",
+    "ModelManifest",
     "ShapeProfile",
     "TensorOutput",
     "TensorRTRunner",
+    "verify_signed_model",
 ]

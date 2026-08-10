@@ -48,9 +48,9 @@ class SoftwareHDRSettings:
                 "software HDR base exposure must be an integer"
             )
 
-        if self.base_exposure_us <= 0:
+        if not 0 < self.base_exposure_us <= 10_000_000:
             raise CameraConfigurationError(
-                "software HDR base exposure must be greater than zero"
+                "software HDR base exposure must be between 1 and 10000000"
             )
 
         if isinstance(self.settle_frames, bool) or not isinstance(
@@ -124,7 +124,8 @@ class SoftwareHDRProcessor:
 
         merged = self._merge.process(self._frames)
 
-        assert np_module is not None
+        if np_module is None:
+            raise CameraDependencyError("NumPy became unavailable during HDR fusion")
 
         output = np_module.clip(merged * 255.0, 0, 255).astype(np_module.uint8)
 

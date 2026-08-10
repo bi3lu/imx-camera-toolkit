@@ -10,7 +10,10 @@ uv lock --check
 uv run ruff check .
 uv run mypy imx_camera_toolkit packages tests
 uv run pytest tests/unit tests/integration -m "not hardware and not benchmark"
+uv audit --frozen
 uv build
+uv export --all-extras --format cyclonedx1.5 --frozen \
+  --output-file dist/sbom.cdx.json
 ```
 
 ## Jetson gate
@@ -28,6 +31,11 @@ provide a local ONNX model path. The workflow must verify:
 - native CUDA interop build against the installed JetPack headers;
 - benchmark JSON containing CPU, GPU, FPS, drops, mean latency, and p95 latency.
 
+Keep this runner dedicated and preferably ephemeral or reset between jobs. It
+must not hold deploy keys, release credentials, or unrelated private data: the
+manual workflow executes repository code directly on physical hardware and
+must never be changed to run automatically for untrusted pull requests.
+
 Archive the benchmark together with `nvpmodel -q`, `jetson_clocks --show`,
 JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 
@@ -38,5 +46,12 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 - Review package version consistency and the release notes in the pull request.
 - Build wheel and source distribution from a clean checkout.
 - Inspect wheel contents for native sources, browser assets, and public modules.
+- Confirm Python CodeQL, Ruff security rules, and the dependency audit pass
+  with no known vulnerability. Re-enable dependency review only after the
+  repository dependency graph is enabled.
+- Confirm the release build emits a CycloneDX SBOM and every third-party GitHub
+  Action remains pinned to a full commit SHA.
+- Build native CUDA interop with hardening enabled and verify `GNU_RELRO`,
+  `BIND_NOW`, and a non-executable stack; exercise the opt-in ASan/UBSan build.
 - Create a signed tag only after both CI workflows pass.
 - Never publish or share cached TensorRT `.engine` files as portable assets.

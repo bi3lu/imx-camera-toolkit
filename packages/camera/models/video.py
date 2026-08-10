@@ -166,8 +166,7 @@ class VideoEncoderPipeline:
         if not isinstance(self.description, EncodedStreamDescription):
             raise ValueError("description must be an EncodedStreamDescription")
         if any(
-            not isinstance(item, str) or not item
-            for item in self.required_elements
+            not isinstance(item, str) or not item for item in self.required_elements
         ):
             raise ValueError("required_elements must contain non-empty strings")
 
@@ -229,9 +228,7 @@ class EncodedVideoFrame:
             value = getattr(self, name)
 
             if value is not None and (
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value < 0
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
             ):
                 raise ValueError(f"{name} must be non-negative or None")
 

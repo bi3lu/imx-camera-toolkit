@@ -14,6 +14,7 @@ from .errors import (
     InferenceDependencyError,
     InferenceError,
 )
+from .model_security import ModelManifest, verify_signed_model
 from .tensorrt import TensorRTRunner
 
 __all__ = [
@@ -25,7 +26,9 @@ __all__ = [
     "InferenceError",
     "InferenceResult",
     "InferenceRunner",
+    "ModelManifest",
     "ShapeProfile",
     "TensorOutput",
     "TensorRTRunner",
+    "verify_signed_model",
 ]
