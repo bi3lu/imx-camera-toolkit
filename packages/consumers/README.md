@@ -27,9 +27,17 @@ consumer.start()
 
 `FrameConsumer` runs the callback on its own thread. Stop the consumer before
 stopping its camera. Camera shutdown also closes every remaining subscription
-and wakes blocked workers. A consumer cannot retain a borrowed `GpuFrame`
-beyond the next capture publication; GPU work must import/retain the native
-buffer during the callback according to the `GpuFrame` lifetime contract.
+and wakes blocked workers. Each GPU subscription owns an independent retained
+lease, so a newer publication can replace unread input without invalidating the
+frame currently handled by the worker. `FrameConsumer` releases that lease
+after the callback; direct subscription users call `frame.release()` themselves.
+
+Workers expose `healthy`, `consecutive_failures`, current `last_error`, and
+historical `last_failure`. A successful callback clears the current error state
+while preserving failure history. Errors are logged at a bounded rate, may be
+forwarded through `on_error`, and use bounded exponential backoff. An
+`InferenceConsumer` classifies `GpuFrameExpiredError` before inference as a
+drop instead of a failed model invocation.
 
 ## Inference worker
 

@@ -28,7 +28,10 @@ replaceable without changing the `Camera` API used by applications.
 
 `Camera` automatically attempts to reopen its capture backend after an
 unexpected backend exception or a sustained sequence of failed reads. The
-default policy uses up to three retries with exponential backoff. Recovery
+default policy uses up to three retries with exponential backoff. The retry
+budget spans reopened backends and resets only after a valid frame arrives.
+The GPU backend also requires its first NVMM frame before `open()` succeeds;
+an Argus `AlreadyAllocated` error fails fast as `CameraOpenError`. Recovery
 statistics are available through `recovery_attempts`, `recoveries`, and
 `last_recovery_error`; the FastAPI health endpoint exposes the same values.
 
@@ -142,10 +145,12 @@ GPU-first sources use the separate public `GpuFrame` contract and never replace
 `GpuFrame` identifies `FrameFormat.NV12_NVMM` in `MemoryType.NVMM` and exposes
 one borrowed DMA-BUF descriptor or checked `GpuBufferHandle` around an opaque
 `Gst.Buffer`/`NvBufSurface` resource.
-It intentionally has no NumPy `image` field. Capture owns the buffer, and the
-consumer must finish using it before the next frame arrives. A source calls
-`invalidate()` on the previous frame when its successor is published;
-subsequent `payload()` access raises `GpuFrameExpiredError`.
+It intentionally has no NumPy `image` field. Capture owns the buffer. Direct
+`GpuCamera.read()` values remain short-lived borrowed leases invalidated by the
+next publication. Every `subscribe_latest()` slot receives an independent,
+reference-counted lease; replacing an unread slot releases only that slot and
+does not invalidate a frame already being processed. Access after release
+raises `GpuFrameExpiredError`.
 
 Public `GpuFrameSource` and `CaptureFrameSource` protocols allow applications
 to implement CPU/GPU consumers without importing capture internals. Test code
@@ -184,10 +189,12 @@ with GpuCamera(config, experimental=True) as camera:
         run_tensor_rt(frame.payload(), frame.width, frame.height)
 ```
 
-The consumer must complete all access to `frame.payload()` before capture
-publishes the next frame. The payload is an opaque borrowed `Gst.Buffer` whose
-caps were checked for `video/x-raw(memory:NVMM), format=NV12`. The toolkit does
-not choose a TensorRT model, preprocessing policy, CUDA stream, or engine cache.
+For direct `read()`, the consumer must complete all access to `frame.payload()`
+before capture publishes the next frame. Subscription consumers instead release
+their retained frame after processing; toolkit workers do this automatically.
+The payload is an opaque borrowed `Gst.Buffer` whose caps were checked for
+`video/x-raw(memory:NVMM), format=NV12`. The toolkit does not choose a TensorRT
+model, preprocessing policy, CUDA stream, or engine cache.
 
 When preview is enabled, `GpuCamera` implements the JPEG source contract used
 by `MJPEGStream`, so the encoded branch can feed browser clients without a BGR

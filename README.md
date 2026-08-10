@@ -240,10 +240,13 @@ Optional GPU-first capture sources expose `GpuFrame` with
 implicit NumPy conversion. It carries exactly one borrowed DMA-BUF descriptor
 or a checked `GpuBufferHandle` around `Gst.Buffer` or `NvBufSurface`.
 
-GPU buffers remain owned by capture. A consumer must complete its work before
-capture publishes the next frame; publishing a successor invalidates the
-previous frame lease. Calling `gpu_frame.payload()` after invalidation raises
-`GpuFrameExpiredError`.
+GPU buffers remain owned by capture. Values returned directly by `read()` are
+borrowed and publishing a successor invalidates the previous direct-read
+lease. Each `subscribe_latest()` subscriber instead receives an independent,
+reference-counted lease, so a worker may finish its current frame while newer
+frames arrive. `FrameConsumer` and `InferenceConsumer` release those leases
+automatically; direct subscription users must call `frame.release()` when
+finished. Access after release raises `GpuFrameExpiredError`.
 
 ### GPU-first capture
 
@@ -383,6 +386,13 @@ branch at preview speed and passes every fresh JPEG, the newest result, and a
 property can be exposed directly in UI telemetry. The renderer remains
 model-specific; capture remains unaware of boxes, masks, YOLO, or other output
 schemas. See [consumer integration](packages/consumers/README.md).
+
+Workers expose `healthy`, `consecutive_failures`, the current `last_error`, and
+historical `last_failure`. A successful callback clears only the current error
+state. Failures are logged with rate limiting, optionally reported through
+`on_error`, and retried with bounded exponential backoff. An expired GPU lease
+detected before inference is counted as a dropped frame rather than a model
+failure.
 
 ### Diagnostics
 
@@ -840,7 +850,11 @@ its own template while retaining the same API factory.
 - Camera startup failures are surfaced through the FastAPI lifespan.
 - A running camera attempts backend recovery after unexpected backend errors or
   sustained failed reads. The default policy makes three attempts with
-  exponential backoff.
+  exponential backoff. The global consecutive-attempt budget resets only after
+  a valid frame is captured, not merely after a backend reaches `PLAYING`.
+- GPU backend startup requires a first NVMM frame. Argus `AlreadyAllocated`
+  failures are surfaced immediately as `CameraOpenError` instead of entering a
+  recovery loop.
 - `/api/health` exposes `recovery_attempts`, `recoveries`, and
   `last_recovery_error`, in addition to capture counters and `last_error`.
 - If recovery is exhausted, capture stops cleanly and the final error remains

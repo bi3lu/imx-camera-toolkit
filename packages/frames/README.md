@@ -9,9 +9,10 @@ external data transport.
 The public contracts distinguish host-memory `Frame` values from borrowed
 `GpuFrame` values. `FrameSource` remains the compatible CPU protocol;
 `GpuFrameSource` covers NV12/NVMM sources, and `CaptureFrameSource`/
-`CaptureFrame` let model-agnostic consumers accept either mode. Reading a
-successor from a GPU source invalidates the preceding frame lease, so consumers
-must complete GPU work before their next read.
+`CaptureFrame` let model-agnostic consumers accept either mode. Direct GPU
+reads are borrowed and a successor invalidates the preceding lease. Camera
+subscriptions create independent retained leases that remain valid until the
+consumer or worker releases them.
 
 ## Contract
 
