@@ -46,8 +46,9 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 - Review package version consistency and the release notes in the pull request.
 - Build wheel and source distribution from a clean checkout.
 - Inspect wheel contents for native sources, browser assets, and public modules.
-- Confirm CodeQL, dependency review, Ruff security rules, and the dependency
-  audit pass with no known vulnerability.
+- Confirm Python CodeQL, Ruff security rules, and the dependency audit pass
+  with no known vulnerability. Re-enable dependency review only after the
+  repository dependency graph is enabled.
 - Confirm the release build emits a CycloneDX SBOM and every third-party GitHub
   Action remains pinned to a full commit SHA.
 - Build native CUDA interop with hardening enabled and verify `GNU_RELRO`,
