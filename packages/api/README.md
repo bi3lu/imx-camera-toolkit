@@ -18,8 +18,9 @@ them never changes existing MJPEG URLs or OpenCV behavior.
   uv sync --extra preview
   ```
 
-- FastAPI and Uvicorn, installed through the optional `preview` dependency
-  group, to expose the application over HTTP.
+- FastAPI, Uvicorn, and PyYAML, installed through the optional `preview`
+  dependency group, to expose the application over HTTP and load its validated
+  configuration.
 
 ## Application lifecycle
 

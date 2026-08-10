@@ -9,10 +9,12 @@ dependencies = []
 [project.optional-dependencies]
 preview = [
     "fastapi>=0.116,<1.0",
+    "pyyaml>=6.0,<7.0",
     "uvicorn>=0.35,<1.0",
 ]
 production-preview = [
     "fastapi>=0.116,<1.0",
+    "pyyaml>=6.0,<7.0",
     "uvicorn>=0.35,<1.0",
 ]
 tensorrt = [
@@ -50,6 +52,7 @@ packages = ["packages", "imx_camera_toolkit"]
 
 [dependency-groups]
 dev = [
+    "cryptography>=50.0,<51",
     "httpx>=0.28,<1.0",
     "mypy>=1.15,<2.0",
     "pytest>=9.0.3,<10.0",
