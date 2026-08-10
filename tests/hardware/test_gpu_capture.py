@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import os
 import time
+from types import ModuleType
 
 import pytest
 
 from imx_camera_toolkit import CameraConfig, FrameFormat, GpuCamera, MemoryType
+from packages.inference.interop import NativeCudaInterop
 
 pytestmark = pytest.mark.hardware
 
@@ -44,23 +46,38 @@ def test_physical_sensor_delivers_nvmm_at_30_fps(width: int, height: int) -> Non
     )
     timestamps_ns: list[int] = []
     previous_sequence = 0
+    imported_nvmm = False
+    native = ModuleType("_hardware_gst_buffer_probe")
+    native.NvmmSurface = lambda payload, _width, _height: payload  # type: ignore[attr-defined]
+    interop = NativeCudaInterop(native)
+    camera = GpuCamera(config, experimental=True)
+    subscription = camera.subscribe_latest("hardware-validation")
 
-    with GpuCamera(config, experimental=True) as camera:
+    with camera:
         deadline = time.monotonic() + 10.0
 
         while len(timestamps_ns) < 60 and time.monotonic() < deadline:
-            frame = camera.read(timeout=0.5)
+            frame = subscription.receive(timeout=0.5)
 
-            if frame is None or frame.sequence == previous_sequence:
+            if frame is None:
                 continue
 
-            assert frame.format is FrameFormat.NV12_NVMM
-            assert frame.memory_type is MemoryType.NVMM
-            assert frame.width == width
-            assert frame.height == height
-            assert frame.payload() is not None
-            timestamps_ns.append(frame.timestamp_ns)
-            previous_sequence = frame.sequence
+            try:
+                assert frame.sequence > previous_sequence
+                assert frame.format is FrameFormat.NV12_NVMM
+                assert frame.memory_type is MemoryType.NVMM
+                assert frame.width == width
+                assert frame.height == height
+                assert frame.payload() is not None
+                if not imported_nvmm:
+                    surface = interop.import_frame(frame)
+                    assert surface is frame.payload()
+                    imported_nvmm = True
+                timestamps_ns.append(frame.timestamp_ns)
+                previous_sequence = frame.sequence
+
+            finally:
+                frame.release()
 
         _, jpeg = camera.wait_for_jpeg(0, timeout=2.0)
 
@@ -69,3 +86,4 @@ def test_physical_sensor_delivers_nvmm_at_30_fps(width: int, height: int) -> Non
     observed_fps = (len(timestamps_ns) - 1) / elapsed_seconds
     assert 27.0 <= observed_fps <= 33.0
     assert jpeg is not None and jpeg.startswith(b"\xff\xd8")
+    assert imported_nvmm is True

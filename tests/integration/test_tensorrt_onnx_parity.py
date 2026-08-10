@@ -31,7 +31,7 @@ if os.environ.get("IMX_TENSORRT_INTEGRATION") != "1":
 def _write_dynamic_box_model(path: Path) -> None:
     """Create a tiny model whose box coordinates depend on input pixels."""
     image = helper.make_tensor_value_info(
-        "images",
+        "input",
         TensorProto.FLOAT,
         [1, 3, "height", "width"],
     )
@@ -51,7 +51,7 @@ def _write_dynamic_box_model(path: Path) -> None:
         [
             helper.make_node(
                 "ReduceMean",
-                ["images"],
+                ["input"],
                 ["channel_means"],
                 axes=[2, 3],
                 keepdims=0,
@@ -116,6 +116,7 @@ def test_tensorrt_and_onnx_runtime_boxes_match_for_one_nvmm_frame(
     cached_runner: TensorRTRunner | None = None
 
     backend.open()
+
     try:
         success, frame = backend.read()
         assert success and frame is not None
@@ -138,12 +139,14 @@ def test_tensorrt_and_onnx_runtime_boxes_match_for_one_nvmm_frame(
             reference_input.copy_to_host(stream),
             dtype=np.float32,
         ).reshape(1, 3, 64, 64)
+
         del surface
+
         session = ort.InferenceSession(
             str(model_path),
             providers=["CPUExecutionProvider"],
         )
-        expected_boxes = session.run(["boxes"], {"images": host_input})[0]
+        expected_boxes = session.run(["boxes"], {"input": host_input})[0]
 
         runner.prepare(
             FrameSpec(
@@ -178,6 +181,7 @@ def test_tensorrt_and_onnx_runtime_boxes_match_for_one_nvmm_frame(
         )
         cached_runner.prepare(FrameSpec.from_gpu_frame(frame))
         assert cached_runner.cache_hit is True
+
     finally:
         if cached_runner is not None:
             cached_runner.close()
