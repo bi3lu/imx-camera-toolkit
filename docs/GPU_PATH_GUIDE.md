@@ -15,8 +15,9 @@ memory domain required by the next consumer.
 
 `Camera.read(copy=False)` only avoids another Python-side array copy. It does
 not turn BGR host memory into CUDA or NVMM memory. Conversely, `GpuFrame` is a
-short-lived borrowed lease and must not be retained after a newer frame is
-published.
+short-lived borrowed lease when returned directly by `read()`. A
+`subscribe_latest()` consumer gets its own retained lease, which stays valid
+while that consumer processes it and must then be released.
 
 ## Supported baseline
 

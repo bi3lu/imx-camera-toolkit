@@ -18,7 +18,11 @@ from imx_camera_toolkit import (
 )
 from imx_camera_toolkit.frames import GpuFrameSource
 from imx_camera_toolkit.testing import mock_gpu_frame
-from packages.camera.backends.gpu_gstreamer import GpuGStreamerCaptureBackend
+from packages.camera.backends.gpu_gstreamer import (
+    GpuGStreamerCaptureBackend,
+    _is_argus_already_allocated,
+)
+from packages.camera.camera import CameraRecoveryPolicy
 
 
 @pytest.mark.parametrize(
@@ -179,6 +183,97 @@ def test_gpu_recovery_replaces_and_closes_the_whole_tee_pipeline() -> None:
 
     camera.stop()
     assert replacement.closed is True
+
+
+def test_gpu_recovery_budget_resets_only_after_a_valid_frame() -> None:
+    """A reopened backend without frames must not restart recovery forever."""
+    first = _FakeGpuBackend()
+    second = _FakeGpuBackend()
+    after_frame = _FakeGpuBackend()
+    camera = _RecoverableGpuCamera([first, second, after_frame])
+    camera._recovery_policy = CameraRecoveryPolicy(
+        max_attempts=2,
+        initial_backoff=0,
+        max_consecutive_read_failures=1,
+    )
+    camera._backend = _FakeGpuBackend()
+    camera._running.set()
+
+    assert camera._recover_backend() is True
+    assert camera._recover_backend() is True
+    assert camera._recover_backend() is False
+    assert camera.recovery_attempts == 2
+
+    camera._record_capture(mock_gpu_frame(object()))
+
+    assert camera._recover_backend() is True
+    assert camera.recovery_attempts == 3
+    camera.stop()
+
+
+def test_gpu_recovery_fails_fast_when_argus_sensor_is_allocated() -> None:
+    """An occupied sensor is not a transient backend recovery condition."""
+    occupied = _FakeGpuBackend(
+        open_error=CameraOpenError("Argus returned AlreadyAllocated")
+    )
+    camera = _RecoverableGpuCamera([occupied])
+    camera._recovery_policy = CameraRecoveryPolicy(
+        max_attempts=3,
+        initial_backoff=0,
+        max_consecutive_read_failures=1,
+    )
+    camera._backend = _FakeGpuBackend()
+    camera._running.set()
+
+    assert camera._recover_backend() is False
+    assert camera.recovery_attempts == 1
+    assert occupied.closed is True
+    assert isinstance(camera.last_recovery_error, CameraOpenError)
+    camera.stop()
+
+
+@pytest.mark.parametrize(
+    "detail",
+    ("AlreadyAllocated", "already allocated", "ALREADY_ALLOCATED"),
+)
+def test_argus_allocation_conflict_message_is_recognized(detail: str) -> None:
+    """Backend preflight must normalize common Argus error spellings."""
+    assert _is_argus_already_allocated(detail) is True
+
+
+def test_gpu_backend_surfaces_open_error_while_waiting_for_first_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preroll polling must fail fast when Argus reports an occupied sensor."""
+
+    class _Gst:
+        SECOND = 1_000_000_000
+
+    class _Sink:
+        calls = 0
+
+        def emit(self, _signal: str, _timeout: int) -> None:
+            self.calls += 1
+            return None
+
+    backend = GpuGStreamerCaptureBackend(
+        "unused",
+        1280,
+        720,
+        enable_preview=False,
+    )
+    sink = _Sink()
+    monkeypatch.setattr(gpu_gstreamer_backend, "Gst", _Gst())
+
+    def raise_allocated(**_kwargs: object) -> None:
+        raise CameraOpenError("Argus sensor is already allocated")
+
+    monkeypatch.setattr(backend, "_raise_pipeline_error", raise_allocated)
+
+    with pytest.raises(CameraOpenError, match="already allocated"):
+        backend._pull_first_sample(sink, object())
+
+    assert sink.calls == 1
 
 
 def test_gpu_start_closes_a_pipeline_that_fails_to_open() -> None:

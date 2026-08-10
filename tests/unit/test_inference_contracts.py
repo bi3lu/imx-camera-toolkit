@@ -11,6 +11,7 @@ import pytest
 from imx_camera_toolkit import FrameFormat, MemoryType
 from imx_camera_toolkit.inference import (
     FrameSpec,
+    InferenceConfigurationError,
     InferenceResult,
     InferenceRunner,
     ShapeProfile,
@@ -125,14 +126,34 @@ def test_native_interop_passes_checked_gst_buffer_object_to_cpp() -> None:
     native.NvmmSurface = lambda payload, width, height: calls.append(  # type: ignore[attr-defined]
         (payload, width, height)
     )
-    payload_type = type("Buffer", (), {"__module__": "gi.repository.Gst"})
+    payload_type = type("Buffer", (), {"__module__": "gi.overrides.Gst"})
+    gst = ModuleType("gi.repository.Gst")
+    gst.Buffer = payload_type  # type: ignore[attr-defined]
     payload = payload_type()
     frame = mock_gpu_frame(payload, width=1920, height=1080)
 
-    surface = NativeCudaInterop(native).import_frame(frame)
+    surface = NativeCudaInterop(native, gstreamer_module=gst).import_frame(frame)
 
     assert surface is None
     assert calls == [(payload, 1920, 1080)]
+
+
+def test_tensorrt_runner_auto_selects_the_only_onnx_input(tmp_path: Path) -> None:
+    """A model-neutral runner must not assume that its input is named images."""
+    runner = TensorRTRunner(
+        tmp_path / "model.onnx",
+        cache_dir=tmp_path / "engines",
+        input_name=None,
+        shape_profile=ShapeProfile(
+            minimum=(1, 3, 320, 320),
+            optimum=(1, 3, 640, 640),
+            maximum=(1, 3, 1280, 1280),
+        ),
+    )
+
+    assert runner._select_input_name(("input",)) == "input"
+    with pytest.raises(InferenceConfigurationError, match="exactly one"):
+        runner._select_input_name(("image", "scale"))
 
 
 def test_native_source_uses_egl_cuda_without_host_input_upload() -> None:

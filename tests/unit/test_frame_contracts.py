@@ -95,3 +95,18 @@ def test_latest_gpu_frame_invalidates_the_previous_borrowed_lease() -> None:
 
     assert source.read(timeout=0) is second
     assert second.valid is True
+
+
+def test_retained_gpu_frame_survives_source_lease_invalidation() -> None:
+    """Independent subscriber leases must retain the native buffer."""
+    payload = object()
+    source_frame = mock_gpu_frame(payload)
+    subscriber_frame = source_frame.retain()
+
+    source_frame.invalidate()
+
+    assert source_frame.valid is False
+    assert subscriber_frame.valid is True
+    assert subscriber_frame.payload() is payload
+    subscriber_frame.release()
+    assert subscriber_frame.valid is False

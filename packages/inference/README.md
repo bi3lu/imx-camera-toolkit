@@ -85,7 +85,6 @@ from imx_camera_toolkit.inference import FrameSpec, ShapeProfile, TensorRTRunner
 runner = TensorRTRunner(
     "detector.onnx",
     cache_dir=Path(".cache/tensorrt"),
-    input_name="images",
     precision="fp16",
     shape_profile=ShapeProfile(
         minimum=(1, 3, 320, 320),
@@ -104,6 +103,10 @@ with GpuCamera(experimental=True) as camera:
 
 runner.close()
 ```
+
+With the default `input_name=None`, the runner selects the model's only ONNX
+input regardless of its name. Pass an explicit `input_name` for models with
+multiple inputs; ambiguous automatic selection raises a configuration error.
 
 For live operation, prefer the asynchronous latest-frame adapter over polling
 `read()`. It provides one input slot and one worker per expensive consumer, so
