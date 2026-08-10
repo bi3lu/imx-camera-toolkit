@@ -143,11 +143,26 @@ Each `.engine` has an adjacent JSON metadata file containing:
 - FP16/FP32 precision;
 - input tensor name;
 - complete dynamic min/opt/max shape profile.
+- SHA-256 of the serialized engine itself.
 
 The runner deserializes a cache entry only when every field matches. Missing,
 corrupt, empty, or incompatible entries cause an ONNX rebuild and atomic local
 replacement. Engine files must not be copied between Jetsons or TensorRT
 versions without this validation.
+
+Cache directories must be owned by root or the process and use `0700`/`0750`;
+engine and metadata files use `0600`/`0640`. Symlinks, unexpected ownership,
+permissions, metadata, or engine digests make the entry untrusted and cause a
+rebuild. The engine remains a disposable local artifact rather than a model
+trust anchor.
+
+For deployed models, set `require_signed_model=True` and provide an Ed25519 PEM
+`public_key_path`. The runner verifies `model.manifest.sig` over the exact bytes
+of `model.manifest.json`, checks the manifest SHA-256 against `model.onnx`, and
+requires the discovered input/output tensor names to match the signed contract.
+The schema-versioned manifest contains `model_sha256`, `model_version`,
+`inputs`, and `outputs`. Model, manifest, signature, and trust anchor must be
+root/process-owned regular files that are not group/world writable.
 
 ## Parity validation
 

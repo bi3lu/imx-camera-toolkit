@@ -55,7 +55,7 @@ uv run python main.py
 The application can also be served directly with Uvicorn:
 
 ```bash
-uv run uvicorn --factory imx_camera_toolkit.api:create_app --host 0.0.0.0 --port 8000
+uv run uvicorn --factory imx_camera_toolkit.api:create_app --host 127.0.0.1 --port 8000
 ```
 
 Using the factory avoids creating an application, reading its configuration, or
@@ -69,7 +69,8 @@ FastAPI exposes interactive documentation at `/docs` and the OpenAPI schema at
 | Endpoint | Description |
 | --- | --- |
 | `GET /` | Customizable HTML camera preview. |
-| `GET /api/health` | Camera state, active backend, frame format/memory/resolution, stage latency, per-consumer drops, capture metrics, and the latest background error. |
+| `GET /healthz` | Public minimal process liveness. |
+| `GET /debug/health` | `admin`-protected camera and capture diagnostics. |
 | `GET /api/camera/snapshot` | Latest JPEG camera image. |
 | `GET /api/camera/mjpeg` | Live `multipart/x-mixed-replace` MJPEG response. |
 
@@ -128,7 +129,8 @@ error instead of serving a view without a live feed.
 
 [config.yml](config.yml) controls the FastAPI title, description, version, and
 the snapshot endpoint timeout. Missing, unreadable, malformed, or invalid
-configuration falls back to built-in defaults.
+configuration falls back to built-in defaults in development. Field mode fails
+startup on an invalid configured file.
 
 To create an application with another configuration file or a custom camera,
 use the factory:
@@ -152,6 +154,13 @@ view path as `app.state.view_path`. The selected bundled mode is available as
 
 ## Security
 
-The API does not implement authentication or authorization. Do not expose it
-directly to an untrusted network. Bind it to a private interface or place it
-behind an authenticated reverse proxy before remote use.
+Pass `SecurityConfig.from_token_file(...)` to `create_app()` to activate scoped
+Bearer authentication. Field mode requires at least one hashed token grant,
+disables `/docs`, `/redoc`, and `/openapi.json`, protects diagnostics with
+`admin`, enables per-IP/per-token rate limits and security headers, restricts
+Host headers, and optionally redirects HTTP to HTTPS. Token files must be
+regular, non-symlink `0600`/`0640` files owned by root or the service user.
+
+Routes use `stream:read`, `camera:read`, `camera:control`, `profiles:write`, and
+`admin`; an `admin` grant acts as a superuser. Prefer a TLS/mTLS reverse proxy
+on port 443 connected to this service on `127.0.0.1`.
