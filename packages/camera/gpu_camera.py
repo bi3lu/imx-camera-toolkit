@@ -194,7 +194,7 @@ class GpuCamera:
         self._rebuild_pipeline()
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
         self._gpu_publisher = GpuFramePublisher()
-        self._frame_hub = LatestFrameHub[GpuFrame](self.record_consumer_drop)
+        self._frame_hub = self._new_frame_hub()
         self._preview_publisher = EncodedJPEGPublisher(self._config.preview_fps)
         self._video_publisher = EncodedVideoPublisher()
         self._video_hub = LatestFrameHub[EncodedVideoFrame](
@@ -714,16 +714,16 @@ class GpuCamera:
     def _assign_sequence(self, frame: GpuFrame) -> GpuFrame:
         """Assign a camera-lifetime sequence that survives backend recovery."""
         self._sequence += 1
-        return GpuFrame(
-            sequence=self._sequence,
-            timestamp_ns=frame.timestamp_ns,
-            capture_timestamp_ns=frame.capture_timestamp_ns,
-            width=frame.width,
-            height=frame.height,
-            format=frame.format,
-            memory_type=frame.memory_type,
-            dmabuf_fd=frame.dmabuf_fd,
-            buffer=frame.buffer,
+        assigned = frame.retain(sequence=self._sequence)
+        frame.release()
+        return assigned
+
+    def _new_frame_hub(self) -> LatestFrameHub[GpuFrame]:
+        """Create subscriber slots with independent ref-counted GPU leases."""
+        return LatestFrameHub[GpuFrame](
+            self.record_consumer_drop,
+            retain=lambda frame: frame.retain(),
+            release=lambda frame: frame.release(),
         )
 
     def _record_capture(self, frame: GpuFrame) -> None:
@@ -839,19 +839,18 @@ class GpuCamera:
     def subscribe_latest(self, name: str) -> LatestFrameSubscription[GpuFrame]:
         """Create one non-blocking borrowed NVMM slot for a named consumer.
 
-        Each subscriber owns only a single latest-frame slot. A slow GPU
-        consumer skips old leases instead of back-pressuring capture or the
-        preview branch. As with :meth:`read`, a frame must not be kept after
-        the camera publishes its successor.
+        Each subscriber owns only a single latest-frame slot and an independent
+        reference-counted lease. A slow GPU consumer skips unread frames but
+        may finish processing the frame it already received. Direct consumers
+        must call :meth:`GpuFrame.release` after processing; ``FrameConsumer``
+        and ``InferenceConsumer`` release leases automatically.
         """
         with self._lifecycle_lock:
             if self._frame_hub.closed:
                 if self.running:
                     raise RuntimeError("GPU frame subscriptions are closed")
 
-                self._frame_hub = LatestFrameHub[GpuFrame](
-                    self.record_consumer_drop
-                )
+                self._frame_hub = self._new_frame_hub()
 
             return self._frame_hub.subscribe(name)
 

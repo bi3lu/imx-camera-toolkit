@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from threading import Lock
 
@@ -10,6 +11,16 @@ from .formats import FrameFormat, MemoryType
 
 class GpuFrameExpiredError(RuntimeError):
     """Raised when a consumer accesses a GPU frame after its lease expired."""
+
+
+@dataclass(slots=True)
+class _GpuBufferState:
+    """Reference-counted ownership shared by independent GPU leases."""
+
+    resource: object | None
+    owner: object | None
+    references: int = 1
+    lock: Lock = field(default_factory=Lock)
 
 
 class GpuBufferHandle:
@@ -30,29 +41,52 @@ class GpuBufferHandle:
         if resource is None:
             raise ValueError("resource must not be None")
 
-        self._resource: object | None = resource
-        self._owner: object | None = owner
-        self._lock = Lock()
+        self._state = _GpuBufferState(resource, owner)
+        self._released = False
+
+    @classmethod
+    def _from_state(cls, state: _GpuBufferState) -> GpuBufferHandle:
+        """Create one independently releasable view of shared ownership."""
+        handle = cls.__new__(cls)
+        handle._state = state
+        handle._released = False
+        return handle
 
     @property
     def valid(self) -> bool:
         """Whether the wrapped resource remains available."""
-        with self._lock:
-            return self._resource is not None
+        with self._state.lock:
+            return not self._released and self._state.resource is not None
 
     def get(self) -> object:
         """Return the resource or raise after lease invalidation."""
-        with self._lock:
-            if self._resource is None:
+        with self._state.lock:
+            if self._released or self._state.resource is None:
                 raise GpuFrameExpiredError("GPU buffer handle has expired")
 
-            return self._resource
+            return self._state.resource
+
+    def retain(self) -> GpuBufferHandle:
+        """Return a separate lease retaining the same native resource."""
+        with self._state.lock:
+            if self._released or self._state.resource is None:
+                raise GpuFrameExpiredError("GPU buffer handle has expired")
+
+            self._state.references += 1
+            return self._from_state(self._state)
 
     def invalidate(self) -> None:
         """Drop the borrowed resource reference permanently."""
-        with self._lock:
-            self._resource = None
-            self._owner = None
+        with self._state.lock:
+            if self._released:
+                return
+
+            self._released = True
+            self._state.references -= 1
+
+            if self._state.references == 0:
+                self._state.resource = None
+                self._state.owner = None
 
 
 @dataclass(slots=True)
@@ -67,11 +101,11 @@ class _FrameLease:
 class GpuFrame:
     """One borrowed frame whose pixels remain in NVIDIA device memory.
 
-    The capture source owns the underlying buffer. A consumer may use the
-    payload only while :attr:`valid` is true and must finish before requesting
-    or observing the next frame from the same source. Sources invalidate the
-    previous frame when they publish its successor. Consumers must not retain,
-    close, unref, or mutate ``buffer`` and must not close ``dmabuf_fd``.
+    The capture source owns the underlying buffer. Direct ``read()`` values are
+    invalidated when the source publishes their successor. Latest-frame
+    subscriptions receive independent retained leases that remain valid until
+    the consumer releases them. Consumers must not close, unref, or mutate
+    ``buffer`` and must not close ``dmabuf_fd`` directly.
 
     Exactly one payload representation is present: ``dmabuf_fd`` is a borrowed
     DMA-BUF file descriptor, while ``buffer`` is a checked
@@ -95,6 +129,12 @@ class GpuFrame:
     capture_timestamp_ns: int | None = None
     _lease: _FrameLease = field(
         default_factory=_FrameLease,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _owns_dmabuf_fd: bool = field(
+        default=False,
         init=False,
         repr=False,
         compare=False,
@@ -162,13 +202,14 @@ class GpuFrame:
         """Return the borrowed payload after checking its frame lease.
 
         Raises:
-            GpuFrameExpiredError: If the source has published a newer frame.
+            GpuFrameExpiredError: If the lease has been released or expired.
         """
         with self._lease.lock:
             if not self._lease.valid:
                 raise GpuFrameExpiredError(
                     "GPU frame lease expired after a newer frame was published"
                 )
+
             if self.dmabuf_fd is not None:
                 return self.dmabuf_fd
 
@@ -177,15 +218,63 @@ class GpuFrame:
 
             return self.buffer.get()
 
+    def retain(self, *, sequence: int | None = None) -> GpuFrame:
+        """Create an independent lease for one subscriber or worker."""
+        with self._lease.lock:
+            if not self._lease.valid:
+                raise GpuFrameExpiredError(
+                    "GPU frame lease expired after a newer frame was published"
+                )
+
+            retained_buffer = (
+                None if self.buffer is None else self.buffer.retain()
+            )
+
+            retained_fd = (
+                None if self.dmabuf_fd is None else os.dup(self.dmabuf_fd)
+            )
+
+        retained = GpuFrame(
+            sequence=self.sequence if sequence is None else sequence,
+            timestamp_ns=self.timestamp_ns,
+            capture_timestamp_ns=self.capture_timestamp_ns,
+            width=self.width,
+            height=self.height,
+            format=self.format,
+            memory_type=self.memory_type,
+            dmabuf_fd=retained_fd,
+            buffer=retained_buffer,
+        )
+        if retained_fd is not None:
+            object.__setattr__(retained, "_owns_dmabuf_fd", True)
+
+        return retained
+
+    def release(self) -> None:
+        """Release this lease without affecting another subscriber."""
+        self.invalidate()
+
     def invalidate(self) -> None:
         """Expire this borrowed frame.
 
-        Capture-source implementations call this immediately before publishing
-        the next frame. It is public so custom, model-agnostic sources can
-        implement the same lifetime contract without private toolkit classes.
+        Direct capture sources call this before publishing a successor, while
+        subscription consumers use it to release their independent lease. It
+        remains public so custom sources can implement the same lifetime
+        contract without private toolkit classes.
         """
+        owned_fd: int | None = None
+
         with self._lease.lock:
+            if not self._lease.valid:
+                return
+
             self._lease.valid = False
+
+            if self._owns_dmabuf_fd:
+                owned_fd = self.dmabuf_fd
 
         if self.buffer is not None:
             self.buffer.invalidate()
+
+        if owned_fd is not None:
+            os.close(owned_fd)

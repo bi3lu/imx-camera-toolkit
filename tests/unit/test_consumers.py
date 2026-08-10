@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable
 from functools import partial
+
+import pytest
 
 from imx_camera_toolkit import Camera, GpuCamera
 from imx_camera_toolkit.consumers import (
@@ -17,7 +20,7 @@ from imx_camera_toolkit.consumers import (
 )
 from imx_camera_toolkit.inference import FrameSpec, InferenceResult
 from imx_camera_toolkit.testing import mock_gpu_frame
-from packages.camera.models import GpuFrame
+from packages.camera.models import GpuFrame, GpuFrameExpiredError
 
 
 def _wait_for(predicate: Callable[[], bool], timeout: float = 1.0) -> None:
@@ -35,6 +38,11 @@ def _preview_processed(
 ) -> bool:
     """Whether the adapter has rendered an expected number of previews."""
     return preview.processed_frames >= expected
+
+
+def _consumer_failed(consumer: FrameConsumer[int], expected: int) -> bool:
+    """Whether a deterministic integer consumer reached a failure count."""
+    return consumer.failed_frames == expected
 
 
 def test_each_subscription_has_one_independent_latest_frame_slot() -> None:
@@ -86,6 +94,74 @@ def test_frame_consumer_runs_handler_off_capture_thread_and_keeps_latest() -> No
     assert consumer.dropped_frames == 8
 
 
+def test_frame_consumer_reports_failure_and_clears_health_after_success(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Current health must recover while historical failure remains visible."""
+    hub = LatestFrameHub[int]()
+    failures: list[Exception] = []
+
+    def handle(value: int) -> None:
+        if value == 1:
+            raise RuntimeError("invalid model configuration")
+
+    consumer = FrameConsumer(
+        hub.subscribe("recovering"),
+        handle,
+        on_error=failures.append,
+        initial_failure_backoff=0,
+    )
+    with caplog.at_level(logging.ERROR):
+        consumer.start()
+        hub.publish(1)
+        _wait_for(lambda: consumer.failed_frames == 1)
+        assert consumer.healthy is False
+        assert consumer.consecutive_failures == 1
+        hub.publish(2)
+        _wait_for(lambda: consumer.processed_frames == 1)
+        consumer.stop()
+
+    assert consumer.healthy is True
+    assert consumer.consecutive_failures == 0
+    assert consumer.last_error is None
+    assert isinstance(consumer.last_failure, RuntimeError)
+    assert failures == [consumer.last_failure]
+    assert "invalid model configuration" in caplog.text
+
+
+def test_frame_consumer_rate_limits_repeated_error_tracebacks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Repeated failures must remain counted without flooding the log."""
+    hub = LatestFrameHub[int]()
+
+    def fail(_: int) -> None:
+        raise ValueError("permanent failure")
+
+    consumer = FrameConsumer(
+        hub.subscribe("broken"),
+        fail,
+        error_log_interval=60.0,
+        initial_failure_backoff=0,
+    )
+    with caplog.at_level(logging.ERROR):
+        consumer.start()
+        for value in range(3):
+            hub.publish(value)
+            expected = value + 1
+            _wait_for(partial(_consumer_failed, consumer, expected))
+        consumer.stop()
+
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("Frame consumer broken failed")
+    ]
+    assert len(messages) == 1
+    assert consumer.failed_frames == 3
+    assert consumer.consecutive_failures == 3
+
+
 def test_cpu_camera_subscribe_latest_preserves_legacy_frame_contract() -> None:
     """Subscriptions must complement rather than change BGR read semantics."""
     camera = Camera(enable_preview=False)
@@ -109,8 +185,44 @@ def test_gpu_camera_exposes_public_borrowed_latest_subscription() -> None:
     frame = mock_gpu_frame(object(), sequence=4)
 
     camera._frame_hub.publish(frame)
+    received = subscription.receive(0)
 
-    assert subscription.receive(0) is frame
+    assert received is not None
+    assert received is not frame
+    assert received.payload() is frame.payload()
+    subscription.release(received)
+
+
+def test_gpu_subscriber_keeps_processing_lease_after_new_publication() -> None:
+    """Publishing a successor must not expire a frame inside a worker."""
+    camera = GpuCamera(experimental=True)
+    entered = threading.Event()
+    release = threading.Event()
+    payloads: list[object] = []
+
+    def handle(frame: GpuFrame) -> None:
+        entered.set()
+        assert release.wait(1.0)
+        payloads.append(frame.payload())
+
+    consumer = FrameConsumer(camera.subscribe_latest("inference"), handle)
+    consumer.start()
+    first_payload = object()
+    first = mock_gpu_frame(first_payload, sequence=1)
+    camera._gpu_publisher.publish(first)
+    camera._frame_hub.publish(first)
+    assert entered.wait(1.0)
+
+    second = mock_gpu_frame(object(), sequence=2)
+    camera._gpu_publisher.publish(second)
+    camera._frame_hub.publish(second)
+    assert first.valid is False
+    release.set()
+    _wait_for(lambda: consumer.processed_frames == 2)
+    consumer.stop()
+
+    assert payloads[0] is first_payload
+    assert consumer.failed_frames == 0
 
 
 class _SlowRunner:
@@ -140,6 +252,34 @@ class _SlowRunner:
     def close(self) -> None:
         """Record runner ownership release."""
         self.closed = True
+
+
+class _ExpiredRunner(_SlowRunner):
+    """Runner simulating expiry before CUDA imports the native buffer."""
+
+    def infer(self, frame: GpuFrame) -> InferenceResult:
+        """Reject the lease before starting inference work."""
+        raise GpuFrameExpiredError("expired before import")
+
+
+def test_inference_consumer_classifies_expired_input_as_drop() -> None:
+    """A pre-inference lease expiry is a drop rather than runner failure."""
+    hub = LatestFrameHub[GpuFrame]()
+    inference = InferenceConsumer(
+        hub.subscribe("expired"),
+        _ExpiredRunner(duration=0),
+        initial_failure_backoff=0,
+    )
+    inference.start()
+    hub.publish(mock_gpu_frame(object()))
+    _wait_for(lambda: inference.dropped_frames == 1)
+    inference.stop()
+
+    assert inference.failed_frames == 0
+    assert inference.consecutive_failures == 0
+    assert inference.last_error is None
+    assert inference.last_failure is None
+    assert inference.healthy is True
 
 
 class _FakeJPEGSource:
