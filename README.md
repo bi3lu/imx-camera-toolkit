@@ -536,6 +536,15 @@ uv run mypy imx_camera_toolkit packages tests
 uv run pytest -m "not benchmark"
 ```
 
+Install the local commit hooks once per clone. They reject staged whitespace
+errors or a stale lockfile, then run Ruff, strict mypy, and the same host test
+selection as CI:
+
+```bash
+uv run pre-commit install
+uv run pre-commit run --all-files
+```
+
 Deterministic capture and MJPEG framing benchmarks are deliberately separate
 from the normal test suite. They measure toolkit overhead only; they do not
 represent sensor, ISP, JPEG encoder, network, or browser performance. A
