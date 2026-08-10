@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -26,9 +27,9 @@ def test_camera_preview_composes_camera_api_and_uvicorn(
             """Store facade-provided camera configuration."""
             captured["camera"] = kwargs
 
-    def fake_create_app(camera: object, *, view_mode: str) -> object:
+    def fake_create_app(camera: object, **kwargs: object) -> object:
         """Record API composition and return an opaque application."""
-        captured["api"] = {"camera": camera, "view_mode": view_mode}
+        captured["api"] = {"camera": camera, **kwargs}
         return application
 
     def fake_run(server_app: object, *, host: str, port: int) -> None:
@@ -54,7 +55,7 @@ def test_camera_preview_composes_camera_api_and_uvicorn(
     assert isinstance(captured["api"]["camera"], FakeCamera)
     assert captured["server"] == {
         "app": application,
-        "host": "0.0.0.0",
+        "host": "127.0.0.1",
         "port": 9000,
     }
 
@@ -66,7 +67,7 @@ def test_camera_preview_uses_documented_defaults() -> None:
         width=1280,
         height=720,
         fps=30,
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=8000,
     )
 
@@ -123,3 +124,34 @@ def test_camera_preview_rejects_invalid_configuration(
     """Invalid facade configuration must fail before a camera is constructed."""
     with pytest.raises(ValueError, match=message):
         CameraPreview(**kwargs)
+
+
+def test_camera_preview_rejects_implicit_remote_bind() -> None:
+    """A wildcard listener must require an explicit deployment decision."""
+    with pytest.raises(ValueError, match="remote bind requires"):
+        CameraPreview(host="0.0.0.0")
+
+    assert CameraPreview(host="0.0.0.0", allow_remote=True).host == "0.0.0.0"
+
+
+def test_camera_preview_field_mode_fails_closed() -> None:
+    """Field mode must require auth, host allowlisting, and remote TLS."""
+    with pytest.raises(ValueError, match="token_file"):
+        CameraPreview(field_mode=True)
+
+    with pytest.raises(ValueError, match="TLS"):
+        CameraPreview(
+            host="192.0.2.10",
+            field_mode=True,
+            token_file=Path("tokens.json"),
+            allowed_hosts=("camera.example",),
+        )
+
+    preview_config = CameraPreview(
+        host="0.0.0.0",
+        field_mode=True,
+        token_file=Path("tokens.json"),
+        allowed_hosts=("camera.example",),
+        behind_tls_proxy=True,
+    )
+    assert preview_config.field_mode is True

@@ -105,7 +105,7 @@ def main() -> None:
 
     try:
         with camera, inference:
-            uvicorn.run(app, host="0.0.0.0", port=args.port)
+            uvicorn.run(app, host="127.0.0.1", port=args.port)
 
     finally:
         overlay.close()

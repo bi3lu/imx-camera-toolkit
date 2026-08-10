@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from packages.camera_control.camera_control import (
     CameraCapabilities,
     CameraController,
@@ -35,3 +37,10 @@ def test_controller_selects_declared_native_hdr_mode() -> None:
 
     assert update.settings.sensor_mode == 1
     assert update.restart_required
+
+
+@pytest.mark.parametrize("gain", [float("nan"), float("inf"), 1025.0])
+def test_controller_rejects_non_finite_or_absurd_gain(gain: float) -> None:
+    """Network-provided numeric controls must stay finite and sensor-bounded."""
+    with pytest.raises(ValueError, match="gain"):
+        CameraController().set_gain(gain)

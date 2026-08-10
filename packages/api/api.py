@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -10,7 +11,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Security
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
 try:
@@ -26,6 +27,12 @@ from packages.camera_control.camera_control import (
     UnsupportedControlError,
 )
 from packages.stream.stream import MJPEGStream
+
+from .security import (
+    SecurityConfig,
+    apply_security_middleware,
+    build_authorizer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +94,10 @@ def _validate_api_config(config: APIConfig) -> None:
     ):
         raise ValueError("snapshot_timeout must be a number")
 
-    if config.snapshot_timeout <= 0:
-        raise ValueError("snapshot_timeout must be greater than zero")
+    if not math.isfinite(config.snapshot_timeout) or not (
+        0 < config.snapshot_timeout <= 60
+    ):
+        raise ValueError("snapshot_timeout must be finite and between 0 and 60 seconds")
 
 
 def _read_config_values(config_data: dict[str, Any]) -> APIConfig:
@@ -123,12 +132,18 @@ def _read_config_values(config_data: dict[str, Any]) -> APIConfig:
     return config
 
 
-def load_api_config(config_path: str | Path | None = None) -> APIConfig:
+def load_api_config(
+    config_path: str | Path | None = None,
+    *,
+    strict: bool = False,
+) -> APIConfig:
     """Load API settings from YAML, falling back to built-in defaults.
 
     Args:
         config_path: Path to a YAML file. When omitted, uses the ``config.yml``
             located next to this module.
+        strict: Raise on missing, unreadable, or invalid configuration instead
+            of falling back to development defaults.
 
     Returns:
         A validated configuration. Built-in defaults are returned when the file
@@ -140,13 +155,22 @@ def load_api_config(config_path: str | Path | None = None) -> APIConfig:
         raw_config = path.read_text(encoding="utf-8")
 
     except FileNotFoundError:
+        if strict:
+            raise
+
         return DEFAULT_API_CONFIG
 
     except OSError as error:
+        if strict:
+            raise RuntimeError(f"Could not read API configuration {path}") from error
+
         logger.warning("Could not read API configuration %s: %s", path, error)
         return DEFAULT_API_CONFIG
 
     if yaml is None:
+        if strict:
+            raise RuntimeError("PyYAML is required for strict API configuration")
+
         logger.warning("PyYAML is unavailable; using built-in API defaults")
         return DEFAULT_API_CONFIG
 
@@ -164,6 +188,8 @@ def load_api_config(config_path: str | Path | None = None) -> APIConfig:
         return _read_config_values(config_data)
 
     except (ValueError, yaml.YAMLError) as error:
+        if strict:
+            raise ValueError(f"Invalid API configuration {path}: {error}") from error
         logger.warning("Invalid API configuration %s: %s", path, error)
         return DEFAULT_API_CONFIG
 
@@ -341,6 +367,7 @@ def create_app(
     view_mode: ViewMode = DEFAULT_VIEW_MODE,
     view_path: str | Path | None = None,
     manage_camera: bool = True,
+    security_config: SecurityConfig | None = None,
 ) -> Any:
     """Create a FastAPI application backed by one shared camera instance.
 
@@ -356,6 +383,7 @@ def create_app(
             ``"advanced"`` for preview with runtime control panel.
         view_path: Optional path to the browser camera view template.
         manage_camera: Whether the API lifespan starts and stops ``camera``.
+        security_config: Authentication and field-deployment policy.
 
     Returns:
         Configured FastAPI application.
@@ -375,8 +403,10 @@ def create_app(
             restart_required=update.restart_required,
         )
     )
-    config = load_api_config(config_path)
+    resolved_security = security_config or SecurityConfig()
+    config = load_api_config(config_path, strict=resolved_security.field_mode)
     resolved_view_path = _resolve_view_path(view_mode, view_path)
+    authorize = build_authorizer(resolved_security)
 
     @asynccontextmanager
     async def lifespan(_: Any) -> AsyncIterator[None]:
@@ -396,14 +426,24 @@ def create_app(
         description=config.description,
         version=config.version,
         lifespan=lifespan,
+        docs_url="/docs" if resolved_security.docs_enabled else None,
+        redoc_url="/redoc" if resolved_security.docs_enabled else None,
+        openapi_url="/openapi.json" if resolved_security.docs_enabled else None,
     )
+    apply_security_middleware(application, resolved_security)
     application.state.config = config
+    application.state.security_config = resolved_security
     application.state.view_mode = view_mode
     application.state.view_path = resolved_view_path
     application.state.manage_camera = manage_camera
     application.state.camera_controller = camera_controller
 
-    @application.get("/", response_class=HTMLResponse, include_in_schema=False)
+    @application.get(
+        "/",
+        response_class=HTMLResponse,
+        include_in_schema=False,
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def index() -> Any:
         """Return the customizable browser camera view.
 
@@ -424,7 +464,20 @@ def create_app(
             logger.error("Could not serve camera view: %s", error)
             raise HTTPException(status_code=500, detail=str(error)) from error
 
-    @application.get("/api/health")
+    @application.get("/healthz", include_in_schema=False)
+    def healthz() -> dict[str, str]:
+        """Return a non-diagnostic process liveness response."""
+        return {"status": "ok"}
+
+    @application.get(
+        "/debug/health",
+        dependencies=[Security(authorize, scopes=["admin"])],
+    )
+    @application.get(
+        "/api/health",
+        deprecated=True,
+        dependencies=[Security(authorize, scopes=["admin"])],
+    )
     def health() -> dict[str, object]:
         """Return camera health and capture metrics.
 
@@ -433,7 +486,10 @@ def create_app(
         """
         return _camera_status(shared_camera)
 
-    @application.get("/api/camera/control")
+    @application.get(
+        "/api/camera/control",
+        dependencies=[Security(authorize, scopes=["camera:read"])],
+    )
     def camera_control_state() -> dict[str, object]:
         """Return runtime camera-control settings and capabilities.
 
@@ -445,7 +501,10 @@ def create_app(
         state["software_hdr"] = shared_camera.software_hdr_state
         return state
 
-    @application.patch("/api/camera/control")
+    @application.patch(
+        "/api/camera/control",
+        dependencies=[Security(authorize, scopes=["camera:control"])],
+    )
     def update_camera_control(values: dict[str, Any] = Body(...)) -> dict[str, object]:
         """Apply a validated camera-control update at runtime.
 
@@ -488,7 +547,10 @@ def create_app(
             logger.exception("Could not apply camera-control update")
             raise HTTPException(status_code=503, detail=str(error)) from error
 
-    @application.get("/api/camera/software-hdr")
+    @application.get(
+        "/api/camera/software-hdr",
+        dependencies=[Security(authorize, scopes=["camera:read"])],
+    )
     def software_hdr_state() -> dict[str, object]:
         """Return the active Jetson-side exposure-fusion HDR state.
 
@@ -497,7 +559,10 @@ def create_app(
         """
         return shared_camera.software_hdr_state
 
-    @application.put("/api/camera/software-hdr")
+    @application.put(
+        "/api/camera/software-hdr",
+        dependencies=[Security(authorize, scopes=["camera:control"])],
+    )
     def configure_software_hdr(values: dict[str, Any] = Body(...)) -> dict[str, object]:
         """Configure three-exposure HDR fusion for sensors without native HDR.
 
@@ -535,7 +600,10 @@ def create_app(
             logger.warning("Could not configure software HDR: %s", error)
             raise HTTPException(status_code=422, detail=str(error)) from error
 
-    @application.get("/api/camera/control/profiles")
+    @application.get(
+        "/api/camera/control/profiles",
+        dependencies=[Security(authorize, scopes=["camera:read"])],
+    )
     def list_camera_control_profiles() -> dict[str, list[str]]:
         """Return names of available in-memory camera-control profiles.
 
@@ -546,7 +614,10 @@ def create_app(
             "profiles": [profile.name for profile in camera_controller.list_profiles()]
         }
 
-    @application.put("/api/camera/control/profiles/{name}")
+    @application.put(
+        "/api/camera/control/profiles/{name}",
+        dependencies=[Security(authorize, scopes=["profiles:write"])],
+    )
     def save_camera_control_profile(name: str) -> dict[str, object]:
         """Store the current runtime settings as a named profile.
 
@@ -570,7 +641,15 @@ def create_app(
             "settings": camera_controller.get_runtime_state()["settings"],
         }
 
-    @application.post("/api/camera/control/profiles/{name}/apply")
+    @application.post(
+        "/api/camera/control/profiles/{name}/apply",
+        dependencies=[
+            Security(
+                authorize,
+                scopes=["profiles:write", "camera:control"],
+            )
+        ],
+    )
     def apply_camera_control_profile(name: str) -> dict[str, object]:
         """Apply one named profile to the active camera.
 
@@ -596,7 +675,11 @@ def create_app(
             logger.exception("Could not apply camera-control profile %s", name)
             raise HTTPException(status_code=503, detail=str(error)) from error
 
-    @application.delete("/api/camera/control/profiles/{name}", status_code=204)
+    @application.delete(
+        "/api/camera/control/profiles/{name}",
+        status_code=204,
+        dependencies=[Security(authorize, scopes=["profiles:write"])],
+    )
     def delete_camera_control_profile(name: str) -> None:
         """Remove one in-memory camera-control profile.
 
@@ -615,8 +698,13 @@ def create_app(
                 detail=f"unknown profile: {name}",
             ) from error
 
-    @application.get("/api/camera/snapshot")
-    def camera_snapshot(after: int = Query(default=-1, ge=-1)) -> Any:
+    @application.get(
+        "/api/camera/snapshot",
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
+    def camera_snapshot(
+        after: int = Query(default=-1, ge=-1, le=(1 << 63) - 1),
+    ) -> Any:
         """Return the newest JPEG camera frame.
 
         Args:
@@ -646,7 +734,10 @@ def create_app(
 
         return Response(content=jpeg, media_type="image/jpeg", headers=headers)
 
-    @application.get("/api/camera/mjpeg")
+    @application.get(
+        "/api/camera/mjpeg",
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def camera_mjpeg() -> Any:
         """Return a live MJPEG response from the shared camera.
 

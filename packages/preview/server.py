@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -68,16 +69,18 @@ class PreviewServer:
         if (
             isinstance(max_fps, bool)
             or not isinstance(max_fps, (int, float))
-            or max_fps <= 0
+            or not math.isfinite(max_fps)
+            or not 0 < max_fps <= 1_000
         ):
-            raise ValueError("max_fps must be greater than zero")
+            raise ValueError("max_fps must be finite and between 0 and 1000")
 
         if (
             isinstance(read_timeout, bool)
             or not isinstance(read_timeout, (int, float))
-            or read_timeout <= 0
+            or not math.isfinite(read_timeout)
+            or not 0 < read_timeout <= 3_600
         ):
-            raise ValueError("read_timeout must be greater than zero")
+            raise ValueError("read_timeout must be finite and between 0 and 3600")
 
         self._source = source
         self._read_timeout = float(read_timeout)
@@ -181,6 +184,7 @@ class PreviewServer:
         self,
         *,
         view_path: str | Path | None = None,
+        security_config: Any | None = None,
     ) -> Any:
         """Create a FastAPI application that transports this preview's images.
 
@@ -189,6 +193,7 @@ class PreviewServer:
 
         Args:
             view_path: Optional custom browser-view template path.
+            security_config: Optional shared HTTP deployment policy.
 
         Returns:
             FastAPI application serving a browser view, snapshots, and MJPEG.
@@ -198,7 +203,7 @@ class PreviewServer:
             ValueError: If the browser view is invalid.
         """
         try:
-            from fastapi import FastAPI, HTTPException, Query
+            from fastapi import FastAPI, HTTPException, Query, Security
             from fastapi.responses import HTMLResponse, Response, StreamingResponse
 
         except ImportError as error:
@@ -208,13 +213,27 @@ class PreviewServer:
             ) from error
 
         from packages.api.api import NO_CACHE_HEADERS, load_camera_view
+        from packages.api.security import (
+            SecurityConfig,
+            apply_security_middleware,
+            build_authorizer,
+        )
+
+        resolved_security = security_config or SecurityConfig()
+
+        if not isinstance(resolved_security, SecurityConfig):
+            raise TypeError("security_config must be a SecurityConfig")
+
+        authorize = build_authorizer(resolved_security)
 
         @asynccontextmanager
         async def lifespan(_: Any) -> AsyncIterator[None]:
             """Run preview forwarding for the HTTP application lifespan."""
             self.start()
+
             try:
                 yield
+
             finally:
                 self.stop()
 
@@ -222,10 +241,19 @@ class PreviewServer:
             title="IMX Image Preview",
             description="Generic JPEG snapshot and MJPEG image transport.",
             lifespan=lifespan,
+            docs_url="/docs" if resolved_security.docs_enabled else None,
+            redoc_url="/redoc" if resolved_security.docs_enabled else None,
+            openapi_url=("/openapi.json" if resolved_security.docs_enabled else None),
         )
+        apply_security_middleware(application, resolved_security)
         application.state.preview_server = self
 
-        @application.get("/", response_class=HTMLResponse, include_in_schema=False)
+        @application.get(
+            "/",
+            response_class=HTMLResponse,
+            include_in_schema=False,
+            dependencies=[Security(authorize, scopes=["stream:read"])],
+        )
         def index() -> Any:
             """Return the customizable generic browser-preview view."""
             try:
@@ -233,10 +261,19 @@ class PreviewServer:
                     content=load_camera_view(view_path=view_path),
                     headers=NO_CACHE_HEADERS,
                 )
+
             except (RuntimeError, ValueError) as error:
                 raise HTTPException(status_code=500, detail=str(error)) from error
 
-        @application.get("/api/camera/snapshot")
+        @application.get("/healthz", include_in_schema=False)
+        def healthz() -> dict[str, str]:
+            """Return a non-diagnostic process liveness response."""
+            return {"status": "ok"}
+
+        @application.get(
+            "/api/camera/snapshot",
+            dependencies=[Security(authorize, scopes=["stream:read"])],
+        )
         def snapshot(after: int = Query(default=-1, ge=-1)) -> Any:
             """Return the newest generic preview JPEG."""
             frame_number, jpeg = self.wait_for_jpeg(after, timeout=2.0)
@@ -252,7 +289,10 @@ class PreviewServer:
                 headers={**NO_CACHE_HEADERS, "X-Frame-Number": str(frame_number)},
             )
 
-        @application.get("/api/camera/mjpeg")
+        @application.get(
+            "/api/camera/mjpeg",
+            dependencies=[Security(authorize, scopes=["stream:read"])],
+        )
         def mjpeg() -> Any:
             """Return the newest generic preview images as an MJPEG response."""
             stream = MJPEGStream(self)

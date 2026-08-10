@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from fastapi import HTTPException
 
 from imx_camera_toolkit import (
     CameraConfigurationError,
@@ -44,6 +46,14 @@ from packages.camera.publishing.video import EncodedVideoPublisher
 from packages.production_preview.api import _serialize_health
 from packages.production_preview.metrics import ClientMetricsRegistry
 from packages.production_preview.transport import _push_encoded_frame, _PushTimeline
+
+
+def _api_endpoint(application: Any, path: str) -> Callable[..., Any]:
+    """Resolve a FastAPI endpoint for validation tests without a live portal."""
+    for route in application.routes:
+        if getattr(route, "path", None) == path:
+            return cast(Callable[..., Any], route.endpoint)
+    raise LookupError(path)
 
 
 def test_hardware_video_pipeline_encodes_h264_directly_from_nvmm() -> None:
@@ -515,6 +525,80 @@ def test_hls_api_serves_safe_assets_and_reports_client_segment_drops(
     paths = {getattr(route, "path", None) for route in application.routes}
     assert "/api/preview/session" in paths
     assert "/api/preview/hls/{client_id}/{asset}" in paths
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_sdp_bytes", 1024 * 1024 + 1),
+        ("max_ice_candidate_bytes", 64 * 1024 + 1),
+        ("max_ice_candidates_per_session", 4097),
+        ("max_new_sessions_per_second", 1001),
+        ("client_timeout_seconds", float("inf")),
+    ],
+)
+def test_production_preview_rejects_unbounded_network_limits(
+    field: str,
+    value: int | float,
+) -> None:
+    """Every signaling limit must have a finite lower and upper bound."""
+    with pytest.raises(ProductionPreviewConfigurationError):
+        ProductionPreviewConfig(**{field: value})  # type: ignore[arg-type]
+
+
+def test_production_preview_bounds_signaling_payloads_and_session_rate(
+    tmp_path: Path,
+) -> None:
+    """Oversized signaling and bursts fail before allocating peer resources."""
+    server = ProductionPreviewServer(
+        _FakeEncodedSource(),
+        ProductionPreviewConfig(
+            transport=PreviewTransport.HLS,
+            hls_directory=tmp_path,
+            max_clients=10,
+            max_sdp_bytes=8,
+            max_ice_candidate_bytes=8,
+            max_new_sessions_per_second=2,
+        ),
+    )
+    server._running = True
+
+    with pytest.raises(ValueError, match="max_sdp_bytes"):
+        server.set_webrtc_answer("missing", "012345678")
+    with pytest.raises(ValueError, match="max_ice_candidate_bytes"):
+        server.add_webrtc_candidate("missing", 0, "012345678")
+
+    server.create_hls_session()
+    server.create_hls_session()
+    with pytest.raises(RuntimeError, match="session rate limit"):
+        server.create_hls_session()
+
+
+def test_production_feedback_rejects_nan_and_absurd_counters() -> None:
+    """Browser telemetry must not admit non-finite or unbounded numbers."""
+    server = ProductionPreviewServer(_FakeEncodedSource())
+    application = create_production_preview_app(server, manage_server=False)
+    feedback = _api_endpoint(
+        application,
+        "/api/preview/webrtc/{client_id}/feedback",
+    )
+    base = {
+        "packets_received": 1,
+        "bytes_received": 2,
+        "frames_received": 3,
+        "frames_decoded": 3,
+        "packets_lost": 0,
+        "jitter_ms": 1.0,
+        "rtt_ms": 2.0,
+    }
+
+    with pytest.raises(HTTPException) as nan_error:
+        feedback("peer", {**base, "rtt_ms": float("nan")})
+    assert nan_error.value.status_code == 422
+
+    with pytest.raises(HTTPException) as counter_error:
+        feedback("peer", {**base, "bytes_received": 1 << 64})
+    assert counter_error.value.status_code == 422
 
 
 class _ResultSource:

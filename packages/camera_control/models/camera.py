@@ -6,6 +6,7 @@ import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from enum import Enum
+from math import isfinite
 
 
 class DenoiseMode(str, Enum):
@@ -78,7 +79,8 @@ class SensorMode:
         if self.max_fps is not None and (
             isinstance(self.max_fps, bool)
             or not isinstance(self.max_fps, (int, float))
-            or self.max_fps <= 0
+            or not isfinite(self.max_fps)
+            or not 0 < self.max_fps <= 1_000
         ):
             raise ValueError("sensor mode max_fps must be a positive number")
 
@@ -170,16 +172,17 @@ class CameraSettings:
         if self.exposure_us is not None and (
             isinstance(self.exposure_us, bool)
             or not isinstance(self.exposure_us, int)
-            or self.exposure_us <= 0
+            or not 0 < self.exposure_us <= 10_000_000
         ):
-            raise ValueError("exposure_us must be a positive integer or None")
+            raise ValueError("exposure_us must be between 1 and 10000000 or None")
 
         if self.gain is not None and (
             isinstance(self.gain, bool)
             or not isinstance(self.gain, (int, float))
-            or self.gain <= 0
+            or not isfinite(self.gain)
+            or not 0 < self.gain <= 1_024
         ):
-            raise ValueError("gain must be a positive number or None")
+            raise ValueError("gain must be finite and between 0 and 1024 or None")
 
         if not isinstance(self.awb_locked, bool):
             raise ValueError("awb_locked must be a boolean")
@@ -193,6 +196,7 @@ class CameraSettings:
         if self.denoise_strength is not None and (
             isinstance(self.denoise_strength, bool)
             or not isinstance(self.denoise_strength, (int, float))
+            or not isfinite(self.denoise_strength)
             or not 0.0 <= self.denoise_strength <= 1.0
         ):
             raise ValueError("denoise_strength must be between 0.0 and 1.0")

@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Security
 from fastapi.responses import FileResponse, HTMLResponse
+
+from packages.api.security import (
+    SecurityConfig,
+    apply_security_middleware,
+    build_authorizer,
+)
 
 from .config import PreviewTransport
 from .transport import ProductionPreviewServer
@@ -18,6 +25,8 @@ NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
 }
+MAX_FEEDBACK_COUNTER = (1 << 63) - 1
+MAX_FEEDBACK_MILLISECONDS = 60_000.0
 
 
 def _serialize_health(server: ProductionPreviewServer) -> dict[str, object]:
@@ -89,6 +98,7 @@ def create_production_preview_app(
     server: ProductionPreviewServer,
     *,
     manage_server: bool = True,
+    security_config: SecurityConfig | None = None,
 ) -> FastAPI:
     """Create browser signaling/HLS endpoints around an existing camera source.
 
@@ -101,6 +111,13 @@ def create_production_preview_app(
 
     if not isinstance(manage_server, bool):
         raise ValueError("manage_server must be a boolean")
+
+    resolved_security = security_config or SecurityConfig()
+
+    if not isinstance(resolved_security, SecurityConfig):
+        raise TypeError("security_config must be a SecurityConfig")
+
+    authorize = build_authorizer(resolved_security)
 
     @asynccontextmanager
     async def lifespan(_: Any) -> AsyncIterator[None]:
@@ -120,11 +137,21 @@ def create_production_preview_app(
         description="Shared video encoding with WebRTC or HLS delivery",
         version="0.5.2",
         lifespan=lifespan,
+        docs_url="/docs" if resolved_security.docs_enabled else None,
+        redoc_url="/redoc" if resolved_security.docs_enabled else None,
+        openapi_url="/openapi.json" if resolved_security.docs_enabled else None,
     )
+    apply_security_middleware(application, resolved_security)
     application.state.production_preview = server
     application.state.manage_server = manage_server
+    application.state.security_config = resolved_security
 
-    @application.get("/", response_class=HTMLResponse, include_in_schema=False)
+    @application.get(
+        "/",
+        response_class=HTMLResponse,
+        include_in_schema=False,
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def index() -> HTMLResponse:
         """Serve a video-element client that negotiates the configured mode."""
         try:
@@ -135,12 +162,28 @@ def create_production_preview_app(
 
         return HTMLResponse(html, headers=NO_CACHE_HEADERS)
 
-    @application.get("/api/preview/health")
+    @application.get("/healthz", include_in_schema=False)
+    def healthz() -> dict[str, str]:
+        """Return a non-diagnostic process liveness response."""
+        return {"status": "ok"}
+
+    @application.get(
+        "/debug/health",
+        dependencies=[Security(authorize, scopes=["admin"])],
+    )
+    @application.get(
+        "/api/preview/health",
+        deprecated=True,
+        dependencies=[Security(authorize, scopes=["admin"])],
+    )
     def health() -> dict[str, object]:
         """Expose encode FPS/bitrate, clients, and per-client drop rates."""
         return _serialize_health(server)
 
-    @application.post("/api/preview/session")
+    @application.post(
+        "/api/preview/session",
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def create_session() -> dict[str, object]:
         """Create a WebRTC peer or register one HLS browser."""
         try:
@@ -156,15 +199,17 @@ def create_production_preview_app(
             return {
                 "client_id": client_id,
                 "transport": "hls",
-                "playlist_url": (
-                    f"/api/preview/hls/{client_id}/playlist.m3u8"
-                ),
+                "playlist_url": (f"/api/preview/hls/{client_id}/playlist.m3u8"),
             }
 
         except RuntimeError as error:
-            raise HTTPException(status_code=503, detail=str(error)) from error
+            status = 429 if "rate limit" in str(error) else 503
+            raise HTTPException(status_code=status, detail=str(error)) from error
 
-    @application.post("/api/preview/webrtc/{client_id}/answer")
+    @application.post(
+        "/api/preview/webrtc/{client_id}/answer",
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def set_answer(
         client_id: str,
         values: dict[str, Any],
@@ -172,8 +217,10 @@ def create_production_preview_app(
         """Apply one browser SDP answer."""
         try:
             sdp = values.get("sdp")
-            if not isinstance(sdp, str):
-                raise ValueError("sdp must be a string")
+            if not isinstance(sdp, str) or not sdp.strip():
+                raise ValueError("sdp must be a non-empty string")
+            if len(sdp.encode("utf-8")) > server.config.max_sdp_bytes:
+                raise ValueError("sdp exceeds max_sdp_bytes")
             server.set_webrtc_answer(client_id, sdp)
 
         except KeyError as error:
@@ -184,7 +231,10 @@ def create_production_preview_app(
 
         return {"accepted": True}
 
-    @application.post("/api/preview/webrtc/{client_id}/candidate")
+    @application.post(
+        "/api/preview/webrtc/{client_id}/candidate",
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def add_candidate(
         client_id: str,
         values: dict[str, Any],
@@ -197,11 +247,15 @@ def create_production_preview_app(
             if (
                 isinstance(mline_index, bool)
                 or not isinstance(mline_index, int)
+                or not 0 <= mline_index <= 65_535
             ):
-                raise ValueError("sdpMLineIndex must be an integer")
+                raise ValueError("sdpMLineIndex must be between 0 and 65535")
 
-            if not isinstance(candidate, str):
-                raise ValueError("candidate must be a string")
+            if not isinstance(candidate, str) or not candidate.strip():
+                raise ValueError("candidate must be a non-empty string")
+
+            if len(candidate.encode("utf-8")) > server.config.max_ice_candidate_bytes:
+                raise ValueError("candidate exceeds max_ice_candidate_bytes")
 
             server.add_webrtc_candidate(
                 client_id,
@@ -217,10 +271,13 @@ def create_production_preview_app(
 
         return {"accepted": True}
 
-    @application.get("/api/preview/webrtc/{client_id}/candidates")
+    @application.get(
+        "/api/preview/webrtc/{client_id}/candidates",
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def candidates(
         client_id: str,
-        after: int = Query(default=0, ge=0),
+        after: int = Query(default=0, ge=0, le=MAX_FEEDBACK_COUNTER),
     ) -> dict[str, object]:
         """Poll trickled server ICE candidates after a stable cursor."""
         try:
@@ -231,7 +288,10 @@ def create_production_preview_app(
 
         return {"candidates": items, "next": after + len(items)}
 
-    @application.post("/api/preview/webrtc/{client_id}/feedback")
+    @application.post(
+        "/api/preview/webrtc/{client_id}/feedback",
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def feedback(
         client_id: str,
         values: dict[str, Any],
@@ -250,7 +310,7 @@ def create_production_preview_app(
                 if (
                     isinstance(value, bool)
                     or not isinstance(value, int)
-                    or value < 0
+                    or not 0 <= value <= MAX_FEEDBACK_COUNTER
                 ):
                     raise ValueError(f"{name} must be a non-negative integer")
 
@@ -259,6 +319,7 @@ def create_production_preview_app(
             if packets_lost is not None and (
                 isinstance(packets_lost, bool)
                 or not isinstance(packets_lost, int)
+                or not -MAX_FEEDBACK_COUNTER <= packets_lost <= MAX_FEEDBACK_COUNTER
             ):
                 raise ValueError("packets_lost must be an integer or null")
 
@@ -270,15 +331,12 @@ def create_production_preview_app(
                 if value is not None and (
                     isinstance(value, bool)
                     or not isinstance(value, (int, float))
-                    or value < 0
+                    or not math.isfinite(value)
+                    or not 0 <= value <= MAX_FEEDBACK_MILLISECONDS
                 ):
-                    raise ValueError(
-                        f"{name} must be a non-negative number or null"
-                    )
+                    raise ValueError(f"{name} must be a non-negative number or null")
 
-                optional_rates[name] = (
-                    None if value is None else float(value)
-                )
+                optional_rates[name] = None if value is None else float(value)
 
             server.record_webrtc_feedback(
                 client_id,
@@ -298,7 +356,10 @@ def create_production_preview_app(
 
         return {"accepted": True}
 
-    @application.get("/api/preview/hls/{client_id}/{asset}")
+    @application.get(
+        "/api/preview/hls/{client_id}/{asset}",
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def hls_asset(client_id: str, asset: str) -> FileResponse:
         """Serve a safe rolling playlist or MPEG-TS segment."""
         try:
@@ -322,7 +383,11 @@ def create_production_preview_app(
         headers = NO_CACHE_HEADERS if asset == "playlist.m3u8" else {}
         return FileResponse(path, media_type=media_type, headers=headers)
 
-    @application.delete("/api/preview/session/{client_id}", status_code=204)
+    @application.delete(
+        "/api/preview/session/{client_id}",
+        status_code=204,
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
     def delete_session(client_id: str) -> None:
         """Close one browser session and release its latest-frame slot."""
         server.disconnect(client_id)
