@@ -44,7 +44,7 @@ class TensorRTRunner:
         onnx_path: str | Path,
         *,
         cache_dir: str | Path,
-        input_name: str = "images",
+        input_name: str | None = None,
         shape_profile: ShapeProfile,
         inference_shape: tuple[int, ...] | None = None,
         precision: str = "fp16",
@@ -91,8 +91,12 @@ class TensorRTRunner:
 
     def _validate_configuration(self) -> None:
         """Validate shape and preprocessing choices before touching CUDA."""
-        if not self._input_name:
-            raise InferenceConfigurationError("input_name must be non-empty")
+        if self._input_name is not None and (
+            not isinstance(self._input_name, str) or not self._input_name
+        ):
+            raise InferenceConfigurationError(
+                "input_name must be a non-empty string or None"
+            )
 
         if self._precision not in {"fp16", "fp32"}:
             raise InferenceConfigurationError("precision must be fp16 or fp32")
@@ -188,14 +192,20 @@ class TensorRTRunner:
         interop = self._interop or NativeCudaInterop()
         self._interop = interop
 
+        if self._input_name is None:
+            self._input_name = self._discover_input_name(trt)
+
+        input_name = self._input_name
+
         metadata = EngineCacheMetadata(
             onnx_sha256=sha256_file(self._onnx_path),
             tensorrt_version=str(trt.__version__),
             compute_capability=interop.compute_capability(),
             precision=self._precision,
-            input_name=self._input_name,
+            input_name=input_name,
             shape_profile=self._shape_profile,
         )
+
         engine_bytes = self._cache.load(metadata)
         self._cache_hit = engine_bytes is not None
         logger = trt.Logger(trt.Logger.WARNING)
@@ -221,7 +231,7 @@ class TensorRTRunner:
         if context is None:
             raise InferenceError("TensorRT could not create an execution context")
 
-        if not context.set_input_shape(self._input_name, self._inference_shape):
+        if not context.set_input_shape(input_name, self._inference_shape):
             raise InferenceConfigurationError(
                 "inference_shape is incompatible with the TensorRT engine"
             )
@@ -262,7 +272,7 @@ class TensorRTRunner:
 
             mode = engine.get_tensor_mode(name)
 
-            if mode == trt.TensorIOMode.INPUT and name != self._input_name:
+            if mode == trt.TensorIOMode.INPUT and name != input_name:
                 raise InferenceConfigurationError(
                     "reference TensorRTRunner supports one image input"
                 )
@@ -279,14 +289,14 @@ class TensorRTRunner:
                 "TensorRT engine must expose at least one output tensor"
             )
 
-        input_dtype = tensor_dtypes.get(self._input_name)
+        input_dtype = tensor_dtypes.get(input_name)
 
         if input_dtype != numpy.dtype("float32"):
             raise InferenceConfigurationError(
                 "NV12 preprocessor currently requires a float32 model input"
             )
 
-        if tensor_shapes.get(self._input_name) != self._inference_shape:
+        if tensor_shapes.get(input_name) != self._inference_shape:
             raise InferenceConfigurationError(
                 "TensorRT input shape differs from configured inference_shape"
             )
@@ -347,10 +357,16 @@ class TensorRTRunner:
             for index in range(network.num_inputs)
         }
 
-        if self._input_name not in network_inputs:
+        input_name = self._input_name
+
+        if input_name is None:
+            input_name = self._select_input_name(tuple(network_inputs))
+            self._input_name = input_name
+
+        if input_name not in network_inputs:
             available = ", ".join(sorted(network_inputs)) or "none"
             raise InferenceConfigurationError(
-                f"ONNX input {self._input_name!r} not found; available: {available}"
+                f"ONNX input {input_name!r} not found; available: {available}"
             )
 
         if len(network_inputs) != 1:
@@ -370,7 +386,7 @@ class TensorRTRunner:
         profile = builder.create_optimization_profile()
 
         profile.set_shape(
-            self._input_name,
+            input_name,
             self._shape_profile.minimum,
             self._shape_profile.optimum,
             self._shape_profile.maximum,
@@ -389,6 +405,38 @@ class TensorRTRunner:
             raise EngineBuildError("TensorRT failed to build a serialized engine")
 
         return bytes(serialized)
+
+    def _discover_input_name(self, trt: ModuleType) -> str:
+        """Parse ONNX metadata and select its only input tensor."""
+        logger = trt.Logger(trt.Logger.WARNING)
+        builder = trt.Builder(logger)
+        network_flag = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
+        network = builder.create_network(network_flag)
+        parser = trt.OnnxParser(network, logger)
+
+        if not parser.parse(self._onnx_path.read_bytes()):
+            errors = "; ".join(
+                str(parser.get_error(index)) for index in range(parser.num_errors)
+            )
+            raise EngineBuildError(f"TensorRT ONNX parser failed: {errors}")
+
+        names = tuple(
+            str(network.get_input(index).name)
+            for index in range(network.num_inputs)
+        )
+        return self._select_input_name(names)
+
+    @staticmethod
+    def _select_input_name(names: tuple[str, ...]) -> str:
+        """Return the only ONNX input or reject an ambiguous model."""
+        if len(names) != 1:
+            available = ", ".join(sorted(names)) or "none"
+            raise InferenceConfigurationError(
+                "input_name=None requires exactly one ONNX input; "
+                f"available: {available}"
+            )
+
+        return names[0]
 
     def infer(self, frame: GpuFrame) -> InferenceResult:
         """Preprocess NVMM, execute TensorRT, and return named output tensors."""
@@ -411,9 +459,15 @@ class TensorRTRunner:
         if interop is None or context is None or stream is None or numpy is None:
             raise InferenceError("TensorRTRunner resources are incomplete")
 
+        input_name = self._input_name
+
+        if input_name is None:
+            raise InferenceError("TensorRTRunner input name is unresolved")
+
         started_ns = time.monotonic_ns()
         surface = interop.import_frame(frame)
-        input_buffer = self._buffers[self._input_name]
+        input_buffer = self._buffers[input_name]
+
         try:
             interop.preprocess_nv12(
                 surface,
@@ -476,7 +530,7 @@ class TensorRTRunner:
             metadata={
                 "backend": "tensorrt",
                 "precision": self._precision,
-                "input_name": self._input_name,
+                "input_name": input_name,
                 "input_shape": self._inference_shape,
                 "engine_cache_hit": self._cache_hit,
                 "cuda_stream": stream.handle,

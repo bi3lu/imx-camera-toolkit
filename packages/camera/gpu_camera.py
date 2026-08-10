@@ -94,6 +94,7 @@ class GpuCamera:
     """
 
     STATS_WINDOW_NS = 1_000_000_000
+    ERROR_LOG_INTERVAL_SECONDS = 5.0
 
     def __init__(
         self,
@@ -194,7 +195,7 @@ class GpuCamera:
         self._rebuild_pipeline()
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
         self._gpu_publisher = GpuFramePublisher()
-        self._frame_hub = LatestFrameHub[GpuFrame](self.record_consumer_drop)
+        self._frame_hub = self._new_frame_hub()
         self._preview_publisher = EncodedJPEGPublisher(self._config.preview_fps)
         self._video_publisher = EncodedVideoPublisher()
         self._video_hub = LatestFrameHub[EncodedVideoFrame](
@@ -208,6 +209,9 @@ class GpuCamera:
         self._stats_lock = threading.Lock()
         self._capture_timestamps_ns: deque[int] = deque()
         self._sequence = 0
+        self._consecutive_recovery_attempts = 0
+        self._last_capture_error_log_at = 0.0
+        self._suppressed_capture_error_logs = 0
 
         self.frames_captured = 0
         self.dropped_frames = 0
@@ -495,6 +499,8 @@ class GpuCamera:
 
             self._backend = backend
             self.last_error = None
+            self.last_recovery_error = None
+            self._consecutive_recovery_attempts = 0
             self._running.set()
             self._thread = threading.Thread(
                 target=self._capture_loop,
@@ -696,12 +702,23 @@ class GpuCamera:
 
             except Exception as error:
                 self.last_error = error
-                logger.exception("NVMM camera capture failed")
+                self._log_capture_failure(error)
+
+                if _is_already_allocated_error(error):
+                    self.last_recovery_error = error
+                    self._running.clear()
+                    break
 
                 if not self._recover_backend():
                     if self.running:
-                        self.last_error = CameraRecoveryError(
-                            "NVMM camera recovery attempts were exhausted"
+                        recovery_error = self.last_recovery_error
+                        self.last_error = (
+                            recovery_error
+                            if recovery_error is not None
+                            and _is_already_allocated_error(recovery_error)
+                            else CameraRecoveryError(
+                                "NVMM camera recovery attempts were exhausted"
+                            )
                         )
 
                     self._running.clear()
@@ -714,16 +731,16 @@ class GpuCamera:
     def _assign_sequence(self, frame: GpuFrame) -> GpuFrame:
         """Assign a camera-lifetime sequence that survives backend recovery."""
         self._sequence += 1
-        return GpuFrame(
-            sequence=self._sequence,
-            timestamp_ns=frame.timestamp_ns,
-            capture_timestamp_ns=frame.capture_timestamp_ns,
-            width=frame.width,
-            height=frame.height,
-            format=frame.format,
-            memory_type=frame.memory_type,
-            dmabuf_fd=frame.dmabuf_fd,
-            buffer=frame.buffer,
+        assigned = frame.retain(sequence=self._sequence)
+        frame.release()
+        return assigned
+
+    def _new_frame_hub(self) -> LatestFrameHub[GpuFrame]:
+        """Create subscriber slots with independent ref-counted GPU leases."""
+        return LatestFrameHub[GpuFrame](
+            self.record_consumer_drop,
+            retain=lambda frame: frame.retain(),
+            release=lambda frame: frame.release(),
         )
 
     def _record_capture(self, frame: GpuFrame) -> None:
@@ -733,8 +750,13 @@ class GpuCamera:
             self._last_frame_timestamp_ns = frame.timestamp_ns
             self._last_capture_timestamp_ns = frame.capture_timestamp_ns
             self._consecutive_failures = 0
+            self._consecutive_recovery_attempts = 0
             self._capture_timestamps_ns.append(frame.timestamp_ns)
             self._prune_capture_timestamps(frame.timestamp_ns)
+        self.last_error = None
+        self.last_recovery_error = None
+        self._last_capture_error_log_at = 0.0
+        self._suppressed_capture_error_logs = 0
 
     def _record_drop(self, *, failed_read: bool = False) -> int:
         """Record one omitted frame or failed read."""
@@ -770,20 +792,30 @@ class GpuCamera:
 
     def _recover_backend(self) -> bool:
         """Recreate the full tee pipeline after an error in either branch."""
-        for attempt in range(self._recovery_policy.max_attempts):
+        while self.running:
+            with self._stats_lock:
+                if (
+                    self._consecutive_recovery_attempts
+                    >= self._recovery_policy.max_attempts
+                ):
+                    return False
+
+                self._consecutive_recovery_attempts += 1
+                attempt = self._consecutive_recovery_attempts
+                self.recovery_attempts += 1
+
             if not self.running:
                 return False
 
-            if attempt:
-                time.sleep(self._recovery_policy.initial_backoff * (2**attempt))
-
-            with self._stats_lock:
-                self.recovery_attempts += 1
+            delay = self._recovery_policy.initial_backoff * (2 ** (attempt - 1))
+            if delay:
+                time.sleep(delay)
 
             with self._lifecycle_lock:
                 if not self.running:
                     return False
 
+                backend: _GpuBackend | None = None
                 try:
                     self._release_backend()
                     backend = self._create_backend()
@@ -791,24 +823,54 @@ class GpuCamera:
                     self._backend = backend
 
                 except Exception as error:
+                    if backend is not None:
+                        backend.close()
                     self.last_recovery_error = error
                     logger.warning(
                         "NVMM recovery attempt %s/%s failed: %s",
-                        attempt + 1,
+                        attempt,
                         self._recovery_policy.max_attempts,
                         error,
                     )
+                    if _is_already_allocated_error(error):
+                        return False
                     continue
 
             with self._stats_lock:
                 self.recoveries += 1
-                self._consecutive_failures = 0
 
-            self.last_recovery_error = None
-            self.last_error = None
             return True
 
         return False
+
+    def _log_capture_failure(self, error: Exception) -> None:
+        """Emit capture tracebacks at a bounded rate during recovery."""
+        now = time.monotonic()
+        if (
+            self._last_capture_error_log_at != 0.0
+            and now - self._last_capture_error_log_at
+            < self.ERROR_LOG_INTERVAL_SECONDS
+        ):
+            self._suppressed_capture_error_logs += 1
+            return
+
+        suffix = (
+            ""
+            if self._suppressed_capture_error_logs == 0
+            else " (%s similar errors suppressed)"
+        )
+        arguments: tuple[object, ...] = (
+            ()
+            if self._suppressed_capture_error_logs == 0
+            else (self._suppressed_capture_error_logs,)
+        )
+        logger.error(
+            "NVMM camera capture failed" + suffix,
+            *arguments,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        self._last_capture_error_log_at = now
+        self._suppressed_capture_error_logs = 0
 
     def read(self, timeout: float | None = None) -> GpuFrame | None:
         """Return the newest borrowed NVMM frame without CPU conversion."""
@@ -839,19 +901,18 @@ class GpuCamera:
     def subscribe_latest(self, name: str) -> LatestFrameSubscription[GpuFrame]:
         """Create one non-blocking borrowed NVMM slot for a named consumer.
 
-        Each subscriber owns only a single latest-frame slot. A slow GPU
-        consumer skips old leases instead of back-pressuring capture or the
-        preview branch. As with :meth:`read`, a frame must not be kept after
-        the camera publishes its successor.
+        Each subscriber owns only a single latest-frame slot and an independent
+        reference-counted lease. A slow GPU consumer skips unread frames but
+        may finish processing the frame it already received. Direct consumers
+        must call :meth:`GpuFrame.release` after processing; ``FrameConsumer``
+        and ``InferenceConsumer`` release leases automatically.
         """
         with self._lifecycle_lock:
             if self._frame_hub.closed:
                 if self.running:
                     raise RuntimeError("GPU frame subscriptions are closed")
 
-                self._frame_hub = LatestFrameHub[GpuFrame](
-                    self.record_consumer_drop
-                )
+                self._frame_hub = self._new_frame_hub()
 
             return self._frame_hub.subscribe(name)
 
@@ -935,6 +996,21 @@ class GpuCamera:
     def __exit__(self, *_: object) -> None:
         """Close both branches on context-manager exit."""
         self.stop()
+
+
+def _is_already_allocated_error(error: BaseException) -> bool:
+    """Recognize an Argus resource conflict through wrapped camera errors."""
+    current: BaseException | None = error
+    while current is not None:
+        normalized = "".join(
+            character
+            for character in str(current).lower()
+            if character.isalnum()
+        )
+        if "alreadyallocated" in normalized:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 __all__ = ["GpuCamera"]

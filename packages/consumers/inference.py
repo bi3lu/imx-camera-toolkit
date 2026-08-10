@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
-from packages.camera.models import GpuFrame
+from packages.camera.models import GpuFrame, GpuFrameExpiredError
 from packages.inference.contracts import FrameSpec, InferenceResult, InferenceRunner
 
 from .latest import FrameConsumer, LatestFrameHub, LatestFrameSubscription
@@ -38,6 +39,10 @@ class InferenceConsumer:
         *,
         close_runner: bool = True,
         wait_timeout: float = 0.25,
+        on_error: Callable[[Exception], None] | None = None,
+        error_log_interval: float = 5.0,
+        initial_failure_backoff: float = 0.05,
+        max_failure_backoff: float = 1.0,
     ) -> None:
         """Configure inference ownership without preparing the model yet."""
         if not isinstance(runner, InferenceRunner):
@@ -58,6 +63,11 @@ class InferenceConsumer:
             self._infer,
             thread_name=f"imx-inference-{subscription.name}",
             wait_timeout=wait_timeout,
+            on_error=on_error,
+            error_log_interval=error_log_interval,
+            initial_failure_backoff=initial_failure_backoff,
+            max_failure_backoff=max_failure_backoff,
+            drop_exceptions=(GpuFrameExpiredError,),
         )
 
     @property
@@ -88,8 +98,23 @@ class InferenceConsumer:
 
     @property
     def last_error(self) -> Exception | None:
-        """Newest worker exception, if inference has failed."""
+        """Current worker exception, cleared after successful inference."""
         return self._worker.last_error
+
+    @property
+    def last_failure(self) -> Exception | None:
+        """Most recent historical worker exception, including recovered ones."""
+        return self._worker.last_failure
+
+    @property
+    def consecutive_failures(self) -> int:
+        """Number of uninterrupted preparation or inference failures."""
+        return self._worker.consecutive_failures
+
+    @property
+    def healthy(self) -> bool:
+        """Whether the latest inference attempt completed successfully."""
+        return self._worker.healthy
 
     @property
     def thread_ident(self) -> int | None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from types import ModuleType
-from typing import Protocol
+from typing import Any, Protocol
 
 from packages.camera.models import GpuFrame
 
@@ -85,7 +85,12 @@ class InteropRuntime(Protocol):
 class NativeCudaInterop:
     """Thin checked facade over the pybind11 NvBufSurface/CUDA extension."""
 
-    def __init__(self, native_module: ModuleType | None = None) -> None:
+    def __init__(
+        self,
+        native_module: ModuleType | None = None,
+        *,
+        gstreamer_module: ModuleType | None = None,
+    ) -> None:
         """Load the optional module only when TensorRT capture is requested."""
         if native_module is None:
             try:
@@ -100,6 +105,22 @@ class NativeCudaInterop:
                 ) from error
 
         self._native = native_module
+        self._gst = gstreamer_module
+
+    def _load_gstreamer(self) -> Any:
+        """Load the canonical Gst namespace used by PyGObject overrides."""
+        if self._gst is None:
+            try:
+                gi_module = importlib.import_module("gi")
+                gi_module.require_version("Gst", "1.0")
+                self._gst = importlib.import_module("gi.repository.Gst")
+
+            except (ImportError, ValueError) as error:
+                raise InferenceDependencyError(
+                    "PyGObject GStreamer bindings are unavailable"
+                ) from error
+
+        return self._gst
 
     def compute_capability(self) -> tuple[int, int]:
         """Return active CUDA device capability from the runtime API."""
@@ -123,13 +144,11 @@ class NativeCudaInterop:
             raise TypeError("frame must be a GpuFrame")
 
         payload = frame.payload()
-        payload_type = type(payload)
+        gst = self._load_gstreamer()
 
-        if payload_type.__name__ != "Buffer" or not payload_type.__module__.startswith(
-            "gi.repository"
-        ):
+        if not isinstance(payload, gst.Buffer):
             raise CudaInteropError(
-                "native interop currently requires GpuFrame backed by Gst.Buffer"
+                "CUDA interop requires GpuFrame backed by Gst.Buffer"
             )
 
         try:

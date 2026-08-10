@@ -66,6 +66,7 @@ class GpuGStreamerCaptureBackend:
         self._overlay_pad: Any | None = None
         self._overlay_probe_id: int | None = None
         self._overlay_error: Exception | None = None
+        self._pending_gpu_frame: GpuFrame | None = None
         self._sequence = 0
         self._video_sequence = 0
         self._overlay_sequence = 0
@@ -164,6 +165,16 @@ class GpuGStreamerCaptureBackend:
                     "NVMM camera pipeline did not enter the playing state"
                 )
 
+            first_sample = self._pull_first_sample(gpu_sink, pipeline)
+
+            if first_sample is None:
+                self._raise_pipeline_error(pipeline=pipeline, opening=True)
+                pipeline.set_state(Gst.State.NULL)
+                raise CameraOpenError(
+                    "NVMM camera pipeline did not produce its first frame"
+                )
+            first_frame = self._frame_from_sample(first_sample)
+
         except Exception as error:
             if pipeline is not None:
                 pipeline.set_state(Gst.State.NULL)
@@ -180,16 +191,44 @@ class GpuGStreamerCaptureBackend:
         self._gpu_sink = gpu_sink
         self._preview_sink = preview_sink
         self._video_sink = video_sink
+        self._pending_gpu_frame = first_frame
+
+    def _pull_first_sample(self, gpu_sink: Any, pipeline: Any) -> Any | None:
+        """Wait for preroll while surfacing Argus errors without delay."""
+        if Gst is None:
+            raise CameraDependencyError("PyGObject GStreamer is unavailable")
+
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            sample = gpu_sink.emit("try-pull-sample", Gst.SECOND // 10)
+            if sample is not None:
+                return sample
+
+            self._raise_pipeline_error(pipeline=pipeline, opening=True)
+
+        return None
 
     def read(self) -> tuple[bool, GpuFrame | None]:
         """Pull one NVMM sample and return its checked borrowed Gst buffer."""
         if self._gpu_sink is None or Gst is None:
             return False, None
 
+        frame = self._pending_gpu_frame
+        self._pending_gpu_frame = None
+        if frame is not None:
+            return True, frame
+
         sample = self._gpu_sink.emit("try-pull-sample", Gst.SECOND // 5)
         if sample is None:
             self._raise_pipeline_error()
             return False, None
+
+        return True, self._frame_from_sample(sample)
+
+    def _frame_from_sample(self, sample: Any) -> GpuFrame:
+        """Validate one NVMM sample and wrap its Gst.Buffer lease."""
+        if Gst is None:
+            raise CameraDependencyError("PyGObject GStreamer is unavailable")
 
         caps = sample.get_caps()
         features = caps.get_features(0) if caps is not None else None
@@ -212,7 +251,7 @@ class GpuGStreamerCaptureBackend:
             None if buffer.pts == Gst.CLOCK_TIME_NONE else int(buffer.pts)
         )
         self._sequence += 1
-        return True, GpuFrame(
+        return GpuFrame(
             sequence=self._sequence,
             timestamp_ns=time.monotonic_ns(),
             capture_timestamp_ns=capture_timestamp_ns,
@@ -368,12 +407,19 @@ class GpuGStreamerCaptureBackend:
 
         return Gst.PadProbeReturn.OK
 
-    def _raise_pipeline_error(self) -> None:
+    def _raise_pipeline_error(
+        self,
+        *,
+        pipeline: Any | None = None,
+        opening: bool = False,
+    ) -> None:
         """Raise a read error when either pipeline branch reports ERROR or EOS."""
-        if self._pipeline is None or Gst is None:
+        active_pipeline = self._pipeline if pipeline is None else pipeline
+
+        if active_pipeline is None or Gst is None:
             return
 
-        bus = self._pipeline.get_bus()
+        bus = active_pipeline.get_bus()
         message = bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.EOS)
 
         if message is None:
@@ -382,9 +428,17 @@ class GpuGStreamerCaptureBackend:
         if message.type == Gst.MessageType.ERROR:
             error, debug = message.parse_error()
             detail = debug or str(error)
-            raise CameraReadError(f"NVMM pipeline failed: {detail}")
 
-        raise CameraReadError("NVMM pipeline reached end of stream")
+            if _is_argus_already_allocated(detail):
+                raise CameraOpenError(
+                    "Argus sensor is already allocated by another process"
+                )
+
+            error_type = CameraOpenError if opening else CameraReadError
+            raise error_type(f"NVMM pipeline failed: {detail}")
+
+        error_type = CameraOpenError if opening else CameraReadError
+        raise error_type("NVMM pipeline reached end of stream")
 
     def close(self) -> None:
         """Stop the shared pipeline, closing inference and preview together."""
@@ -402,6 +456,19 @@ class GpuGStreamerCaptureBackend:
         self._overlay_pad = None
         self._overlay_probe_id = None
         self._overlay_error = None
+        if self._pending_gpu_frame is not None:
+            self._pending_gpu_frame.release()
+        self._pending_gpu_frame = None
+
+
+def _is_argus_already_allocated(detail: object) -> bool:
+    """Recognize Argus resource conflicts across common message spellings."""
+    normalized = "".join(
+        character
+        for character in str(detail).lower()
+        if character.isalnum()
+    )
+    return "alreadyallocated" in normalized
 
 
 def _h264_parameter_sets(data: bytes) -> tuple[bytes | None, bytes | None]:
