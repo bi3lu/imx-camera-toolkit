@@ -152,12 +152,12 @@ uv run python -c "import cv2; print(cv2.__version__)"
 
 ## Using the toolkit as a Git dependency
 
-Pin the v0.5.1 release tag in the consuming project's `pyproject.toml`:
+Pin the v0.5.2 release tag in the consuming project's `pyproject.toml`:
 
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.1"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.2"
 ]
 ```
 
@@ -177,7 +177,7 @@ To consume the Git dependency with the browser-preview extra, declare it as:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.1"
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.5.2"
 ]
 ```
 
