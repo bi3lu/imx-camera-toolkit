@@ -447,9 +447,7 @@ def test_deprecated_frames_sent_keeps_frame_units() -> None:
 
 def test_browser_view_handles_streamless_tracks_and_reconnects() -> None:
     """Bundled JS must tolerate missing msid and expired server sessions."""
-    html = (Path(__file__).parents[2] / "view" / "production.html").read_text(
-        "utf-8"
-    )
+    html = (Path(__file__).parents[2] / "view" / "production.html").read_text("utf-8")
 
     assert "event.streams[0] ?? new MediaStream([event.track])" in html
     assert "video.play().catch" in html

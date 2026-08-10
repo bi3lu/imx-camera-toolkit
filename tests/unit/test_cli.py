@@ -33,9 +33,7 @@ def test_cli_info_and_hardware_test_use_structured_results(
     monkeypatch.setattr(
         cli,
         "diagnostics_as_dict",
-        lambda include_hardware: [
-            {"name": "python", "status": "ok", "detail": "3.10"}
-        ],
+        lambda include_hardware: [{"name": "python", "status": "ok", "detail": "3.10"}],
     )
     monkeypatch.setattr(cli, "run_camera_smoke_test", lambda **_: [])
 
@@ -50,6 +48,7 @@ def test_cli_camera_benchmark_can_load_an_application_cpu_model(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """Camera benchmark must expose all CPU paths without owning a model."""
+
     def model(image: object) -> object:
         """Return an image as a deterministic application model."""
         return image

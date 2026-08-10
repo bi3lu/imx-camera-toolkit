@@ -77,11 +77,7 @@ def build_video_encoder_pipeline(
     if selected is not VideoEncoderBackend.NVENC:
         raise CameraConfigurationError(f"unsupported encoder backend: {selected}")
 
-    encoder = (
-        "nvv4l2h264enc"
-        if config.codec is VideoCodec.H264
-        else "nvv4l2h265enc"
-    )
+    encoder = "nvv4l2h264enc" if config.codec is VideoCodec.H264 else "nvv4l2h265enc"
     pipeline = (
         f"{encoder} name=video_encoder control-rate=1 "
         f"bitrate={config.bitrate_bps} "
@@ -240,13 +236,16 @@ def build_gpu_gstreamer_pipeline(
             "sensor_id must be greater than or equal to zero"
         )
 
-    if min(
-        capture_width,
-        capture_height,
-        output_width,
-        output_height,
-        framerate,
-    ) <= 0:
+    if (
+        min(
+            capture_width,
+            capture_height,
+            output_width,
+            output_height,
+            framerate,
+        )
+        <= 0
+    ):
         raise CameraConfigurationError(
             "frame dimensions and framerate must be greater than zero"
         )
@@ -264,9 +263,7 @@ def build_gpu_gstreamer_pipeline(
     ):
         raise CameraConfigurationError("jpeg_quality must be between 0 and 100")
 
-    if video_config is not None and not isinstance(
-        video_config, HardwareVideoConfig
-    ):
+    if video_config is not None and not isinstance(video_config, HardwareVideoConfig):
         raise CameraConfigurationError(
             "video_config must be a HardwareVideoConfig or None"
         )
@@ -286,9 +283,7 @@ def build_gpu_gstreamer_pipeline(
             "encoder_backend must be a VideoEncoderBackend or None"
         )
 
-    if encoder_pipeline_factory is not None and not callable(
-        encoder_pipeline_factory
-    ):
+    if encoder_pipeline_factory is not None and not callable(encoder_pipeline_factory):
         raise CameraConfigurationError("encoder_pipeline_factory must be callable")
 
     source_properties = normalize_argus_properties(argus_properties)
@@ -336,9 +331,7 @@ def build_gpu_gstreamer_pipeline(
 
         if enable_video_overlay:
             overlay = (
-                "nvvidconv ! "
-                f"{nvmm_caps} ! "
-                "identity name=video_overlay_hook ! "
+                "nvvidconv ! " f"{nvmm_caps} ! " "identity name=video_overlay_hook ! "
             )
 
         encoder_pipeline = (

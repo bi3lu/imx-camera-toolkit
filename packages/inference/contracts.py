@@ -64,9 +64,7 @@ class ShapeProfile:
 
         for dimensions in (self.minimum, self.optimum, self.maximum):
             if any(
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value <= 0
+                isinstance(value, bool) or not isinstance(value, int) or value <= 0
                 for value in dimensions
             ):
                 raise ValueError("shape profile dimensions must be positive integers")

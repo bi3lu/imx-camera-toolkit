@@ -137,6 +137,7 @@ def test_field_mode_limits_request_bodies_and_sets_security_headers() -> None:
 
 def test_field_mode_applies_per_identity_rate_limits() -> None:
     """A token and source address cannot exhaust the API without throttling."""
+
     async def inner(_: Scope, __: Receive, send: Send) -> None:
         await send({"type": "http.response.start", "status": 200, "headers": []})
         await send({"type": "http.response.body", "body": b"ok"})

@@ -49,9 +49,7 @@ RectangleMapper = Callable[[InferenceResult], Sequence[OverlayRectangle]]
 def _default_mapper(result: InferenceResult) -> tuple[OverlayRectangle, ...]:
     """Select already-normalized rectangles from opaque result overlays."""
     return tuple(
-        overlay
-        for overlay in result.overlays
-        if isinstance(overlay, OverlayRectangle)
+        overlay for overlay in result.overlays if isinstance(overlay, OverlayRectangle)
     )
 
 

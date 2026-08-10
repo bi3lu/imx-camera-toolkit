@@ -199,16 +199,19 @@ def test_engine_cache_rejects_every_platform_specific_mismatch(tmp_path: Path) -
     assert cache.load(replace(expected, compute_capability=(8, 6))) is None
     assert cache.load(replace(expected, precision="fp32")) is None
     assert cache.load(replace(expected, onnx_sha256="0" * 64)) is None
-    assert cache.load(
-        replace(
-            expected,
-            shape_profile=ShapeProfile(
-                minimum=(1, 3, 640, 640),
-                optimum=(1, 3, 960, 960),
-                maximum=(1, 3, 1280, 1280),
-            ),
+    assert (
+        cache.load(
+            replace(
+                expected,
+                shape_profile=ShapeProfile(
+                    minimum=(1, 3, 640, 640),
+                    optimum=(1, 3, 960, 960),
+                    maximum=(1, 3, 1280, 1280),
+                ),
+            )
         )
-    ) is None
+        is None
+    )
 
 
 def test_engine_cache_discards_tampered_engine_bytes(tmp_path: Path) -> None:

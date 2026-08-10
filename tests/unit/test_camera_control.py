@@ -26,9 +26,7 @@ def test_controller_builds_manual_controls_and_restores_profile() -> None:
 def test_controller_selects_declared_native_hdr_mode() -> None:
     """Native HDR must select an explicit declared HDR sensor mode."""
     capabilities = CameraCapabilities(
-        source_properties=frozenset(
-            {"wbmode", "awblock", "tnr-mode", "sensor-mode"}
-        ),
+        source_properties=frozenset({"wbmode", "awblock", "tnr-mode", "sensor-mode"}),
         sensor_modes=(SensorMode(0, hdr=False), SensorMode(1, hdr=True)),
     )
     controller = CameraController(capabilities=capabilities)

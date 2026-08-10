@@ -123,9 +123,7 @@ class CameraController:
                     else cast(int | None, exposure_us)
                 ),
                 gain=(
-                    self._settings.gain
-                    if gain is UNSET
-                    else cast(float | None, gain)
+                    self._settings.gain if gain is UNSET else cast(float | None, gain)
                 ),
                 awb_mode=(
                     self._settings.awb_mode

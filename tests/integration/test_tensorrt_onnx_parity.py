@@ -157,9 +157,9 @@ def test_tensorrt_and_onnx_runtime_boxes_match_for_one_nvmm_frame(
             )
         )
         result = runner.infer(frame)
-        actual_boxes = np.asarray(next(
-            output.data for output in result.outputs if output.name == "boxes"
-        ))
+        actual_boxes = np.asarray(
+            next(output.data for output in result.outputs if output.name == "boxes")
+        )
 
         np.testing.assert_allclose(actual_boxes, expected_boxes, rtol=1e-3, atol=1e-3)
         assert result.inference_time_ns > 0

@@ -26,6 +26,12 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: black
+        name: Black format
+        entry: uv run --frozen black .
+        language: system
+        pass_filenames: false
+
       - id: mypy
         name: Mypy strict type check
         entry: uv run --frozen mypy imx_camera_toolkit packages tests

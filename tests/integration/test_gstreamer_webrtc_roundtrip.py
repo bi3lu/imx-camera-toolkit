@@ -82,15 +82,9 @@ def _encoded_test_frames(
             sps = found_sps or sps
             pps = found_pps or pps
             pts_ns = int(buffer.pts)
-            dts_ns = (
-                pts_ns
-                if buffer.dts == gst.CLOCK_TIME_NONE
-                else int(buffer.dts)
-            )
+            dts_ns = pts_ns if buffer.dts == gst.CLOCK_TIME_NONE else int(buffer.dts)
             duration_ns = (
-                None
-                if buffer.duration == gst.CLOCK_TIME_NONE
-                else int(buffer.duration)
+                None if buffer.duration == gst.CLOCK_TIME_NONE else int(buffer.duration)
             )
             frames.append(
                 EncodedVideoFrame(
@@ -194,9 +188,7 @@ def _exchange_candidates(
             and receiver_cursor == 0
             and time.monotonic() >= no_candidate_deadline
         ):
-            pytest.skip(
-                "WebRTC runtime cannot discover network interfaces for ICE"
-            )
+            pytest.skip("WebRTC runtime cannot discover network interfaces for ICE")
         time.sleep(0.02)
 
     pytest.fail(
@@ -213,9 +205,7 @@ def test_webrtc_peer_roundtrip_handles_delta_start_and_large_pts() -> None:
     frames, description = _encoded_test_frames(runtime)
     keyframe_index = next(index for index, frame in enumerate(frames) if frame.keyframe)
     delta_frame = next(
-        frame
-        for frame in frames[keyframe_index + 1 :]
-        if not frame.keyframe
+        frame for frame in frames[keyframe_index + 1 :] if not frame.keyframe
     )
     keyframe_and_gop = frames[keyframe_index : keyframe_index + 10]
     assert keyframe_and_gop[0].keyframe
@@ -258,8 +248,7 @@ def test_webrtc_peer_roundtrip_handles_delta_start_and_large_pts() -> None:
 
     receiver.connect("on-ice-candidate", on_receiver_candidate)
     assert (
-        receiver_pipeline.set_state(gst.State.PLAYING)
-        != gst.StateChangeReturn.FAILURE
+        receiver_pipeline.set_state(gst.State.PLAYING) != gst.StateChangeReturn.FAILURE
     )
 
     pushed_pts: list[int] = []

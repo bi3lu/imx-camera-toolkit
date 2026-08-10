@@ -52,6 +52,7 @@ packages = ["packages", "imx_camera_toolkit"]
 
 [dependency-groups]
 dev = [
+    "black>=25.1,<27.0",
     "cryptography>=50.0,<51",
     "httpx>=0.28,<1.0",
     "mypy>=1.15,<2.0",
@@ -76,6 +77,7 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM", "S"]
+ignore = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["imx_camera_toolkit", "packages"]
@@ -88,6 +90,10 @@ known-first-party = ["imx_camera_toolkit", "packages"]
 "packages/inference/build.py" = ["S603", "S607"]
 "packages/telemetry.py" = ["S603"]
 "tests/**/*.py" = ["S101", "S104"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
 
 [tool.mypy]
 python_version = "3.10"

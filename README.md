@@ -522,23 +522,27 @@ are available inside the project environment through `uv run`.
 
 ## Development quality checks
 
-The project uses Ruff for linting and import hygiene, and mypy in strict mode
-for static type verification. Unit and integration tests use an in-memory mock
-camera, so they run on ordinary development machines and in CI without a CSI
-sensor or a Jetson camera stack.
+The project uses Black for deterministic formatting, Ruff for linting and
+import hygiene, and mypy in strict mode for static type verification. Black
+and Ruff share an 88-character line length and Python 3.10 target; Ruff leaves
+line wrapping to Black. Unit and integration tests use an in-memory mock camera,
+so they run on ordinary development machines and in CI without a CSI sensor or
+a Jetson camera stack.
 
 Install development dependencies and run the standard quality gate:
 
 ```bash
 uv sync --extra preview --group dev
+uv run black --check .
 uv run ruff check .
 uv run mypy imx_camera_toolkit packages tests
 uv run pytest -m "not benchmark"
 ```
 
 Install the local commit hooks once per clone. They reject staged whitespace
-errors or a stale lockfile, then run Ruff, strict mypy, and the same host test
-selection as CI:
+errors or a stale lockfile, then run Ruff, Black, strict mypy, and the same host
+test selection as CI. Black rewrites files in place, so stage its changes and
+commit again when the hook formats a file:
 
 ```bash
 uv run pre-commit install

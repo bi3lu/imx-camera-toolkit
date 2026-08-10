@@ -92,9 +92,7 @@ def _encode_boundary(boundary: str) -> bytes:
         raise ValueError("boundary must contain only ASCII characters") from error
 
 
-def build_mjpeg_part(
-    jpeg: bytes, boundary: str = DEFAULT_MJPEG_BOUNDARY
-) -> bytes:
+def build_mjpeg_part(jpeg: bytes, boundary: str = DEFAULT_MJPEG_BOUNDARY) -> bytes:
     """Format one JPEG image as an MJPEG multipart body part.
 
     Args:
