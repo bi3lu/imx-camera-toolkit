@@ -1,6 +1,6 @@
 """Public CSI camera capture API."""
 
-from packages.camera.camera import (
+from imx_camera_toolkit._internal.camera.camera import (
     DEFAULT_CAMERA_CONFIG,
     Camera,
     CameraConfig,
@@ -20,8 +20,8 @@ from packages.camera.camera import (
     get_camera,
     load_camera_config,
 )
-from packages.camera.gpu_camera import GpuCamera
-from packages.camera.models import (
+from imx_camera_toolkit._internal.camera.gpu_camera import GpuCamera
+from imx_camera_toolkit._internal.camera.models import (
     EncodedStreamDescription,
     EncodedVideoFrame,
     FrameFormat,
@@ -42,17 +42,17 @@ from packages.camera.models import (
     VideoEncodeStats,
     VideoOverlayRenderer,
 )
-from packages.camera.pipeline import (
+from imx_camera_toolkit._internal.camera.pipeline import (
     build_gpu_gstreamer_pipeline,
     build_video_encoder_pipeline,
 )
-from packages.camera.profiles import (
+from imx_camera_toolkit._internal.camera.profiles import (
     CameraProfile,
     CameraProfileStatus,
     get_camera_profile,
     list_camera_profiles,
 )
-from packages.consumers.latest import LatestFrameSubscription
+from imx_camera_toolkit._internal.consumers.latest import LatestFrameSubscription
 
 __all__ = [
     "Camera",

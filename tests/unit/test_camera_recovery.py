@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from packages.camera.backends.base import CaptureBackend
-from packages.camera.camera import Camera, CameraRecoveryPolicy
+from imx_camera_toolkit._internal.camera.backends.base import CaptureBackend
+from imx_camera_toolkit._internal.camera.camera import Camera, CameraRecoveryPolicy
 
 
 class RecordingBackend(CaptureBackend):

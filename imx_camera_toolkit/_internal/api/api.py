@@ -20,13 +20,13 @@ try:
 except ImportError:
     yaml = None
 
-from packages.camera.camera import Camera, CameraConfig
-from packages.camera_control.camera_control import (
+from imx_camera_toolkit._internal.camera.camera import Camera, CameraConfig
+from imx_camera_toolkit._internal.camera_control.camera_control import (
     CameraController,
     ProfileNotFoundError,
     UnsupportedControlError,
 )
-from packages.stream.stream import MJPEGStream
+from imx_camera_toolkit._internal.stream.stream import MJPEGStream
 
 from .security import (
     SecurityConfig,
@@ -40,8 +40,8 @@ DEFAULT_CONFIG_PATH = Path(__file__).with_name("config.yml")
 ViewMode: TypeAlias = Literal["simple", "advanced"]
 DEFAULT_VIEW_MODE: ViewMode = "simple"
 DEFAULT_VIEW_PATHS: dict[ViewMode, Path] = {
-    "simple": Path(__file__).parents[2] / "view" / "simple.html",
-    "advanced": Path(__file__).parents[2] / "view" / "advanced.html",
+    "simple": Path(__file__).parents[3] / "view" / "simple.html",
+    "advanced": Path(__file__).parents[3] / "view" / "advanced.html",
 }
 DEFAULT_VIEW_PATH = DEFAULT_VIEW_PATHS[DEFAULT_VIEW_MODE]
 CAMERA_STREAM_PATH = "/api/camera/mjpeg"
@@ -61,7 +61,7 @@ class APIConfig:
 
     title: str = "IMX Camera API"
     description: str = "Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera."
-    version: str = "0.6.1"
+    version: str = "0.7.0"
     snapshot_timeout: float = 2.0
 
 

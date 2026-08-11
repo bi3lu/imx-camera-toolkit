@@ -11,6 +11,7 @@ from functools import partial
 import pytest
 
 from imx_camera_toolkit import Camera, GpuCamera
+from imx_camera_toolkit._internal.camera.models import GpuFrame, GpuFrameExpiredError
 from imx_camera_toolkit.consumers import (
     FrameConsumer,
     InferenceConsumer,
@@ -20,7 +21,6 @@ from imx_camera_toolkit.consumers import (
 )
 from imx_camera_toolkit.inference import FrameSpec, InferenceResult, TensorOutput
 from imx_camera_toolkit.testing import mock_gpu_frame
-from packages.camera.models import GpuFrame, GpuFrameExpiredError
 
 
 def _wait_for(predicate: Callable[[], bool], timeout: float = 1.0) -> None:

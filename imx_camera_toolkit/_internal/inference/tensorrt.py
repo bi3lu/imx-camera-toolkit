@@ -11,7 +11,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-from packages.camera.models import FrameFormat, GpuFrame, MemoryType
+from imx_camera_toolkit._internal.camera.models import FrameFormat, GpuFrame, MemoryType
 
 from .cache import EngineCache, EngineCacheMetadata, sha256_file
 from .contracts import (

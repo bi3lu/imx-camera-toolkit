@@ -7,8 +7,8 @@ from types import ModuleType
 
 import pytest
 
+from imx_camera_toolkit._internal.inference.interop import NativeCudaInterop
 from imx_camera_toolkit.testing import mock_gpu_frame
-from packages.inference.interop import NativeCudaInterop
 
 
 @pytest.mark.integration

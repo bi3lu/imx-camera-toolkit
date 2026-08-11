@@ -1,13 +1,13 @@
 """Public FastAPI application factory."""
 
-from packages.api.api import (
+from imx_camera_toolkit._internal.api.api import (
     APIConfig,
     ViewMode,
     create_app,
     load_api_config,
     load_camera_view,
 )
-from packages.api.security import SecurityConfig, token_sha256
+from imx_camera_toolkit._internal.api.security import SecurityConfig, token_sha256
 
 __all__ = [
     "APIConfig",

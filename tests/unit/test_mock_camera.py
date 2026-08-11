@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from packages.testing.mock_camera import MockCamera
+from imx_camera_toolkit._internal.testing.mock_camera import MockCamera
 
 
 def test_mock_camera_publishes_and_waits_for_jpeg() -> None:

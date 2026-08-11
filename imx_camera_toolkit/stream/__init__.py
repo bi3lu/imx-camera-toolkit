@@ -1,6 +1,6 @@
 """Public MJPEG streaming API."""
 
-from packages.stream.stream import (
+from imx_camera_toolkit._internal.stream.stream import (
     DEFAULT_MJPEG_BOUNDARY,
     DEFAULT_STREAM_CONFIG,
     DEFAULT_STREAM_TIMEOUT,

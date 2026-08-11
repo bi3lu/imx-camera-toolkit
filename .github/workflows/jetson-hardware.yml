@@ -24,6 +24,8 @@ on:
         required: true
         default: "10"
         type: string
+  schedule:
+    - cron: "17 3 * * 0"
 
 concurrency:
   group: jetson-camera-${{ github.ref }}
@@ -38,10 +40,10 @@ jobs:
     runs-on: [self-hosted, Linux, ARM64, jetson]
     timeout-minutes: 45
     env:
-      IMX_CAMERA_SENSOR: ${{ inputs.sensor }}
-      IMX_CAMERA_SENSOR_ID: ${{ inputs.sensor_id }}
-      IMX_TENSORRT_ONNX: ${{ inputs.onnx_model_path }}
-      IMX_PREVIEW_BENCHMARK_SECONDS: ${{ inputs.benchmark_seconds }}
+      IMX_CAMERA_SENSOR: ${{ inputs.sensor || vars.JETSON_SENSOR || 'IMX219' }}
+      IMX_CAMERA_SENSOR_ID: ${{ inputs.sensor_id || vars.JETSON_SENSOR_ID || '0' }}
+      IMX_TENSORRT_ONNX: ${{ inputs.onnx_model_path || vars.JETSON_ONNX_MODEL_PATH }}
+      IMX_PREVIEW_BENCHMARK_SECONDS: ${{ inputs.benchmark_seconds || vars.JETSON_BENCHMARK_SECONDS || '10' }}
       IMX_PRODUCTION_PREVIEW_HARDWARE: "1"
       IMX_TENSORRT_INTEGRATION: "1"
     steps:
@@ -52,6 +54,10 @@ jobs:
           enable-cache: true
       - name: Verify runner model and Jetson tools
         run: |
+          if [ -z "$IMX_TENSORRT_ONNX" ]; then
+            echo "::error::Set the JETSON_ONNX_MODEL_PATH repository variable for scheduled validation."
+            exit 1
+          fi
           test -f "$IMX_TENSORRT_ONNX"
           command -v tegrastats
           command -v nvpmodel
@@ -95,6 +101,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: jetson-validation-${{ inputs.sensor }}-${{ github.sha }}
+          name: jetson-validation-${{ inputs.sensor || vars.JETSON_SENSOR || 'IMX219' }}-${{ github.sha }}
           path: release-evidence
           if-no-files-found: error

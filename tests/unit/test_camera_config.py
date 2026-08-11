@@ -15,7 +15,7 @@ from imx_camera_toolkit import (
     get_camera_profile,
     list_camera_profiles,
 )
-from packages.camera.config.loader import _read_config_values
+from imx_camera_toolkit._internal.camera.config.loader import _read_config_values
 
 
 def test_camera_config_has_documented_defaults() -> None:

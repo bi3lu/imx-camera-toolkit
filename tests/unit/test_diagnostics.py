@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from packages import diagnostics
-from packages.camera.config import CameraConfig
+from imx_camera_toolkit._internal import diagnostics
+from imx_camera_toolkit._internal.camera.config import CameraConfig
 
 
 class _FakeCamera:

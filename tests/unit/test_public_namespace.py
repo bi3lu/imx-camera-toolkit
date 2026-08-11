@@ -56,6 +56,147 @@ from imx_camera_toolkit import (
     preview,
     serve,
 )
+from imx_camera_toolkit._internal.api.api import create_app as InternalCreateApp
+from imx_camera_toolkit._internal.camera.camera import Camera as InternalCamera
+from imx_camera_toolkit._internal.camera.config import (
+    CameraConfig as InternalCameraConfig,
+)
+from imx_camera_toolkit._internal.camera.errors import (
+    CameraConfigurationError as InternalConfigurationError,
+)
+from imx_camera_toolkit._internal.camera.errors import (
+    CameraDependencyError as InternalDependencyError,
+)
+from imx_camera_toolkit._internal.camera.errors import (
+    CameraError as InternalCameraError,
+)
+from imx_camera_toolkit._internal.camera.errors import (
+    CameraOpenError as InternalOpenError,
+)
+from imx_camera_toolkit._internal.camera.errors import (
+    CameraReadError as InternalReadError,
+)
+from imx_camera_toolkit._internal.camera.errors import (
+    CameraRecoveryError as InternalRecoveryError,
+)
+from imx_camera_toolkit._internal.camera.errors import (
+    CameraTimeoutError as InternalTimeoutError,
+)
+from imx_camera_toolkit._internal.camera.gpu_camera import (
+    GpuCamera as InternalGpuCamera,
+)
+from imx_camera_toolkit._internal.camera.models import (
+    CameraFrame as InternalCameraFrame,
+)
+from imx_camera_toolkit._internal.camera.models import (
+    CameraStats as InternalCameraStats,
+)
+from imx_camera_toolkit._internal.camera.models import (
+    EncodedVideoFrame as InternalEncodedVideoFrame,
+)
+from imx_camera_toolkit._internal.camera.models import Frame as InternalFrame
+from imx_camera_toolkit._internal.camera.models import (
+    FrameFormat as InternalFrameFormat,
+)
+from imx_camera_toolkit._internal.camera.models import (
+    GpuBufferHandle as InternalGpuBufferHandle,
+)
+from imx_camera_toolkit._internal.camera.models import GpuFrame as InternalGpuFrame
+from imx_camera_toolkit._internal.camera.models import (
+    GpuFrameExpiredError as InternalGpuFrameExpiredError,
+)
+from imx_camera_toolkit._internal.camera.models import (
+    HardwareVideoConfig as InternalHardwareVideoConfig,
+)
+from imx_camera_toolkit._internal.camera.models import MemoryType as InternalMemoryType
+from imx_camera_toolkit._internal.camera.models import (
+    MetricsRecorder as InternalMetricsRecorder,
+)
+from imx_camera_toolkit._internal.camera.models import (
+    PipelineMetrics as InternalPipelineMetrics,
+)
+from imx_camera_toolkit._internal.camera.models import (
+    PipelineStage as InternalPipelineStage,
+)
+from imx_camera_toolkit._internal.camera.models import (
+    StageMetrics as InternalStageMetrics,
+)
+from imx_camera_toolkit._internal.camera.models import VideoCodec as InternalVideoCodec
+from imx_camera_toolkit._internal.camera.models import (
+    VideoEncodeStats as InternalVideoEncodeStats,
+)
+from imx_camera_toolkit._internal.camera.models import (
+    VideoOverlayRenderer as InternalVideoOverlayRenderer,
+)
+from imx_camera_toolkit._internal.camera.pipeline import (
+    build_gpu_gstreamer_pipeline as internal_build_gpu_gstreamer_pipeline,
+)
+from imx_camera_toolkit._internal.camera.profiles import (
+    CameraProfile as InternalCameraProfile,
+)
+from imx_camera_toolkit._internal.camera.profiles import (
+    CameraProfileStatus as InternalCameraProfileStatus,
+)
+from imx_camera_toolkit._internal.camera.profiles import (
+    get_camera_profile as internal_get_camera_profile,
+)
+from imx_camera_toolkit._internal.camera.profiles import (
+    list_camera_profiles as internal_list_camera_profiles,
+)
+from imx_camera_toolkit._internal.camera_control.camera_control import (
+    CameraController as InternalController,
+)
+from imx_camera_toolkit._internal.camera_control.camera_control import (
+    CameraSettings as InternalCameraSettings,
+)
+from imx_camera_toolkit._internal.consumers import (
+    FrameConsumer as InternalFrameConsumer,
+)
+from imx_camera_toolkit._internal.consumers import (
+    InferenceConsumer as InternalInferenceConsumer,
+)
+from imx_camera_toolkit._internal.consumers import (
+    InferencePreviewSource as InternalInferencePreviewSource,
+)
+from imx_camera_toolkit._internal.consumers import (
+    InferenceResultSource as InternalInferenceResultSource,
+)
+from imx_camera_toolkit._internal.consumers import (
+    LatestFrameSubscription as InternalLatestFrameSubscription,
+)
+from imx_camera_toolkit._internal.consumers import (
+    OverlayRenderer as InternalOverlayRenderer,
+)
+from imx_camera_toolkit._internal.consumers import (
+    PreviewOverlayContext as InternalPreviewOverlayContext,
+)
+from imx_camera_toolkit._internal.frames import (
+    CameraFrameSource as InternalCameraFrameSource,
+)
+from imx_camera_toolkit._internal.frames import (
+    CaptureFrameSource as InternalCaptureFrameSource,
+)
+from imx_camera_toolkit._internal.frames import FrameSource as InternalFrameSource
+from imx_camera_toolkit._internal.frames import GpuFrameSource as InternalGpuFrameSource
+from imx_camera_toolkit._internal.inference import FrameSpec as InternalFrameSpec
+from imx_camera_toolkit._internal.inference import (
+    InferenceResult as InternalInferenceResult,
+)
+from imx_camera_toolkit._internal.inference import (
+    InferenceRunner as InternalInferenceRunner,
+)
+from imx_camera_toolkit._internal.inference import ShapeProfile as InternalShapeProfile
+from imx_camera_toolkit._internal.inference import TensorOutput as InternalTensorOutput
+from imx_camera_toolkit._internal.inference import (
+    TensorRTRunner as InternalTensorRTRunner,
+)
+from imx_camera_toolkit._internal.stream.stream import (
+    MJPEGStream as InternalMJPEGStream,
+)
+from imx_camera_toolkit._internal.testing import MockCamera as InternalMockCamera
+from imx_camera_toolkit._internal.testing import (
+    MockFrameSource as InternalMockFrameSource,
+)
 from imx_camera_toolkit.api import create_app
 from imx_camera_toolkit.camera import Camera
 from imx_camera_toolkit.camera_control import CameraController
@@ -68,89 +209,14 @@ from imx_camera_toolkit.frames import (
 )
 from imx_camera_toolkit.stream import MJPEGStream
 from imx_camera_toolkit.testing import MockCamera, MockFrameSource
-from packages.api.api import create_app as InternalCreateApp
-from packages.camera.camera import Camera as InternalCamera
-from packages.camera.config import CameraConfig as InternalCameraConfig
-from packages.camera.errors import (
-    CameraConfigurationError as InternalConfigurationError,
-)
-from packages.camera.errors import CameraDependencyError as InternalDependencyError
-from packages.camera.errors import CameraError as InternalCameraError
-from packages.camera.errors import CameraOpenError as InternalOpenError
-from packages.camera.errors import CameraReadError as InternalReadError
-from packages.camera.errors import CameraRecoveryError as InternalRecoveryError
-from packages.camera.errors import CameraTimeoutError as InternalTimeoutError
-from packages.camera.gpu_camera import GpuCamera as InternalGpuCamera
-from packages.camera.models import CameraFrame as InternalCameraFrame
-from packages.camera.models import CameraStats as InternalCameraStats
-from packages.camera.models import EncodedVideoFrame as InternalEncodedVideoFrame
-from packages.camera.models import Frame as InternalFrame
-from packages.camera.models import FrameFormat as InternalFrameFormat
-from packages.camera.models import GpuBufferHandle as InternalGpuBufferHandle
-from packages.camera.models import GpuFrame as InternalGpuFrame
-from packages.camera.models import GpuFrameExpiredError as InternalGpuFrameExpiredError
-from packages.camera.models import HardwareVideoConfig as InternalHardwareVideoConfig
-from packages.camera.models import MemoryType as InternalMemoryType
-from packages.camera.models import MetricsRecorder as InternalMetricsRecorder
-from packages.camera.models import PipelineMetrics as InternalPipelineMetrics
-from packages.camera.models import PipelineStage as InternalPipelineStage
-from packages.camera.models import StageMetrics as InternalStageMetrics
-from packages.camera.models import VideoCodec as InternalVideoCodec
-from packages.camera.models import VideoEncodeStats as InternalVideoEncodeStats
-from packages.camera.models import VideoOverlayRenderer as InternalVideoOverlayRenderer
-from packages.camera.pipeline import (
-    build_gpu_gstreamer_pipeline as internal_build_gpu_gstreamer_pipeline,
-)
-from packages.camera.profiles import (
-    CameraProfile as InternalCameraProfile,
-)
-from packages.camera.profiles import (
-    CameraProfileStatus as InternalCameraProfileStatus,
-)
-from packages.camera.profiles import (
-    get_camera_profile as internal_get_camera_profile,
-)
-from packages.camera.profiles import (
-    list_camera_profiles as internal_list_camera_profiles,
-)
-from packages.camera_control.camera_control import (
-    CameraController as InternalController,
-)
-from packages.camera_control.camera_control import (
-    CameraSettings as InternalCameraSettings,
-)
-from packages.consumers import FrameConsumer as InternalFrameConsumer
-from packages.consumers import InferenceConsumer as InternalInferenceConsumer
-from packages.consumers import (
-    InferencePreviewSource as InternalInferencePreviewSource,
-)
-from packages.consumers import InferenceResultSource as InternalInferenceResultSource
-from packages.consumers import (
-    LatestFrameSubscription as InternalLatestFrameSubscription,
-)
-from packages.consumers import OverlayRenderer as InternalOverlayRenderer
-from packages.consumers import PreviewOverlayContext as InternalPreviewOverlayContext
-from packages.frames import CameraFrameSource as InternalCameraFrameSource
-from packages.frames import CaptureFrameSource as InternalCaptureFrameSource
-from packages.frames import FrameSource as InternalFrameSource
-from packages.frames import GpuFrameSource as InternalGpuFrameSource
-from packages.inference import FrameSpec as InternalFrameSpec
-from packages.inference import InferenceResult as InternalInferenceResult
-from packages.inference import InferenceRunner as InternalInferenceRunner
-from packages.inference import ShapeProfile as InternalShapeProfile
-from packages.inference import TensorOutput as InternalTensorOutput
-from packages.inference import TensorRTRunner as InternalTensorRTRunner
-from packages.stream.stream import MJPEGStream as InternalMJPEGStream
-from packages.testing import MockCamera as InternalMockCamera
-from packages.testing import MockFrameSource as InternalMockFrameSource
 
 
 def test_public_namespace_reexports_stable_library_types() -> None:
     """External imports must resolve to the existing implementation classes."""
-    assert __version__ == "0.6.1"
+    assert __version__ == "0.7.0"
     assert CameraPreview.__module__ == "imx_camera_toolkit.preview"
-    assert PreviewServer.__module__ == "packages.preview.server"
-    assert PreviewSource.__module__ == "packages.preview.server"
+    assert PreviewServer.__module__ == "imx_camera_toolkit._internal.preview.server"
+    assert PreviewSource.__module__ == "imx_camera_toolkit._internal.preview.server"
     assert create_preview_app.__module__ == "imx_camera_toolkit.preview"
     assert preview.__module__ == "imx_camera_toolkit.preview"
     assert serve.__module__ == "imx_camera_toolkit.preview"

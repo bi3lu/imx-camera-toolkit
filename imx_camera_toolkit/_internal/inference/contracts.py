@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
-from packages.camera.models import FrameFormat, GpuFrame, MemoryType
+from imx_camera_toolkit._internal.camera.models import FrameFormat, GpuFrame, MemoryType
 
 
 @dataclass(frozen=True, slots=True)

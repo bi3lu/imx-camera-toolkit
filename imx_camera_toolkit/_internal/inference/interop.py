@@ -6,7 +6,7 @@ import importlib
 from types import ModuleType
 from typing import Any, Protocol
 
-from packages.camera.models import GpuFrame
+from imx_camera_toolkit._internal.camera.models import GpuFrame
 
 from .errors import CudaInteropError, InferenceDependencyError
 
@@ -97,7 +97,7 @@ class NativeCudaInterop:
         if native_module is None:
             try:
                 native_module = importlib.import_module(
-                    "packages.inference._cuda_interop"
+                    "imx_camera_toolkit._internal.inference._cuda_interop"
                 )
 
             except ImportError as error:

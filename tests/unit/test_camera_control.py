@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from packages.camera_control.camera_control import (
+from imx_camera_toolkit._internal.camera_control.camera_control import (
     CameraCapabilities,
     CameraController,
     SensorMode,

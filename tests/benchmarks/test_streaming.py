@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from packages.benchmarks import benchmark_capture, benchmark_streaming
+from imx_camera_toolkit._internal.benchmarks import (
+    benchmark_capture,
+    benchmark_streaming,
+)
 
 
 @pytest.mark.benchmark

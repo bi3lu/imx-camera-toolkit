@@ -8,10 +8,10 @@ from typing import cast
 
 import pytest
 
-from packages import cli
-from packages.benchmarks import CameraBenchmarkResult
-from packages.camera.config import CameraConfig
-from packages.cli import main
+from imx_camera_toolkit._internal import cli
+from imx_camera_toolkit._internal.benchmarks import CameraBenchmarkResult
+from imx_camera_toolkit._internal.camera.config import CameraConfig
+from imx_camera_toolkit._internal.cli import main
 
 preview_module = importlib.import_module("imx_camera_toolkit.preview")
 

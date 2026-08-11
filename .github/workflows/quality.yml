@@ -24,14 +24,23 @@ jobs:
       - run: uv sync --extra preview --group dev --frozen
       - name: Ruff lint
         run: uv run ruff check .
+      - name: Black format check
+        run: uv run black --check .
       - name: Mypy strict type check
-        run: uv run mypy imx_camera_toolkit packages tests
+        run: uv run mypy imx_camera_toolkit tests
       - name: Audit locked dependencies
         run: uv audit --frozen
 
   tests:
-    name: Host unit and integration tests
+    name: Host tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      UV_PYTHON_DOWNLOADS: never
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
@@ -40,13 +49,20 @@ jobs:
           enable-cache: true
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.10"
+          python-version: ${{ matrix.python-version }}
       - run: uv sync --extra preview --group dev --frozen
+      - name: Verify matrix interpreter
+        run: >-
+          uv run python -c
+          "import os, sys; expected = tuple(map(int, os.environ['UV_PYTHON'].split('.')));
+          assert sys.version_info[:2] == expected, (sys.version, expected)"
       - name: Run tests that require no Jetson hardware
         run: >-
           uv run pytest tests/unit tests/integration
           -m "not hardware and not benchmark"
-          --cov=packages --cov-report=term-missing
+          --cov=imx_camera_toolkit/_internal
+          --cov-report=term-missing
+          --cov-fail-under=65.5
 
   package:
     name: Build distribution
@@ -58,9 +74,44 @@ jobs:
           version: "0.11.14"
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
+      - name: Validate project TOML with the standard library parser
+        run: >-
+          python -c
+          "from pathlib import Path; import tomllib;
+          tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))"
       - name: Build wheel and source distribution
         run: uv build
+      - name: Verify wheel namespace
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          wheels = list(Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              raise SystemExit(f"expected exactly one wheel, found {len(wheels)}")
+
+          with ZipFile(wheels[0]) as archive:
+              names = archive.namelist()
+
+          if not any(name.startswith("imx_camera_toolkit/") for name in names):
+              raise SystemExit("wheel does not contain imx_camera_toolkit")
+
+          required = {
+              "native/CMakeLists.txt",
+              "view/advanced.html",
+              "view/production.html",
+              "view/simple.html",
+          }
+          missing = sorted(required.difference(names))
+          if missing:
+              raise SystemExit(f"wheel is missing packaged assets: {missing}")
+
+          legacy = [name for name in names if name.startswith("packages/")]
+          if legacy:
+              raise SystemExit(f"wheel contains legacy packages namespace: {legacy}")
+          PY
       - name: Export CycloneDX SBOM
         run: >-
           uv export --all-extras --format cyclonedx1.5 --frozen

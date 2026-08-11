@@ -7,7 +7,7 @@ from enum import Enum
 from math import isfinite
 from pathlib import Path
 
-from packages.camera.models import VideoCodec
+from imx_camera_toolkit._internal.camera.models import VideoCodec
 
 from .errors import ProductionPreviewConfigurationError
 

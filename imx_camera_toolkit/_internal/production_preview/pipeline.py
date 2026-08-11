@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from packages.camera.models import EncodedStreamDescription, VideoCodec
+from imx_camera_toolkit._internal.camera.models import (
+    EncodedStreamDescription,
+    VideoCodec,
+)
 
 from .config import ProductionPreviewConfig
 

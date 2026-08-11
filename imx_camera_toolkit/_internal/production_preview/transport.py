@@ -13,14 +13,17 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
-from packages.camera.models import (
+from imx_camera_toolkit._internal.camera.models import (
     EncodedStreamDescription,
     EncodedVideoFrame,
     HardwareVideoConfig,
     VideoCodec,
     VideoEncodeStats,
 )
-from packages.consumers import FrameConsumer, LatestFrameSubscription
+from imx_camera_toolkit._internal.consumers import (
+    FrameConsumer,
+    LatestFrameSubscription,
+)
 
 from .config import PreviewTransport, ProductionPreviewConfig
 from .errors import ProductionPreviewDependencyError, ProductionPreviewError
