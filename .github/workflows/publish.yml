@@ -1,0 +1,39 @@
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish distribution
+    if: startsWith(github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/imx-camera-toolkit
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "0.11.14"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+      - name: Verify release tag matches package version
+        run: |
+          package_version="$(uv version --short)"
+          if [ "v${package_version}" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME does not match package version $package_version."
+            exit 1
+          fi
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Publish with PyPI Trusted Publishing
+        run: uv publish --trusted-publishing always dist/*
