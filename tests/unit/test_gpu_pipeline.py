@@ -11,6 +11,7 @@ from imx_camera_toolkit import (
     CameraConfig,
     CameraConfigurationError,
     CameraOpenError,
+    CameraReadError,
     FrameFormat,
     GpuCamera,
     MemoryType,
@@ -274,6 +275,57 @@ def test_gpu_backend_surfaces_open_error_while_waiting_for_first_frame(
         backend._pull_first_sample(sink, object())
 
     assert sink.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("policy", "expected_return", "raises"),
+    [("fail-open", "OK", False), ("fail-closed", "DROP", True)],
+)
+def test_gpu_overlay_error_policy_controls_video_branch_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    policy: str,
+    expected_return: str,
+    raises: bool,
+) -> None:
+    """A bad overlay should preserve encoded video under the default policy."""
+
+    class _PadProbeReturn:
+        OK = "OK"
+        DROP = "DROP"
+
+    class _Gst:
+        CLOCK_TIME_NONE = -1
+        PadProbeReturn = _PadProbeReturn
+
+    class _Buffer:
+        pts = -1
+
+    class _Info:
+        def get_buffer(self) -> _Buffer:
+            return _Buffer()
+
+    class _BrokenOverlay:
+        def render(self, frame: object) -> None:
+            raise ValueError("bad rectangle")
+
+    monkeypatch.setattr(gpu_gstreamer_backend, "Gst", _Gst())
+    backend = GpuGStreamerCaptureBackend(
+        "unused",
+        1280,
+        720,
+        enable_preview=False,
+        video_overlay=_BrokenOverlay(),  # type: ignore[arg-type]
+        overlay_error_policy=policy,
+    )
+
+    assert backend._render_video_overlay(object(), _Info()) == expected_return
+    assert backend.overlay_failed_frames == 1
+    assert str(backend.overlay_last_error) == "bad rectangle"
+    if raises:
+        with pytest.raises(CameraReadError, match="bad rectangle"):
+            backend.read_video()
+    else:
+        assert backend.read_video() is None
 
 
 def test_gpu_start_closes_a_pipeline_that_fails_to_open() -> None:

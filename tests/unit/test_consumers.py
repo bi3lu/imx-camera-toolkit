@@ -18,7 +18,7 @@ from imx_camera_toolkit.consumers import (
     LatestFrameHub,
     PreviewOverlayContext,
 )
-from imx_camera_toolkit.inference import FrameSpec, InferenceResult
+from imx_camera_toolkit.inference import FrameSpec, InferenceResult, TensorOutput
 from imx_camera_toolkit.testing import mock_gpu_frame
 from packages.camera.models import GpuFrame, GpuFrameExpiredError
 
@@ -237,6 +237,11 @@ class _SlowRunner:
         """Record preparation without loading a model."""
         self.prepared.append(frame_spec)
 
+    @property
+    def prepared_frame_spec(self) -> FrameSpec | None:
+        """Expose the latest synchronously prepared layout."""
+        return self.prepared[-1] if self.prepared else None
+
     def infer(self, frame: GpuFrame) -> InferenceResult:
         """Sleep for the configured cost and return a model-neutral result."""
         time.sleep(self.duration)
@@ -260,6 +265,72 @@ class _ExpiredRunner(_SlowRunner):
     def infer(self, frame: GpuFrame) -> InferenceResult:
         """Reject the lease before starting inference work."""
         raise GpuFrameExpiredError("expired before import")
+
+
+class _OutputRunner(_SlowRunner):
+    """Runner exposing one named output shape for health diagnostics."""
+
+    def infer(self, frame: GpuFrame) -> InferenceResult:
+        """Return one portable tensor descriptor without model-specific data."""
+        return InferenceResult(
+            frame_sequence=frame.sequence,
+            frame_timestamp_ns=frame.timestamp_ns,
+            inference_time_ns=10,
+            outputs=(TensorOutput("boxes", (1, 84, 8400), "float32", object()),),
+        )
+
+
+def test_inference_consumer_reuses_runner_prepared_before_camera_capture() -> None:
+    """The first borrowed frame must not trigger a second expensive prepare."""
+    hub = LatestFrameHub[GpuFrame]()
+    runner = _SlowRunner(duration=0)
+    frame = mock_gpu_frame(object(), width=1280, height=720)
+    spec = FrameSpec.from_gpu_frame(frame)
+    runner.prepare(spec)
+    inference = InferenceConsumer(hub.subscribe("prepared"), runner)
+
+    inference.start()
+    hub.publish(frame)
+    _wait_for(lambda: inference.processed_frames == 1)
+    health = inference.health()
+    inference.stop()
+
+    assert runner.prepared == [spec]
+    assert inference.prepared_frame_spec == spec
+    assert health["running"] is True
+    assert health["processed_frames"] == 1
+    assert health["output_shapes"] == {}
+
+
+def test_inference_health_reports_named_output_shapes() -> None:
+    """Diagnostics must reveal decoder contract mismatches without tensor data."""
+    hub = LatestFrameHub[GpuFrame]()
+    inference = InferenceConsumer(hub.subscribe("outputs"), _OutputRunner())
+    inference.start()
+    hub.publish(mock_gpu_frame(object()))
+    _wait_for(lambda: inference.processed_frames == 1)
+    health = inference.health()
+    inference.stop()
+
+    assert health["output_shapes"] == {"boxes": [1, 84, 8400]}
+
+
+def test_inference_context_cleanup_does_not_mask_primary_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A secondary stop timeout must preserve the application failure."""
+    inference = InferenceConsumer(
+        LatestFrameHub[GpuFrame]().subscribe("cleanup"),
+        _SlowRunner(duration=0),
+    )
+
+    def fail_stop(timeout: float | None = 10.0) -> None:
+        raise RuntimeError(f"cleanup timeout: {timeout}")
+
+    monkeypatch.setattr(inference, "stop", fail_stop)
+
+    with pytest.raises(ValueError, match="primary failure"), inference:
+        raise ValueError("primary failure")
 
 
 def test_inference_consumer_classifies_expired_input_as_drop() -> None:

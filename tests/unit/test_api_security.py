@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import SecurityScopes
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -101,6 +101,24 @@ def test_field_mode_enforces_scopes_and_hides_diagnostics_and_docs() -> None:
 
     asyncio.run(authorize(SecurityScopes(["stream:read"]), "stream-token"))
     asyncio.run(authorize(SecurityScopes(["camera:control"]), "admin-token"))
+
+
+def test_authorizer_registers_bearer_dependency_in_fastapi_openapi() -> None:
+    """Postponed annotations must not turn the bearer token into a query input."""
+    application = FastAPI()
+    authorize = build_authorizer(_security_config())
+
+    @application.get(
+        "/protected",
+        dependencies=[Security(authorize, scopes=["stream:read"])],
+    )
+    def protected() -> dict[str, bool]:
+        return {"ok": True}
+
+    operation = application.openapi()["paths"]["/protected"]["get"]
+
+    assert operation.get("parameters", []) == []
+    assert operation["security"] == [{"OAuth2PasswordBearer": ["stream:read"]}]
 
 
 def test_field_mode_limits_request_bodies_and_sets_security_headers() -> None:

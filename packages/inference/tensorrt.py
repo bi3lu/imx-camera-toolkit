@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import time
 from collections.abc import Callable, Iterable
 from math import isfinite
@@ -16,6 +17,7 @@ from .cache import EngineCache, EngineCacheMetadata, sha256_file
 from .contracts import (
     FrameSpec,
     InferenceResult,
+    ResizeTransform,
     ShapeProfile,
     TensorOutput,
 )
@@ -29,6 +31,7 @@ from .interop import CudaBuffer, CudaStream, InteropRuntime, NativeCudaInterop
 from .model_security import ModelManifest, verify_signed_model
 
 OverlayFactory = Callable[[tuple[TensorOutput, ...]], Iterable[object]]
+LOGGER = logging.getLogger(__name__)
 
 
 class TensorRTRunner:
@@ -55,6 +58,8 @@ class TensorRTRunner:
         scale: float = 1.0 / 255.0,
         mean: tuple[float, float, float] = (0.0, 0.0, 0.0),
         standard_deviation: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        resize_mode: str = "stretch",
+        padding_value: tuple[float, float, float] = (114.0, 114.0, 114.0),
         overlay_factory: OverlayFactory | None = None,
         interop: InteropRuntime | None = None,
         tensorrt_module: ModuleType | None = None,
@@ -76,6 +81,8 @@ class TensorRTRunner:
         self._scale = scale
         self._mean = mean
         self._standard_deviation = standard_deviation
+        self._resize_mode = resize_mode.lower()
+        self._padding_value = padding_value
         self._overlay_factory = overlay_factory
         self._interop = interop
         self._trt = tensorrt_module
@@ -162,9 +169,15 @@ class TensorRTRunner:
         if self._channel_order not in {"RGB", "BGR"}:
             raise InferenceConfigurationError("channel_order must be RGB or BGR")
 
+        if self._resize_mode not in {"stretch", "letterbox"}:
+            raise InferenceConfigurationError(
+                "resize_mode must be stretch or letterbox"
+            )
+
         for name, values in (
             ("mean", self._mean),
             ("standard_deviation", self._standard_deviation),
+            ("padding_value", self._padding_value),
         ):
             if len(values) != 3 or not all(
                 isinstance(value, (int, float))
@@ -176,6 +189,11 @@ class TensorRTRunner:
                 raise InferenceConfigurationError(
                     f"{name} must contain three finite bounded numeric values"
                 )
+
+        if any(value < 0 or value > 255 for value in self._padding_value):
+            raise InferenceConfigurationError(
+                "padding_value values must be between 0 and 255"
+            )
 
         if any(value == 0 for value in self._standard_deviation):
             raise InferenceConfigurationError(
@@ -196,6 +214,25 @@ class TensorRTRunner:
         return self._context is not None and not self._closed
 
     @property
+    def prepared_frame_spec(self) -> FrameSpec | None:
+        """Frame layout accepted by the active prepared resources."""
+        return self._frame_spec if self.prepared else None
+
+    @property
+    def resize_transform(self) -> ResizeTransform | None:
+        """Exact source-to-model geometry for the prepared frame layout."""
+        frame_spec = self.prepared_frame_spec
+
+        if frame_spec is None:
+            return None
+
+        return ResizeTransform.calculate(
+            (frame_spec.height, frame_spec.width),
+            (self._inference_shape[2], self._inference_shape[3]),
+            self._resize_mode,
+        )
+
+    @property
     def cache_hit(self) -> bool:
         """Whether ``prepare`` accepted an existing compatible engine."""
         return self._cache_hit
@@ -209,6 +246,7 @@ class TensorRTRunner:
         """Load or build a compatible engine and allocate its CUDA bindings."""
         if not isinstance(frame_spec, FrameSpec):
             raise TypeError("frame_spec must be a FrameSpec")
+
         if (
             frame_spec.format is not FrameFormat.NV12_NVMM
             or frame_spec.memory_type is not MemoryType.NVMM
@@ -216,12 +254,14 @@ class TensorRTRunner:
             raise InferenceConfigurationError(
                 "TensorRTRunner requires NV12_NVMM frames in NVMM memory"
             )
+
         if not self._onnx_path.is_file():
             raise InferenceConfigurationError(
                 f"ONNX model does not exist: {self._onnx_path}"
             )
 
         manifest: ModelManifest | None = None
+
         if self._public_key_path is not None:
             manifest = verify_signed_model(
                 self._onnx_path,
@@ -229,10 +269,12 @@ class TensorRTRunner:
                 manifest_path=self._manifest_path,
                 signature_path=self._signature_path,
             )
+
             if self._input_name is not None and self._input_name not in manifest.inputs:
                 raise InferenceConfigurationError(
                     "configured input_name is absent from the signed model manifest"
                 )
+
         self._model_manifest = manifest
 
         self.close()
@@ -243,9 +285,11 @@ class TensorRTRunner:
         self._interop = interop
 
         if self._input_name is None:
+            LOGGER.info("parsing ONNX to discover input tensor")
             self._input_name = self._discover_input_name(trt)
 
         input_name = self._input_name
+
         if manifest is not None and input_name not in manifest.inputs:
             raise InferenceConfigurationError(
                 "discovered input is absent from the signed model manifest"
@@ -266,14 +310,29 @@ class TensorRTRunner:
         runtime = trt.Runtime(logger)
 
         if engine_bytes is None:
+            LOGGER.info("TensorRT engine cache miss: %s", self._cache.engine_path)
             engine_bytes = self._build_engine(trt)
+            LOGGER.info("storing TensorRT engine cache: %s", self._cache.engine_path)
             self._cache.store(engine_bytes, metadata)
+
+        else:
+            LOGGER.info(
+                "deserializing cached TensorRT engine: %s",
+                self._cache.engine_path,
+            )
 
         engine = runtime.deserialize_cuda_engine(engine_bytes)
 
         if engine is None and self._cache_hit:
+            LOGGER.warning(
+                "cached TensorRT engine could not be deserialized; rebuilding"
+            )
             self._cache_hit = False
             engine_bytes = self._build_engine(trt)
+            LOGGER.info(
+                "storing rebuilt TensorRT engine cache: %s",
+                self._cache.engine_path,
+            )
             self._cache.store(engine_bytes, metadata)
             engine = runtime.deserialize_cuda_engine(engine_bytes)
 
@@ -398,12 +457,15 @@ class TensorRTRunner:
 
     def _build_engine(self, trt: ModuleType) -> bytes:
         """Parse ONNX and compile one explicit-batch dynamic TensorRT engine."""
+        started = time.monotonic()
         logger = trt.Logger(trt.Logger.WARNING)
         builder = trt.Builder(logger)
         network_flag = 1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH)
         network = builder.create_network(network_flag)
         parser = trt.OnnxParser(network, logger)
         model_bytes = self._onnx_path.read_bytes()
+
+        LOGGER.info("parsing ONNX model: %s", self._onnx_path)
 
         if not parser.parse(model_bytes):
             errors = "; ".join(
@@ -458,11 +520,16 @@ class TensorRTRunner:
 
         config.add_optimization_profile(profile)
 
+        LOGGER.info("building %s TensorRT engine", self._precision.upper())
         serialized = builder.build_serialized_network(network, config)
 
         if serialized is None:
             raise EngineBuildError("TensorRT failed to build a serialized engine")
 
+        LOGGER.info(
+            "TensorRT engine build finished in %.1f s",
+            time.monotonic() - started,
+        )
         return bytes(serialized)
 
     def _discover_input_name(self, trt: ModuleType) -> str:
@@ -544,6 +611,12 @@ class TensorRTRunner:
                     float(self._standard_deviation[1]),
                     float(self._standard_deviation[2]),
                 ),
+                resize_mode=self._resize_mode,
+                padding_value=(
+                    float(self._padding_value[0]),
+                    float(self._padding_value[1]),
+                    float(self._padding_value[2]),
+                ),
                 stream=stream,
             )
 
@@ -597,6 +670,12 @@ class TensorRTRunner:
                     "layout": "NCHW",
                     "channel_order": self._channel_order,
                     "scale": float(self._scale),
+                    "padding_value": list(self._padding_value),
+                    "transform": (
+                        None
+                        if self.resize_transform is None
+                        else self.resize_transform.as_dict()
+                    ),
                 },
             },
         )

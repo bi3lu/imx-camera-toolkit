@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -409,6 +410,10 @@ __global__ void nv12_to_nchw_kernel(
     float* destination,
     unsigned int output_width,
     unsigned int output_height,
+    unsigned int resized_width,
+    unsigned int resized_height,
+    unsigned int pad_x,
+    unsigned int pad_y,
     bool rgb,
     float scale,
     float mean0,
@@ -416,7 +421,10 @@ __global__ void nv12_to_nchw_kernel(
     float mean2,
     float std0,
     float std1,
-    float std2) {
+    float std2,
+    float padding_red,
+    float padding_green,
+    float padding_blue) {
     const unsigned int output_x = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int output_y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -424,16 +432,34 @@ __global__ void nv12_to_nchw_kernel(
         return;
     }
 
+    const unsigned int plane_size = output_width * output_height;
+    const unsigned int offset = output_y * output_width + output_x;
+    if (output_x < pad_x || output_y < pad_y ||
+        output_x >= pad_x + resized_width ||
+        output_y >= pad_y + resized_height) {
+        const float channel0 = rgb ? padding_red : padding_blue;
+        const float channel2 = rgb ? padding_blue : padding_red;
+        destination[offset] = (channel0 * scale - mean0) / std0;
+        destination[plane_size + offset] =
+            (padding_green * scale - mean1) / std1;
+        destination[2 * plane_size + offset] =
+            (channel2 * scale - mean2) / std2;
+        return;
+    }
+
+    const unsigned int resized_x = output_x - pad_x;
+    const unsigned int resized_y = output_y - pad_y;
+
     const unsigned int source_x = min(
         static_cast<unsigned int>(
-            (static_cast<unsigned long long>(output_x) * source_width) /
-            output_width),
+            (static_cast<unsigned long long>(resized_x) * source_width) /
+            resized_width),
         source_width - 1);
 
     const unsigned int source_y = min(
         static_cast<unsigned int>(
-            (static_cast<unsigned long long>(output_y) * source_height) /
-            output_height),
+            (static_cast<unsigned long long>(resized_y) * source_height) /
+            resized_height),
         source_height - 1);
 
     const unsigned int uv_x = source_x & ~1U;
@@ -493,8 +519,6 @@ __global__ void nv12_to_nchw_kernel(
     const float blue =
         static_cast<float>(clamp_byte(y + blue_coefficient * u));
 
-    const unsigned int plane_size = output_width * output_height;
-    const unsigned int offset = output_y * output_width + output_x;
     const float channel0 = rgb ? red : blue;
     const float channel2 = rgb ? blue : red;
     destination[offset] = (channel0 * scale - mean0) / std0;
@@ -511,6 +535,8 @@ void preprocess_nv12(
     float scale,
     const std::array<float, 3>& mean,
     const std::array<float, 3>& standard_deviation,
+    const std::string& resize_mode,
+    const std::array<float, 3>& padding_value,
     const CudaStream& stream) {
     if (output_width == 0 || output_height == 0) {
         throw std::invalid_argument("output dimensions must be positive");
@@ -518,6 +544,19 @@ void preprocess_nv12(
 
     if (channel_order != "RGB" && channel_order != "BGR") {
         throw std::invalid_argument("channel_order must be RGB or BGR");
+    }
+
+    if (resize_mode != "stretch" && resize_mode != "letterbox") {
+        throw std::invalid_argument("resize_mode must be stretch or letterbox");
+    }
+
+    if (std::any_of(
+            padding_value.begin(),
+            padding_value.end(),
+            [](float value) {
+                return !std::isfinite(value) || value < 0.0F || value > 255.0F;
+            })) {
+        throw std::invalid_argument("padding values must be between 0 and 255");
     }
 
     if (std::any_of(
@@ -543,6 +582,26 @@ void preprocess_nv12(
         ? nullptr
         : static_cast<const unsigned char*>(frame.frame.pPitch[1]);
 
+    unsigned int resized_width = output_width;
+    unsigned int resized_height = output_height;
+    unsigned int pad_x = 0;
+    unsigned int pad_y = 0;
+    if (resize_mode == "letterbox") {
+        const double uniform_scale = std::min(
+            static_cast<double>(output_width) / source.width(),
+            static_cast<double>(output_height) / source.height());
+        resized_width = std::min(
+            output_width,
+            std::max(1U, static_cast<unsigned int>(
+                std::lround(source.width() * uniform_scale))));
+        resized_height = std::min(
+            output_height,
+            std::max(1U, static_cast<unsigned int>(
+                std::lround(source.height() * uniform_scale))));
+        pad_x = (output_width - resized_width) / 2;
+        pad_y = (output_height - resized_height) / 2;
+    }
+
     const dim3 threads(16, 16);
     const dim3 blocks(
         (output_width + threads.x - 1) / threads.x,
@@ -561,6 +620,10 @@ void preprocess_nv12(
         static_cast<float*>(destination.get()),
         output_width,
         output_height,
+        resized_width,
+        resized_height,
+        pad_x,
+        pad_y,
         channel_order == "RGB",
         scale,
         mean[0],
@@ -568,7 +631,10 @@ void preprocess_nv12(
         mean[2],
         standard_deviation[0],
         standard_deviation[1],
-        standard_deviation[2]);
+        standard_deviation[2],
+        padding_value[0],
+        padding_value[1],
+        padding_value[2]);
     check_cuda(cudaGetLastError(), "NV12 preprocessing kernel launch");
 }
 
@@ -677,6 +743,8 @@ PYBIND11_MODULE(_cuda_interop, module) {
         py::arg("scale") = 1.0F / 255.0F,
         py::arg("mean") = std::array<float, 3>{0.0F, 0.0F, 0.0F},
         py::arg("standard_deviation") = std::array<float, 3>{1.0F, 1.0F, 1.0F},
+        py::arg("resize_mode") = "stretch",
+        py::arg("padding_value") = std::array<float, 3>{114.0F, 114.0F, 114.0F},
         py::arg("stream"));
     module.def(
         "draw_nv12_rectangle",

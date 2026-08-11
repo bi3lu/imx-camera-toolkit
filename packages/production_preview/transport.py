@@ -7,6 +7,7 @@ import re
 import threading
 import time
 from collections import deque
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -29,6 +30,8 @@ from .metrics import (
 )
 from .pipeline import build_hls_transport_pipeline, build_webrtc_peer_pipeline
 from .runtime import GStreamerRuntime, load_gstreamer_runtime
+
+HealthProvider = Callable[[], Mapping[str, object]]
 
 
 class EncodedVideoSource(Protocol):
@@ -619,6 +622,8 @@ class ProductionPreviewServer:
         self,
         source: EncodedVideoSource,
         config: ProductionPreviewConfig | None = None,
+        *,
+        health_providers: Mapping[str, HealthProvider] | None = None,
     ) -> None:
         """Validate an encoded source without starting camera or transport."""
         video_config = source.video_config
@@ -635,6 +640,15 @@ class ProductionPreviewServer:
         ) or EncodedStreamDescription(codec=video_config.codec)
         self._config = config or ProductionPreviewConfig()
         self._config.validate_codec(video_config.codec)
+        providers = dict(health_providers or {})
+
+        if any(not isinstance(name, str) or not name.strip() for name in providers):
+            raise ValueError("health provider names must be non-empty strings")
+
+        if any(not callable(provider) for provider in providers.values()):
+            raise TypeError("health providers must be callable")
+
+        self._health_providers = providers
         self._metrics = ClientMetricsRegistry(
             self._config.client_timeout_seconds,
             self._config.max_clients,
@@ -667,6 +681,7 @@ class ProductionPreviewServer:
             "last_error": None if last_error is None else str(last_error),
         }
         stats_method = getattr(self._source, "stats", None)
+
         if callable(stats_method):
             snapshot = stats_method()
             for output_name, attribute in (
@@ -676,7 +691,33 @@ class ProductionPreviewServer:
                 ("last_frame_timestamp_ns", "last_frame_timestamp_ns"),
             ):
                 values[output_name] = getattr(snapshot, attribute, None)
+        overlay_method = getattr(self._source, "overlay_diagnostics", None)
+
+        if callable(overlay_method):
+            values["overlay"] = overlay_method()
+
         return values
+
+    def health_diagnostics(self) -> dict[str, dict[str, object]]:
+        """Evaluate application-owned health providers without breaking health."""
+        diagnostics: dict[str, dict[str, object]] = {}
+
+        for name, provider in self._health_providers.items():
+            try:
+                values = provider()
+
+                if not isinstance(values, Mapping):
+                    raise TypeError("health provider must return a mapping")
+
+                diagnostics[name] = dict(values)
+
+            except Exception as error:
+                diagnostics[name] = {
+                    "healthy": False,
+                    "provider_error": str(error),
+                }
+
+        return diagnostics
 
     def start(self) -> None:
         """Start HLS packaging or enable on-demand WebRTC peer creation."""
@@ -1002,6 +1043,7 @@ class ProductionPreviewServer:
 __all__ = [
     "DescribedEncodedVideoSource",
     "EncodedVideoSource",
+    "HealthProvider",
     "HLSPackager",
     "ProductionPreviewServer",
     "WebRTCPeer",

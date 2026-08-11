@@ -8,10 +8,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Security
+from fastapi import FastAPI, HTTPException, Query, Request, Response, Security
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.security.utils import get_authorization_scheme_param
 
 from packages.api.security import (
+    BROWSER_SESSION_COOKIE,
     SecurityConfig,
     apply_security_middleware,
     build_authorizer,
@@ -35,6 +37,7 @@ def _serialize_health(server: ProductionPreviewServer) -> dict[str, object]:
     return {
         "running": server.running,
         "capture": server.source_diagnostics(),
+        "components": server.health_diagnostics(),
         "transport": stats.transport.value,
         "codec": stats.codec.value,
         "encoder_backend": stats.encoder_backend,
@@ -135,7 +138,7 @@ def create_production_preview_app(
     application = FastAPI(
         title="IMX Production Preview",
         description="Shared video encoding with WebRTC or HLS delivery",
-        version="0.6.0",
+        version="0.6.1",
         lifespan=lifespan,
         docs_url="/docs" if resolved_security.docs_enabled else None,
         redoc_url="/redoc" if resolved_security.docs_enabled else None,
@@ -146,11 +149,60 @@ def create_production_preview_app(
     application.state.manage_server = manage_server
     application.state.security_config = resolved_security
 
+    if resolved_security.authentication_required:
+
+        @application.post(
+            "/auth/session",
+            status_code=204,
+            include_in_schema=False,
+            dependencies=[Security(authorize, scopes=["stream:read"])],
+        )
+        def create_browser_session(request: Request) -> Response:
+            """Exchange an authorized Bearer token for an HttpOnly session."""
+            scheme, header_token = get_authorization_scheme_param(
+                request.headers.get("Authorization")
+            )
+
+            token = (
+                header_token
+                if scheme.lower() == "bearer" and header_token
+                else request.cookies.get(BROWSER_SESSION_COOKIE)
+            )
+
+            if not token:
+                raise HTTPException(status_code=401, detail="bearer token required")
+            response = Response(status_code=204)
+            response.set_cookie(
+                BROWSER_SESSION_COOKIE,
+                token,
+                httponly=True,
+                secure=resolved_security.require_https,
+                samesite="strict",
+                path="/",
+            )
+            return response
+
+        @application.delete(
+            "/auth/session",
+            status_code=204,
+            include_in_schema=False,
+        )
+        def delete_browser_session() -> Response:
+            """Clear the browser-only authentication session."""
+            response = Response(status_code=204)
+            response.delete_cookie(
+                BROWSER_SESSION_COOKIE,
+                secure=resolved_security.require_https,
+                httponly=True,
+                samesite="strict",
+                path="/",
+            )
+            return response
+
     @application.get(
         "/",
         response_class=HTMLResponse,
         include_in_schema=False,
-        dependencies=[Security(authorize, scopes=["stream:read"])],
     )
     def index() -> HTMLResponse:
         """Serve a video-element client that negotiates the configured mode."""

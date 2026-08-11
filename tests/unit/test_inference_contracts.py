@@ -18,6 +18,7 @@ from imx_camera_toolkit.inference import (
     InferenceConfigurationError,
     InferenceResult,
     InferenceRunner,
+    ResizeTransform,
     ShapeProfile,
     TensorOutput,
     TensorRTRunner,
@@ -39,6 +40,23 @@ def test_dynamic_shape_profile_accepts_shapes_inside_all_bounds() -> None:
     assert profile.contains((1, 3, 720, 1280))
     assert not profile.contains((1, 3, 1920, 1080))
     assert profile.as_dict()["opt"] == [1, 3, 640, 640]
+
+
+def test_letterbox_transform_preserves_720p_geometry_for_square_model() -> None:
+    """A 16:9 source must receive vertical padding rather than distortion."""
+    transform = ResizeTransform.calculate((720, 1280), (640, 640), "letterbox")
+
+    assert transform.scale == (0.5, 0.5)
+    assert transform.pad_x == 0
+    assert transform.pad_y == 140
+    assert transform.as_dict() == {
+        "resize_mode": "letterbox",
+        "scale": [0.5, 0.5],
+        "pad_x": 0,
+        "pad_y": 140,
+        "source_shape": [720, 1280],
+        "model_shape": [640, 640],
+    }
 
 
 @pytest.mark.parametrize(
@@ -122,6 +140,34 @@ def test_tensorrt_runner_implements_protocol_without_loading_optional_modules(
 
     assert isinstance(runner, InferenceRunner)
     assert runner.prepared is False
+
+
+def test_tensorrt_runner_validates_letterbox_padding_without_cuda(
+    tmp_path: Path,
+) -> None:
+    """Resize policy errors must fail before optional Jetson imports."""
+    profile = ShapeProfile(
+        minimum=(1, 3, 640, 640),
+        optimum=(1, 3, 640, 640),
+        maximum=(1, 3, 640, 640),
+    )
+    runner = TensorRTRunner(
+        tmp_path / "model.onnx",
+        cache_dir=tmp_path / "engines",
+        shape_profile=profile,
+        resize_mode="letterbox",
+        padding_value=(114, 114, 114),
+    )
+
+    assert runner.resize_transform is None
+    with pytest.raises(InferenceConfigurationError, match="padding_value"):
+        TensorRTRunner(
+            tmp_path / "model.onnx",
+            cache_dir=tmp_path / "engines",
+            shape_profile=profile,
+            resize_mode="letterbox",
+            padding_value=(256, 114, 114),
+        )
 
 
 def test_native_interop_passes_checked_gst_buffer_object_to_cpp() -> None:

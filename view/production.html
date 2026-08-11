@@ -10,14 +10,31 @@
     video { width: min(100vw, 1280px); max-height: 100vh; background: #000; }
     #status { position: fixed; top: 12px; left: 12px; color: #fff;
       background: #000a; padding: 6px 9px; border-radius: 5px; }
+    #login { position: fixed; inset: 0; display: grid; place-items: center;
+      background: #090b0fee; color: #fff; }
+    #login[hidden] { display: none; }
+    #login form { display: grid; gap: 12px; width: min(88vw, 360px);
+      padding: 24px; border-radius: 8px; background: #171b22; }
+    #login input, #login button { box-sizing: border-box; width: 100%;
+      padding: 10px; font: inherit; }
   </style>
 </head>
 <body>
   <video id="preview" autoplay muted playsinline controls></video>
   <div id="status">Connecting…</div>
+  <div id="login" hidden>
+    <form id="login-form">
+      <label for="token">Device access token</label>
+      <input id="token" name="token" type="password" autocomplete="off" required>
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
   <script>
     const video = document.getElementById("preview");
     const status = document.getElementById("status");
+    const login = document.getElementById("login");
+    const loginForm = document.getElementById("login-form");
+    const tokenInput = document.getElementById("token");
     let clientId = null;
     let peer = null;
     let candidateCursor = 0;
@@ -81,8 +98,27 @@
       status.textContent = `${reason}; reconnecting in ${delay} ms`;
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
-        connect().catch(error => scheduleReconnect(`Preview error: ${error}`));
+        connect().catch(handleConnectionError);
       }, delay);
+    }
+
+    function requireLogin(reason = "Authentication required") {
+      generation += 1;
+      connecting = false;
+      closeSession();
+      login.hidden = false;
+      status.textContent = reason;
+      tokenInput.focus();
+    }
+
+    function handleConnectionError(error) {
+      if (error.statusCode === 401 || error.statusCode === 403) {
+        requireLogin(error.statusCode === 403
+          ? "Token does not grant stream access"
+          : "Authentication required");
+        return;
+      }
+      scheduleReconnect(`Preview error: ${error}`);
     }
 
     async function pollCandidates(sessionGeneration) {
@@ -102,7 +138,9 @@
           () => pollCandidates(sessionGeneration), 250
         );
       } catch (error) {
-        if (error.statusCode === 404 || error.statusCode === 410) {
+        if (error.statusCode === 401 || error.statusCode === 403) {
+          requireLogin("Authentication expired");
+        } else if (error.statusCode === 404 || error.statusCode === 410) {
           scheduleReconnect("Signaling session expired");
         } else {
           scheduleReconnect(`Candidate polling failed: ${error}`);
@@ -245,7 +283,27 @@
       clearTimeout(reconnectTimer);
       closeSession();
     });
-    connect().catch(error => scheduleReconnect(`Preview error: ${error}`));
+    loginForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      const token = tokenInput.value;
+      tokenInput.value = "";
+      status.textContent = "Signing in…";
+      try {
+        const response = await fetch("/auth/session", {
+          method: "POST",
+          headers: {Authorization: `Bearer ${token}`}
+        });
+        if (!response.ok) {
+          throw new HttpError(response.status, await response.text());
+        }
+        login.hidden = true;
+        reconnectAttempt = 0;
+        connect().catch(handleConnectionError);
+      } catch (error) {
+        requireLogin(`Sign-in failed: ${error}`);
+      }
+    });
+    connect().catch(handleConnectionError);
   </script>
 </body>
 </html>

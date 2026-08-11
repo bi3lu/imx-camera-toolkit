@@ -8,6 +8,7 @@ from packages.production_preview import (
     CudaOverlayRenderer,
     DescribedEncodedVideoSource,
     EncodedVideoSource,
+    HealthProvider,
     OverlayRectangle,
     PreviewClientStats,
     PreviewTransport,
@@ -29,6 +30,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "EncodedVideoSource",
+    "HealthProvider",
     "DescribedEncodedVideoSource",
     "CudaOverlayRenderer",
     "OverlayRectangle",

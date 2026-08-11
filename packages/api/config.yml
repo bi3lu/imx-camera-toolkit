@@ -8,7 +8,7 @@ api_config:
   # Metadata displayed in the OpenAPI schema and interactive API documentation.
   title: IMX Camera API
   description: Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera.
-  version: 0.6.0
+  version: 0.6.1
 
   # Maximum time, in seconds, that the snapshot endpoint waits for a newer frame.
   snapshot_timeout: 2.0

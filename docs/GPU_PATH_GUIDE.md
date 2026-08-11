@@ -39,7 +39,7 @@ Install a repository environment that can see JetPack system packages:
 
 ```bash
 uv venv --system-site-packages --allow-existing .venv
-uv sync --extra production-preview --extra tensorrt --group dev
+uv sync --extra production-preview --extra tensorrt-build --group dev
 sudo apt-get install python-gi-dev libgstreamer1.0-dev \
   libgstreamer-plugins-base1.0-dev gstreamer1.0-libav \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-nice \
@@ -79,6 +79,12 @@ matching all of the following:
 Any mismatch rebuilds the engine. Do not copy an engine between Jetsons,
 JetPack images, TensorRT versions, or model revisions. Never deserialize an
 engine from an untrusted source.
+
+Build or load the engine with a known `FrameSpec` before opening Argus; TensorRT
+compilation is synchronous and cannot be interrupted. For non-square camera
+inputs, select `resize_mode="letterbox"` to preserve geometry. Result metadata
+contains the exact source/model shapes, X/Y scale, and centered padding needed
+to map detections back to video coordinates.
 
 ## Examples
 
