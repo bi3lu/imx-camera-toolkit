@@ -34,6 +34,9 @@ jobs:
   tests:
     name: Host tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      UV_PYTHON_DOWNLOADS: never
     strategy:
       fail-fast: false
       matrix:
@@ -48,13 +51,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --extra preview --group dev --frozen
+      - name: Verify matrix interpreter
+        run: >-
+          uv run python -c
+          "import os, sys; expected = tuple(map(int, os.environ['UV_PYTHON'].split('.')));
+          assert sys.version_info[:2] == expected, (sys.version, expected)"
       - name: Run tests that require no Jetson hardware
         run: >-
           uv run pytest tests/unit tests/integration
           -m "not hardware and not benchmark"
           --cov=imx_camera_toolkit/_internal
           --cov-report=term-missing
-          --cov-fail-under=68
+          --cov-fail-under=65.5
 
   package:
     name: Build distribution

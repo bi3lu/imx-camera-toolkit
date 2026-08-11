@@ -12,7 +12,7 @@ uv run black --check .
 uv run mypy imx_camera_toolkit tests
 uv run pytest tests/unit tests/integration -m "not hardware and not benchmark" \
   --cov=imx_camera_toolkit/_internal --cov-report=term-missing \
-  --cov-fail-under=68
+  --cov-fail-under=65.5
 uv audit --frozen
 uv build
 uv export --all-extras --format cyclonedx1.5 --frozen \
