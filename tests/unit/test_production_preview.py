@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from imx_camera_toolkit import (
     CameraConfigurationError,
@@ -37,6 +39,11 @@ from imx_camera_toolkit.production_preview import (
     create_production_preview_app,
 )
 from imx_camera_toolkit.testing import mock_gpu_frame
+from packages.api.security import (
+    BrowserSessionOAuth2PasswordBearer,
+    SecurityConfig,
+    token_sha256,
+)
 from packages.camera.backends.gpu_gstreamer import (
     GpuGStreamerCaptureBackend,
     _h264_parameter_sets,
@@ -454,6 +461,8 @@ def test_browser_view_handles_streamless_tracks_and_reconnects() -> None:
     assert "error.statusCode === 404 || error.statusCode === 410" in html
     assert "activePeer.getStats()" in html
     assert "framesDecoded" in html
+    assert 'fetch("/auth/session"' in html
+    assert 'type="password"' in html
 
 
 class _FakeEncodedSource:
@@ -484,6 +493,50 @@ class _FakeEncodedSource:
         return self.hub.subscribe(name)
 
 
+def test_field_browser_exchanges_bearer_for_hls_capable_session_cookie() -> None:
+    """Public shell login must authenticate headerless browser media requests."""
+    security = SecurityConfig(
+        field_mode=True,
+        token_grants=(
+            (token_sha256("stream-token"), frozenset({"stream:read", "admin"})),
+        ),
+        allowed_hosts=("camera.example",),
+        require_https=True,
+    )
+    server = ProductionPreviewServer(_FakeEncodedSource())
+    application = create_production_preview_app(
+        server,
+        manage_server=False,
+        security_config=security,
+    )
+
+    root = _api_endpoint(application, "/")()
+    login_request = Request(
+        {
+            "type": "http",
+            "headers": [(b"authorization", b"Bearer stream-token")],
+        }
+    )
+    login = _api_endpoint(application, "/auth/session")(login_request)
+    cookie_request = Request(
+        {
+            "type": "http",
+            "headers": [(b"cookie", b"imx_camera_session=stream-token")],
+        }
+    )
+    extractor = BrowserSessionOAuth2PasswordBearer(
+        tokenUrl="/auth/session",
+        auto_error=False,
+    )
+
+    assert root.status_code == 200
+    assert login.status_code == 204
+    assert "HttpOnly" in login.headers["set-cookie"]
+    assert "SameSite=strict" in login.headers["set-cookie"]
+    assert "Secure" in login.headers["set-cookie"]
+    assert asyncio.run(extractor(cookie_request)) == "stream-token"
+
+
 def test_hls_api_serves_safe_assets_and_reports_client_segment_drops(
     tmp_path: Path,
 ) -> None:
@@ -497,6 +550,7 @@ def test_hls_api_serves_safe_assets_and_reports_client_segment_drops(
             transport=PreviewTransport.HLS,
             hls_directory=tmp_path,
         ),
+        health_providers={"inference": lambda: {"processed_frames": 12}},
     )
     server._running = True
     application = create_production_preview_app(server, manage_server=False)
@@ -517,6 +571,7 @@ def test_hls_api_serves_safe_assets_and_reports_client_segment_drops(
     assert health["encoder_backend"] == "x264"
     assert cast(dict[str, Any], health["stream"])["profile_level_id"] == "42c01f"
     assert health["active_clients"] == 1
+    assert health["components"] == {"inference": {"processed_frames": 12}}
     clients = cast(list[dict[str, Any]], health["clients"])
     assert clients[0]["dropped_frames"] == 1
     assert clients[0]["drop_rate"] == pytest.approx(1 / 3)
@@ -662,3 +717,61 @@ def test_cuda_overlay_draws_latest_result_without_cpu_image_payload() -> None:
     assert interop.draws[0]["left"] == 10
     assert interop.draws[0]["yuv"] == (173, 42, 26)
     assert interop.stream.synchronizations == 1
+    assert renderer.rendered_frames == 1
+    assert renderer.empty_results == 0
+    assert renderer.stale_results == 0
+    assert renderer.failed_frames == 0
+    assert renderer.last_error is None
+
+
+def test_cuda_overlay_reports_empty_stale_and_failed_frames() -> None:
+    """Overlay diagnostics must distinguish absence, age, and CUDA errors."""
+    source = _ResultSource()
+    interop = _FakeOverlayInterop()
+    renderer = CudaOverlayRenderer(
+        source,
+        mapper=lambda result: cast(Any, result.overlays),
+        interop=cast(Any, interop),
+    )
+    frame = mock_gpu_frame(object())
+
+    renderer.render(frame)
+    source.latest_result = InferenceResult(
+        frame_sequence=1,
+        frame_timestamp_ns=0,
+        inference_time_ns=1,
+        outputs=(),
+        overlays=(OverlayRectangle(1, 1, 2, 2),),
+    )
+    renderer.render(frame)
+    source.latest_result = InferenceResult(
+        frame_sequence=2,
+        frame_timestamp_ns=time.monotonic_ns(),
+        inference_time_ns=1,
+        outputs=(),
+        overlays=(object(),),
+    )
+    with pytest.raises(TypeError, match="OverlayRectangle"):
+        renderer.render(frame)
+
+    assert renderer.empty_results == 1
+    assert renderer.stale_results == 1
+    assert renderer.failed_frames == 1
+    assert isinstance(renderer.last_error, TypeError)
+    assert renderer.health()["healthy"] is False
+
+
+def test_overlay_health_provider_failure_does_not_break_debug_health() -> None:
+    """An application diagnostics bug must be isolated in its component entry."""
+
+    def fail() -> dict[str, object]:
+        raise RuntimeError("health unavailable")
+
+    server = ProductionPreviewServer(
+        _FakeEncodedSource(),
+        health_providers={"overlay": fail},
+    )
+
+    assert server.health_diagnostics() == {
+        "overlay": {"healthy": False, "provider_error": "health unavailable"}
+    }

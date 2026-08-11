@@ -76,6 +76,8 @@ class InteropRuntime(Protocol):
         scale: float,
         mean: tuple[float, float, float],
         standard_deviation: tuple[float, float, float],
+        resize_mode: str,
+        padding_value: tuple[float, float, float],
         stream: CudaStream,
     ) -> None:
         """Convert and resize NV12 directly into a device input tensor."""
@@ -172,6 +174,8 @@ class NativeCudaInterop:
         scale: float,
         mean: tuple[float, float, float],
         standard_deviation: tuple[float, float, float],
+        resize_mode: str = "stretch",
+        padding_value: tuple[float, float, float] = (114.0, 114.0, 114.0),
         stream: CudaStream,
     ) -> None:
         """Launch NV12-to-NCHW conversion on the TensorRT CUDA stream."""
@@ -185,6 +189,8 @@ class NativeCudaInterop:
                 scale,
                 mean,
                 standard_deviation,
+                resize_mode,
+                padding_value,
                 stream,
             )
 

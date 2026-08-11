@@ -397,7 +397,7 @@ wheels = [
 
 [[package]]
 name = "imx-camera-toolkit"
-version = "0.6.0"
+version = "0.6.1"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -411,9 +411,13 @@ production-preview = [
     { name = "pyyaml" },
     { name = "uvicorn" },
 ]
-tensorrt = [
+model-security = [
     { name = "cryptography" },
-    { name = "numpy" },
+]
+tensorrt = [
+    { name = "pybind11" },
+]
+tensorrt-build = [
     { name = "pybind11" },
 ]
 tensorrt-test = [
@@ -438,22 +442,22 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cryptography", marker = "extra == 'tensorrt'", specifier = ">=50.0,<51" },
+    { name = "cryptography", marker = "extra == 'model-security'", specifier = ">=50.0,<51" },
     { name = "cryptography", marker = "extra == 'tensorrt-test'", specifier = ">=50.0,<51" },
     { name = "fastapi", marker = "extra == 'preview'", specifier = ">=0.116,<1.0" },
     { name = "fastapi", marker = "extra == 'production-preview'", specifier = ">=0.116,<1.0" },
-    { name = "numpy", marker = "extra == 'tensorrt'", specifier = ">=1.24,<2.0" },
-    { name = "numpy", marker = "extra == 'tensorrt-test'", specifier = ">=1.24,<2.0" },
+    { name = "numpy", marker = "extra == 'tensorrt-test'", specifier = ">=1.21,<2.0" },
     { name = "onnx", marker = "extra == 'tensorrt-test'", specifier = ">=1.22,<2.0" },
     { name = "onnxruntime", marker = "extra == 'tensorrt-test'", specifier = ">=1.18,<1.24" },
     { name = "pybind11", marker = "extra == 'tensorrt'", specifier = ">=2.11,<3.0" },
+    { name = "pybind11", marker = "extra == 'tensorrt-build'", specifier = ">=2.11,<3.0" },
     { name = "pybind11", marker = "extra == 'tensorrt-test'", specifier = ">=2.11,<3.0" },
     { name = "pyyaml", marker = "extra == 'preview'", specifier = ">=6.0,<7.0" },
     { name = "pyyaml", marker = "extra == 'production-preview'", specifier = ">=6.0,<7.0" },
     { name = "uvicorn", marker = "extra == 'preview'", specifier = ">=0.35,<1.0" },
     { name = "uvicorn", marker = "extra == 'production-preview'", specifier = ">=0.35,<1.0" },
 ]
-provides-extras = ["preview", "production-preview", "tensorrt", "tensorrt-test"]
+provides-extras = ["model-security", "preview", "production-preview", "tensorrt", "tensorrt-build", "tensorrt-test"]
 
 [package.metadata.requires-dev]
 dev = [

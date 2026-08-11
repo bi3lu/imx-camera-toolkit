@@ -12,11 +12,13 @@ from .pipeline import build_hls_transport_pipeline, build_webrtc_peer_pipeline
 from .transport import (
     DescribedEncodedVideoSource,
     EncodedVideoSource,
+    HealthProvider,
     ProductionPreviewServer,
 )
 
 __all__ = [
     "EncodedVideoSource",
+    "HealthProvider",
     "DescribedEncodedVideoSource",
     "CudaOverlayRenderer",
     "OverlayRectangle",

@@ -48,8 +48,11 @@ class GpuGStreamerCaptureBackend:
         video_overlay: VideoOverlayRenderer | None = None,
         stream_description: EncodedStreamDescription | None = None,
         video_encoder_backend: str | None = None,
+        overlay_error_policy: str = "fail-open",
     ) -> None:
         """Initialize an unopened pipeline backend."""
+        if overlay_error_policy not in {"fail-open", "fail-closed"}:
+            raise ValueError("overlay_error_policy must be fail-open or fail-closed")
         self._pipeline_description = pipeline
         self._output_width = output_width
         self._output_height = output_height
@@ -58,6 +61,7 @@ class GpuGStreamerCaptureBackend:
         self._video_overlay = video_overlay
         self._stream_description = stream_description
         self._video_encoder_backend = video_encoder_backend
+        self._overlay_error_policy = overlay_error_policy
         self._pipeline: Any | None = None
         self._source: Any | None = None
         self._gpu_sink: Any | None = None
@@ -66,6 +70,8 @@ class GpuGStreamerCaptureBackend:
         self._overlay_pad: Any | None = None
         self._overlay_probe_id: int | None = None
         self._overlay_error: Exception | None = None
+        self._overlay_last_error: Exception | None = None
+        self._overlay_failed_frames = 0
         self._pending_gpu_frame: GpuFrame | None = None
         self._sequence = 0
         self._video_sequence = 0
@@ -100,6 +106,21 @@ class GpuGStreamerCaptureBackend:
     def encoded_stream_description(self) -> EncodedStreamDescription | None:
         """Newest encoder output caps and H.264 parameter sets."""
         return self._stream_description
+
+    @property
+    def overlay_error_policy(self) -> str:
+        """Whether overlay failures preserve or fail the video branch."""
+        return self._overlay_error_policy
+
+    @property
+    def overlay_failed_frames(self) -> int:
+        """Number of video frames whose overlay renderer raised."""
+        return self._overlay_failed_frames
+
+    @property
+    def overlay_last_error(self) -> Exception | None:
+        """Most recent historical overlay failure."""
+        return self._overlay_last_error
 
     @property
     def argus_source(self) -> Any | None:
@@ -282,7 +303,10 @@ class GpuGStreamerCaptureBackend:
 
     def read_video(self) -> EncodedVideoFrame | None:
         """Pull one newest encoded access unit without raw pixels."""
-        if self._overlay_error is not None:
+        if (
+            self._overlay_error_policy == "fail-closed"
+            and self._overlay_error is not None
+        ):
             error = self._overlay_error
             self._overlay_error = None
             raise CameraReadError(f"GPU video overlay failed: {error}") from error
@@ -398,7 +422,11 @@ class GpuGStreamerCaptureBackend:
 
         except Exception as error:
             self._overlay_error = error
-            return Gst.PadProbeReturn.DROP
+            self._overlay_last_error = error
+            self._overlay_failed_frames += 1
+            if self._overlay_error_policy == "fail-closed":
+                return Gst.PadProbeReturn.DROP
+            return Gst.PadProbeReturn.OK
 
         finally:
             frame.invalidate()

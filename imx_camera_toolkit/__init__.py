@@ -61,6 +61,7 @@ from .inference import (
     FrameSpec,
     InferenceResult,
     InferenceRunner,
+    ResizeTransform,
     ShapeProfile,
     TensorOutput,
     TensorRTRunner,
@@ -74,7 +75,7 @@ if TYPE_CHECKING:
     from .preview import preview as preview
     from .preview import serve as serve
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 __all__ = [
     "Camera",
@@ -106,6 +107,7 @@ __all__ = [
     "InferencePreviewSource",
     "InferenceResultSource",
     "InferenceRunner",
+    "ResizeTransform",
     "LatestFrameSubscription",
     "MemoryType",
     "MetricsRecorder",

@@ -1,5 +1,13 @@
 # IMX Camera Toolkit
 
+![Platform: NVIDIA Jetson Orin](https://img.shields.io/badge/platform-NVIDIA%20Jetson%20Orin-76B900?logo=nvidia&logoColor=white)
+![JetPack 6.2.2](https://img.shields.io/badge/JetPack-6.2.2-76B900)
+![Ubuntu 22.04](https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&logoColor=white)
+![Linux kernel 5.15](https://img.shields.io/badge/Linux%20kernel-5.15-FCC624?logo=linux&logoColor=black)
+![CUDA 12.6](https://img.shields.io/badge/CUDA-12.6-76B900?logo=nvidia&logoColor=white)
+![TensorRT 10.3](https://img.shields.io/badge/TensorRT-10.3-76B900)
+![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10--3.12-3776AB?logo=python&logoColor=white)
+
 ## Abstract
 
 IMX Camera Toolkit is a Python toolkit for acquiring, encoding, and serving
@@ -152,12 +160,12 @@ uv run python -c "import cv2; print(cv2.__version__)"
 
 ## Using the toolkit as a Git dependency
 
-Pin the v0.6.0 release tag in the consuming project's `pyproject.toml`:
+Pin the v0.6.1 release tag in the consuming project's `pyproject.toml`:
 
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.0"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
 ]
 ```
 
@@ -177,7 +185,7 @@ To consume the Git dependency with the browser-preview extra, declare it as:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.0"
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
 ]
 ```
 
@@ -286,15 +294,16 @@ for the pipeline contract and opt-in IMX219/IMX477 hardware validation commands.
 
 ### Optional TensorRT runner
 
-The `tensorrt` extra adds a reference `TensorRTRunner` without making any model
-framework a core dependency. On JetPack 6.2.2 it uses a small pybind11/CUDA
+The `tensorrt-build` extra adds the pybind11 build dependency used by the
+reference `TensorRTRunner` without replacing JetPack's system NumPy. On JetPack
+6.2.2 the runner uses a small pybind11/CUDA
 extension to import `NvBufSurface` through EGLImage, preprocess NV12 directly
 into a TensorRT device binding, and execute on one runner-owned CUDA stream.
 Camera pixels never become a BGR/NumPy host image and are never uploaded from
 RAM.
 
 ```bash
-uv sync --extra tensorrt
+uv sync --extra tensorrt-build
 sudo apt-get install python-gi-dev libgstreamer1.0-dev \
   libgstreamer-plugins-base1.0-dev cmake ninja-build
 uv run imx-camera-build-interop
@@ -394,6 +403,13 @@ state. Failures are logged with rate limiting, optionally reported through
 `on_error`, and retried with bounded exponential backoff. An expired GPU lease
 detected before inference is counted as a dropped frame rather than a model
 failure.
+
+Prepare multi-minute TensorRT builds synchronously from a known `FrameSpec`
+before opening Argus. `InferenceConsumer` reuses the runner's public
+`prepared_frame_spec`, exposes model-neutral `health()` diagnostics, and does
+not let a secondary stop timeout mask an exception already leaving its context.
+The TensorRT runner supports aspect-preserving CUDA letterbox preprocessing and
+publishes the exact scale/padding transform in each result.
 
 ### Diagnostics
 
@@ -918,9 +934,12 @@ uv run imx-camera preview --field-mode \
 For a direct remote listener, field mode also requires an explicit Host
 allowlist and either `--tls-certfile` plus `--tls-keyfile`, or
 `--behind-tls-proxy` when the proxy forwards the HTTPS scheme. Never put an
-admin token in preview JavaScript; use a separate `stream:read` credential or
-let an authenticated reverse proxy enforce preview access. The recommended
-topology is TLS/mTLS on `:443` forwarding to `127.0.0.1:8000`.
+admin token in preview JavaScript. The production preview serves a public,
+data-free login shell in field mode and exchanges a separate `stream:read`
+Bearer credential for a session-only HttpOnly, SameSite cookie; this also lets
+native HLS media requests authenticate without embedding a token in the URL.
+An authenticated reverse proxy may enforce preview access instead. The
+recommended topology is TLS/mTLS on `:443` forwarding to `127.0.0.1:8000`.
 Deployment-specific device identity or signing keys can additionally be
 provisioned through Jetson OP-TEE secure storage; the toolkit intentionally
 does not copy those private keys into browser assets or ordinary YAML files.

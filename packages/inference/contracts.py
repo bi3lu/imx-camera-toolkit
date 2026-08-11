@@ -48,6 +48,74 @@ class FrameSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class ResizeTransform:
+    """Exact source-to-model geometry used by GPU preprocessing."""
+
+    resize_mode: str
+    scale: tuple[float, float]
+    pad_x: int
+    pad_y: int
+    source_shape: tuple[int, int]
+    model_shape: tuple[int, int]
+
+    @classmethod
+    def calculate(
+        cls,
+        source_shape: tuple[int, int],
+        model_shape: tuple[int, int],
+        resize_mode: str,
+    ) -> ResizeTransform:
+        """Calculate stretch or centered letterbox geometry as H/W pairs."""
+        source_height, source_width = source_shape
+        model_height, model_width = model_shape
+
+        if min(source_height, source_width, model_height, model_width) <= 0:
+            raise ValueError("source and model shapes must be positive")
+
+        if resize_mode == "stretch":
+            return cls(
+                resize_mode=resize_mode,
+                scale=(
+                    model_width / source_width,
+                    model_height / source_height,
+                ),
+                pad_x=0,
+                pad_y=0,
+                source_shape=source_shape,
+                model_shape=model_shape,
+            )
+
+        if resize_mode != "letterbox":
+            raise ValueError("resize_mode must be stretch or letterbox")
+
+        uniform_scale = min(
+            model_width / source_width,
+            model_height / source_height,
+        )
+        resized_width = min(int(source_width * uniform_scale + 0.5), model_width)
+        resized_height = min(int(source_height * uniform_scale + 0.5), model_height)
+        return cls(
+            resize_mode=resize_mode,
+            scale=(resized_width / source_width, resized_height / source_height),
+            pad_x=(model_width - resized_width) // 2,
+            pad_y=(model_height - resized_height) // 2,
+            source_shape=source_shape,
+            model_shape=model_shape,
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        """Return JSON-compatible geometry for result metadata and decoders."""
+        return {
+            "resize_mode": self.resize_mode,
+            "scale": list(self.scale),
+            "pad_x": self.pad_x,
+            "pad_y": self.pad_y,
+            "source_shape": list(self.source_shape),
+            "model_shape": list(self.model_shape),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ShapeProfile:
     """TensorRT dynamic input bounds in ``min``/``opt``/``max`` order."""
 

@@ -105,6 +105,7 @@ class GpuCamera:
         enable_preview: bool | None = None,
         video_config: HardwareVideoConfig | None = None,
         video_overlay: VideoOverlayRenderer | None = None,
+        overlay_error_policy: str = "fail-open",
         encoder_pipeline_factory: VideoEncoderPipelineFactory | None = None,
         argus_properties: tuple[str, ...] = (),
         experimental: bool = False,
@@ -132,6 +133,10 @@ class GpuCamera:
         ):
             raise CameraConfigurationError(
                 "video_config must be a HardwareVideoConfig or None"
+            )
+        if overlay_error_policy not in {"fail-open", "fail-closed"}:
+            raise CameraConfigurationError(
+                "overlay_error_policy must be fail-open or fail-closed"
             )
         if encoder_pipeline_factory is not None and not callable(
             encoder_pipeline_factory
@@ -186,6 +191,7 @@ class GpuCamera:
         )
         self._video_config = video_config
         self._video_overlay = video_overlay
+        self._overlay_error_policy = overlay_error_policy
         self._encoder_pipeline_factory = encoder_pipeline_factory
         self._resolved_video_encoder_backend: str | None = None
         self._encoded_stream_description: EncodedStreamDescription | None = None
@@ -290,6 +296,30 @@ class GpuCamera:
     def video_enabled(self) -> bool:
         """Whether the independent H.264/H.265 branch is configured."""
         return self._video_config is not None
+
+    @property
+    def overlay_error_policy(self) -> str:
+        """Whether one overlay error preserves or fails production video."""
+        return self._overlay_error_policy
+
+    def overlay_diagnostics(self) -> dict[str, object]:
+        """Return capture-side overlay policy and failure counters."""
+        with self._lifecycle_lock:
+            backend = self._backend
+            failure = (
+                None
+                if backend is None
+                else getattr(backend, "overlay_last_error", None)
+            )
+            return {
+                "policy": self._overlay_error_policy,
+                "failed_frames": (
+                    0
+                    if backend is None
+                    else int(getattr(backend, "overlay_failed_frames", 0))
+                ),
+                "last_error": None if failure is None else str(failure),
+            }
 
     @property
     def video_stats(self) -> VideoEncodeStats:
@@ -520,6 +550,7 @@ class GpuCamera:
             video_overlay=self._video_overlay,
             stream_description=self._encoded_stream_description,
             video_encoder_backend=self._resolved_video_encoder_backend,
+            overlay_error_policy=self._overlay_error_policy,
         )
 
     def _prepare_pipeline(self) -> None:

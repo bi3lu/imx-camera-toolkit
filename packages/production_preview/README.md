@@ -95,6 +95,13 @@ should pass the same `SecurityConfig` used by the camera API to
 `create_production_preview_app()`: signaling and HLS require `stream:read`,
 full client diagnostics require `admin`, and `/healthz` remains minimal.
 
+In field mode `/` is a public, data-free login shell because normal browser
+navigation cannot add a Bearer header. The bundled page exchanges the entered
+Bearer token for a session-only, HttpOnly, SameSite cookie. WebRTC requests and
+native HLS `video.src` requests then authenticate without exposing the token to
+JavaScript storage or an HLS URL. Deploy the service behind HTTPS (preferably a
+TLS/mTLS reverse proxy); the cookie is marked `Secure` when `require_https=True`.
+
 `AUTO` selects `nvv4l2h264enc` where NVENC exists and otherwise selects
 `x264enc`. Explicit `NVENC` and `X264` policies fail preflight with the complete
 missing-element list instead of surfacing an opaque `parse_launch()` error.
@@ -149,7 +156,7 @@ inference = InferenceConsumer(
     runner,
 )
 overlay = CudaOverlayRenderer(inference, mapper=decode_rectangles)
-camera.set_video_overlay(overlay)
+camera.set_video_overlay(overlay)  # GpuCamera defaults to fail-open errors
 
 with camera:
     with inference:
@@ -175,6 +182,14 @@ For environments without CUDA overlay support, retain
 and feeds the existing MJPEG debug server. Selecting that fallback is explicit;
 production `GpuCamera` rejects a host-memory renderer on its NVMM branch.
 
+`GpuCamera(..., overlay_error_policy="fail-open")` keeps the unmodified video
+branch running when a mapper or CUDA draw fails. `"fail-closed"` retains the
+strict behavior and surfaces a `CameraReadError`, which may trigger capture
+recovery. The default is fail-open so one malformed box cannot restart Argus.
+`CudaOverlayRenderer` exposes `rendered_frames`, `empty_results`,
+`stale_results`, `failed_frames`, `last_error`, and a ready-to-register
+`health()` mapping.
+
 ## Metrics and validation
 
 Authenticated `GET /debug/health` reports:
@@ -185,6 +200,24 @@ Authenticated `GET /debug/health` reports:
 - access units accepted by appsrc separately from RTP packets/bytes;
 - parser/payloader flow, signaling/ICE/connection state and latest bus error;
 - browser feedback for packets, bytes, decoded frames, loss, jitter, and RTT.
+
+Application-owned components can be added without coupling the server to a
+model schema:
+
+```python
+server = ProductionPreviewServer(
+    camera,
+    health_providers={
+        "inference": inference.health,
+        "overlay": overlay.health,
+    },
+)
+```
+
+Provider results appear under `components`. A provider exception is contained
+and reported as that component's `provider_error`; it does not break the health
+endpoint. Capture diagnostics also include overlay policy, failed-frame count,
+and the latest backend overlay error.
 
 `appsrc.push-buffer == OK` increments only `frames_pushed`; it is never treated
 as successful RTP delivery. WebRTC counts packet buffers after `rtph264pay`,

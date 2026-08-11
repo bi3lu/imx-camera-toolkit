@@ -10,7 +10,10 @@ import uvicorn
 
 from imx_camera_toolkit import (
     CameraConfig,
+    FrameFormat,
+    FrameSpec,
     GpuCamera,
+    MemoryType,
     ShapeProfile,
     TensorRTRunner,
     VideoEncoderConfig,
@@ -56,6 +59,13 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
+    camera_config = CameraConfig(
+        capture_width=1280,
+        capture_height=720,
+        output_width=1280,
+        output_height=720,
+        fps=30,
+    )
     runner = TensorRTRunner(
         args.model,
         cache_dir=Path(".cache/tensorrt"),
@@ -65,17 +75,20 @@ def main() -> None:
             maximum=(1, 3, 1280, 1280),
         ),
         inference_shape=(1, 3, 640, 640),
+        resize_mode="letterbox",
     )
     camera = GpuCamera(
-        CameraConfig(
-            capture_width=1280,
-            capture_height=720,
-            output_width=1280,
-            output_height=720,
-            fps=30,
-        ),
+        camera_config,
         video_config=VideoEncoderConfig(),
         experimental=True,
+    )
+    runner.prepare(
+        FrameSpec(
+            width=camera_config.output_width,
+            height=camera_config.output_height,
+            format=FrameFormat.NV12_NVMM,
+            memory_type=MemoryType.NVMM,
+        )
     )
     inference = InferenceConsumer(
         camera.subscribe_latest("yolo"),
@@ -85,12 +98,27 @@ def main() -> None:
     def rectangles(result: InferenceResult) -> tuple[OverlayRectangle, ...]:
         """Map the application's chosen YOLO schema to toolkit overlays."""
         overlays: list[OverlayRectangle] = []
+        transform = runner.resize_transform
+
+        if transform is None:
+            return ()
+
+        scale_x, scale_y = transform.scale
 
         for row in _rows(result, args.output):
             if len(row) < 6 or row[4] < args.score:
                 continue
 
-            left, top, right, bottom = (max(round(value), 0) for value in row[:4])
+            left = max(round((row[0] - transform.pad_x) / scale_x), 0)
+            top = max(round((row[1] - transform.pad_y) / scale_y), 0)
+            right = min(
+                round((row[2] - transform.pad_x) / scale_x),
+                camera_config.output_width,
+            )
+            bottom = min(
+                round((row[3] - transform.pad_y) / scale_y),
+                camera_config.output_height,
+            )
 
             if right > left and bottom > top:
                 overlays.append(OverlayRectangle(left, top, right - left, bottom - top))
@@ -98,7 +126,14 @@ def main() -> None:
 
     overlay = CudaOverlayRenderer(inference, mapper=rectangles)
     camera.set_video_overlay(overlay)
-    transport = ProductionPreviewServer(camera, ProductionPreviewConfig())
+    transport = ProductionPreviewServer(
+        camera,
+        ProductionPreviewConfig(),
+        health_providers={
+            "inference": inference.health,
+            "overlay": overlay.health,
+        },
+    )
     app = create_production_preview_app(transport)
 
     try:
