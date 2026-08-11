@@ -6,7 +6,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from packages.camera.models import (
+from imx_camera_toolkit._internal.camera.models import (
     CameraStats,
     FrameFormat,
     MemoryType,

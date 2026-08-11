@@ -15,8 +15,8 @@ from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.types import Message, Receive, Scope, Send
 
-from packages.api.api import create_app
-from packages.api.security import (
+from imx_camera_toolkit._internal.api.api import create_app
+from imx_camera_toolkit._internal.api.security import (
     RateLimitMiddleware,
     RequestSizeLimitMiddleware,
     SecurityConfig,
@@ -24,7 +24,7 @@ from packages.api.security import (
     build_authorizer,
     token_sha256,
 )
-from packages.testing.mock_camera import MockCamera
+from imx_camera_toolkit._internal.testing.mock_camera import MockCamera
 
 
 def _security_config(**kwargs: object) -> SecurityConfig:

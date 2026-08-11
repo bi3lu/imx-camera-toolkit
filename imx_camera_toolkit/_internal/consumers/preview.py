@@ -8,9 +8,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
 
-from packages.camera.publishing import EncodedJPEGPublisher
-from packages.inference.contracts import InferenceResult
-from packages.stream.stream import JPEGCamera
+from imx_camera_toolkit._internal.camera.publishing import EncodedJPEGPublisher
+from imx_camera_toolkit._internal.inference.contracts import InferenceResult
+from imx_camera_toolkit._internal.stream.stream import JPEGCamera
 
 from .inference import InferenceResultSource
 

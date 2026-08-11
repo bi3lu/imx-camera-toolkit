@@ -8,10 +8,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from math import isfinite
 
-from packages.camera.models import GpuFrame, MemoryType
-from packages.consumers import InferenceResultSource
-from packages.inference import InferenceResult
-from packages.inference.interop import CudaStream, NativeCudaInterop
+from imx_camera_toolkit._internal.camera.models import GpuFrame, MemoryType
+from imx_camera_toolkit._internal.consumers import InferenceResultSource
+from imx_camera_toolkit._internal.inference import InferenceResult
+from imx_camera_toolkit._internal.inference.interop import CudaStream, NativeCudaInterop
 
 
 @dataclass(frozen=True, slots=True)

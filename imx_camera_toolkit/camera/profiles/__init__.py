@@ -1,6 +1,6 @@
 """Public hardware-profile namespace for the IMX Camera Toolkit."""
 
-from packages.camera.profiles import (
+from imx_camera_toolkit._internal.camera.profiles import (
     CameraProfile,
     CameraProfileStatus,
     get_camera_profile,

@@ -6,7 +6,7 @@ import inspect
 
 import pytest
 
-import packages.camera.backends.gpu_gstreamer as gpu_gstreamer_backend
+import imx_camera_toolkit._internal.camera.backends.gpu_gstreamer as gpu_gstreamer_backend
 from imx_camera_toolkit import (
     CameraConfig,
     CameraConfigurationError,
@@ -17,13 +17,13 @@ from imx_camera_toolkit import (
     MemoryType,
     build_gpu_gstreamer_pipeline,
 )
-from imx_camera_toolkit.frames import GpuFrameSource
-from imx_camera_toolkit.testing import mock_gpu_frame
-from packages.camera.backends.gpu_gstreamer import (
+from imx_camera_toolkit._internal.camera.backends.gpu_gstreamer import (
     GpuGStreamerCaptureBackend,
     _is_argus_already_allocated,
 )
-from packages.camera.camera import CameraRecoveryPolicy
+from imx_camera_toolkit._internal.camera.camera import CameraRecoveryPolicy
+from imx_camera_toolkit.frames import GpuFrameSource
+from imx_camera_toolkit.testing import mock_gpu_frame
 
 
 @pytest.mark.parametrize(

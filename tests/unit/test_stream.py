@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from packages.stream.stream import MJPEGStream
-from packages.testing.mock_camera import MockCamera
+from imx_camera_toolkit._internal.stream.stream import MJPEGStream
+from imx_camera_toolkit._internal.testing.mock_camera import MockCamera
 
 
 def test_mjpeg_stream_yields_latest_mock_camera_frame() -> None:

@@ -10,7 +10,10 @@ from math import isfinite
 from pathlib import Path
 from typing import Protocol
 
-from packages.consumers.latest import LatestFrameHub, LatestFrameSubscription
+from imx_camera_toolkit._internal.consumers.latest import (
+    LatestFrameHub,
+    LatestFrameSubscription,
+)
 
 from .backends import GpuGStreamerCaptureBackend
 from .camera import CameraRecoveryPolicy

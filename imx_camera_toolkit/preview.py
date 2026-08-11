@@ -9,8 +9,8 @@ from typing import Any
 
 import uvicorn
 
-from packages.api.security import SecurityConfig
-from packages.preview import PreviewServer, PreviewSource
+from imx_camera_toolkit._internal.api.security import SecurityConfig
+from imx_camera_toolkit._internal.preview import PreviewServer, PreviewSource
 
 from .api import ViewMode, create_app
 from .camera import Camera, CameraConfig

@@ -5,7 +5,7 @@ from __future__ import annotations
 from math import isfinite
 from typing import Protocol, TypeAlias, runtime_checkable
 
-from packages.camera.models import Frame, GpuFrame
+from imx_camera_toolkit._internal.camera.models import Frame, GpuFrame
 
 CaptureFrame: TypeAlias = Frame | GpuFrame
 

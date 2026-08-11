@@ -1,6 +1,6 @@
 """Public NVIDIA Argus camera-control API."""
 
-from packages.camera_control.camera_control import (
+from imx_camera_toolkit._internal.camera_control.camera_control import (
     ARGUS_CONTROL_PROPERTIES,
     DEFAULT_CAMERA_CONTROL_CONFIG,
     DEFAULT_CAPABILITIES,

@@ -15,10 +15,12 @@ from imx_camera_toolkit import (
     CameraReadError,
     Frame,
 )
-from packages.camera import camera as camera_module
-from packages.camera.backends.gstreamer import GStreamerCaptureBackend
-from packages.camera.config import loader as config_loader
-from packages.camera.publishing.jpeg import JPEGPublisher
+from imx_camera_toolkit._internal.camera import camera as camera_module
+from imx_camera_toolkit._internal.camera.backends.gstreamer import (
+    GStreamerCaptureBackend,
+)
+from imx_camera_toolkit._internal.camera.config import loader as config_loader
+from imx_camera_toolkit._internal.camera.publishing.jpeg import JPEGPublisher
 
 
 def _running_camera() -> Camera:

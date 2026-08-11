@@ -26,7 +26,7 @@ def build_cuda_interop(
             "pybind11 is unavailable; install imx-camera-toolkit[tensorrt]"
         ) from error
 
-    source_root = Path(__file__).resolve().parents[2]
+    source_root = Path(__file__).resolve().parents[3]
     native_source = source_root / "native"
     output_directory = Path(__file__).resolve().parent
     cuda_compiler = Path("/usr/local/cuda/bin/nvcc")

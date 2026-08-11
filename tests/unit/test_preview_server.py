@@ -9,9 +9,9 @@ import pytest
 from fastapi import HTTPException
 
 from imx_camera_toolkit import Camera
+from imx_camera_toolkit._internal.camera.models import Frame
+from imx_camera_toolkit._internal.camera.publishing import JPEGPublisher
 from imx_camera_toolkit.preview import PreviewServer
-from packages.camera.models import Frame
-from packages.camera.publishing import JPEGPublisher
 
 
 def _endpoint(application: Any, path: str) -> Callable[..., Any]:
