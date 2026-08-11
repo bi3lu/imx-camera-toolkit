@@ -396,6 +396,13 @@ state. Failures are logged with rate limiting, optionally reported through
 detected before inference is counted as a dropped frame rather than a model
 failure.
 
+Prepare multi-minute TensorRT builds synchronously from a known `FrameSpec`
+before opening Argus. `InferenceConsumer` reuses the runner's public
+`prepared_frame_spec`, exposes model-neutral `health()` diagnostics, and does
+not let a secondary stop timeout mask an exception already leaving its context.
+The TensorRT runner supports aspect-preserving CUDA letterbox preprocessing and
+publishes the exact scale/padding transform in each result.
+
 ### Diagnostics
 
 `camera.stats()` exposes a typed, immutable `CameraStats` snapshot for external

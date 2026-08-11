@@ -42,9 +42,17 @@ drop instead of a failed model invocation.
 ## Inference worker
 
 `InferenceConsumer` accepts a GPU subscription and any `InferenceRunner`. It
-prepares the runner when the public `FrameSpec` changes, calls `infer()` only on
+reuses an optional `prepared_spec` (or the runner's public
+`prepared_frame_spec`), prepares the runner when the public `FrameSpec` changes, calls `infer()` only on
 its worker, retains one newest `InferenceResult`, and optionally fans results
 out through `subscribe_results()`.
+
+Prepare a TensorRT runner synchronously before opening the camera when an engine
+build may take minutes. A TensorRT builder cannot be interrupted by
+`stop(timeout=...)`; context-manager cleanup preserves an earlier application
+exception if shutdown also times out. `InferenceConsumer.health()` exposes
+running/healthy state, frame counters, errors, timing, and output shapes for a
+model-neutral diagnostics provider.
 
 Use one runner per expensive consumer. The reference `TensorRTRunner` owns one
 CUDA stream, so two consumers with two runners have separate Python workers and

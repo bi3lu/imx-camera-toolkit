@@ -4,6 +4,7 @@ from .contracts import (
     FrameSpec,
     InferenceResult,
     InferenceRunner,
+    ResizeTransform,
     ShapeProfile,
     TensorOutput,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "InferenceError",
     "InferenceResult",
     "InferenceRunner",
+    "ResizeTransform",
     "ModelManifest",
     "ShapeProfile",
     "TensorOutput",

@@ -85,7 +85,7 @@ engines, binds all outputs by tensor name, and supports a true dynamic
 ```python
 from pathlib import Path
 
-from imx_camera_toolkit import GpuCamera
+from imx_camera_toolkit import FrameFormat, GpuCamera, MemoryType
 from imx_camera_toolkit.inference import FrameSpec, ShapeProfile, TensorRTRunner
 
 runner = TensorRTRunner(
@@ -98,17 +98,38 @@ runner = TensorRTRunner(
         maximum=(1, 3, 1280, 1280),
     ),
     inference_shape=(1, 3, 640, 640),
+    resize_mode="letterbox",
+    padding_value=(114, 114, 114),
 )
+
+frame_spec = FrameSpec(
+    width=1280,
+    height=720,
+    format=FrameFormat.NV12_NVMM,
+    memory_type=MemoryType.NVMM,
+)
+runner.prepare(frame_spec)
 
 with GpuCamera(experimental=True) as camera:
     frame = camera.read(timeout=2.0)
     if frame is not None:
-        runner.prepare(FrameSpec.from_gpu_frame(frame))
         result = runner.infer(frame)
         camera.record_stage_latency("inference", result.inference_time_ns)
 
 runner.close()
 ```
+
+Prepare before opening Argus when an engine may need to be built. TensorRT
+engine compilation is synchronous and cannot be interrupted; holding a borrowed
+NVMM frame during a multi-minute build unnecessarily delays both capture and
+shutdown. Build logging reports cache misses, ONNX parsing, FP16/FP32 build
+start and elapsed time, cache storage, and cached-engine deserialization.
+
+`resize_mode="letterbox"` preserves the source aspect ratio and fills centered
+padding with `padding_value`. Every result includes `preprocessing.transform`
+with `scale`, `pad_x`, `pad_y`, `source_shape`, and `model_shape`, and the same
+data is available as `runner.resize_transform`. The default `stretch` mode
+retains the previous behavior.
 
 With the default `input_name=None`, the runner selects the model's only ONNX
 input regardless of its name. Pass an explicit `input_name` for models with
@@ -119,13 +140,18 @@ For live operation, prefer the asynchronous latest-frame adapter over polling
 model throughput cannot accumulate a capture backlog:
 
 ```python
-from imx_camera_toolkit import GpuCamera
+from imx_camera_toolkit import FrameFormat, GpuCamera, MemoryType
 from imx_camera_toolkit.consumers import InferenceConsumer
+from imx_camera_toolkit.inference import FrameSpec
+
+frame_spec = FrameSpec(1280, 720, FrameFormat.NV12_NVMM, MemoryType.NVMM)
+runner.prepare(frame_spec)
 
 with GpuCamera(experimental=True) as camera:
     with InferenceConsumer(
         camera.subscribe_latest("primary-inference"),
         runner,
+        prepared_spec=frame_spec,
     ) as inference:
         result = inference.latest_result
 ```
@@ -134,6 +160,13 @@ Create a separate `TensorRTRunner` for each independent inference consumer.
 Each runner owns its CUDA stream, while each `InferenceConsumer` owns its worker
 thread. Slow consumers overwrite only their own unread slot and automatically
 contribute named drop counters to camera health metrics.
+
+`InferenceConsumer` also discovers `runner.prepared_frame_spec`, so the explicit
+`prepared_spec` is optional for `TensorRTRunner`. Its `health()` mapping reports
+worker state, successful/failed/dropped counts, the latest error, inference
+time, and named output shapes. `stop(timeout=...)` cannot interrupt a TensorRT
+builder or an active handler; a cleanup timeout is logged without masking an
+exception already propagating from a context-manager body.
 
 The reference runner supports one float32 NCHW image input and arbitrary named
 output tensors. Model-specific decoding, NMS, labels, masks, and overlays stay

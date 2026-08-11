@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable
 from dataclasses import replace
@@ -11,6 +12,8 @@ from packages.camera.models import GpuFrame, GpuFrameExpiredError
 from packages.inference.contracts import FrameSpec, InferenceResult, InferenceRunner
 
 from .latest import FrameConsumer, LatestFrameHub, LatestFrameSubscription
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -37,6 +40,7 @@ class InferenceConsumer:
         subscription: LatestFrameSubscription[GpuFrame],
         runner: InferenceRunner,
         *,
+        prepared_spec: FrameSpec | None = None,
         close_runner: bool = True,
         wait_timeout: float = 0.25,
         on_error: Callable[[Exception], None] | None = None,
@@ -44,19 +48,34 @@ class InferenceConsumer:
         initial_failure_backoff: float = 0.05,
         max_failure_backoff: float = 1.0,
     ) -> None:
-        """Configure inference ownership without preparing the model yet."""
+        """Configure inference ownership and accept an optional prepared layout."""
         if not isinstance(runner, InferenceRunner):
             raise TypeError("runner must implement InferenceRunner")
 
         if not isinstance(close_runner, bool):
             raise TypeError("close_runner must be a boolean")
 
+        runner_spec = getattr(runner, "prepared_frame_spec", None)
+
+        if runner_spec is not None and not isinstance(runner_spec, FrameSpec):
+            raise TypeError("runner.prepared_frame_spec must be a FrameSpec or None")
+
+        if prepared_spec is not None and not isinstance(prepared_spec, FrameSpec):
+            raise TypeError("prepared_spec must be a FrameSpec or None")
+
+        if (
+            prepared_spec is not None
+            and runner_spec is not None
+            and prepared_spec != runner_spec
+        ):
+            raise ValueError("prepared_spec differs from runner.prepared_frame_spec")
+
         self._runner = runner
         self._close_runner = close_runner
         self._result_lock = threading.Lock()
         self._latest_result: InferenceResult | None = None
         self._result_hub = LatestFrameHub[InferenceResult]()
-        self._prepared_spec: FrameSpec | None = None
+        self._prepared_spec = prepared_spec or runner_spec
         self._runner_closed = False
         self._worker = FrameConsumer(
             subscription,
@@ -80,6 +99,11 @@ class InferenceConsumer:
         """Newest completed result without waiting or consuming it."""
         with self._result_lock:
             return self._latest_result
+
+    @property
+    def prepared_frame_spec(self) -> FrameSpec | None:
+        """Frame layout already prepared by this consumer's runner."""
+        return self._prepared_spec
 
     @property
     def processed_frames(self) -> int:
@@ -116,6 +140,44 @@ class InferenceConsumer:
         """Whether the latest inference attempt completed successfully."""
         return self._worker.healthy
 
+    def health(self) -> dict[str, object]:
+        """Return model-neutral inference state suitable for diagnostics."""
+        result = self.latest_result
+        prepared = self._prepared_spec
+        return {
+            "running": self.running,
+            "healthy": self.healthy,
+            "prepared_frame_spec": (
+                None
+                if prepared is None
+                else {
+                    "width": prepared.width,
+                    "height": prepared.height,
+                    "format": prepared.format.value,
+                    "memory_type": prepared.memory_type.value,
+                }
+            ),
+            "processed_frames": self.processed_frames,
+            "failed_frames": self.failed_frames,
+            "dropped_frames": self.dropped_frames,
+            "consecutive_failures": self.consecutive_failures,
+            "last_error": None if self.last_error is None else str(self.last_error),
+            "last_failure": (
+                None if self.last_failure is None else str(self.last_failure)
+            ),
+            "latest_frame_sequence": (
+                None if result is None else result.frame_sequence
+            ),
+            "latest_inference_time_ns": (
+                None if result is None else result.inference_time_ns
+            ),
+            "output_shapes": (
+                {}
+                if result is None
+                else {output.name: list(output.shape) for output in result.outputs}
+            ),
+        }
+
     @property
     def thread_ident(self) -> int | None:
         """Identifier of the dedicated inference worker."""
@@ -136,7 +198,11 @@ class InferenceConsumer:
         self._worker.start()
 
     def stop(self, timeout: float | None = 10.0) -> None:
-        """Stop inference and close the runner after its worker exits."""
+        """Stop inference and close the runner after its worker exits.
+
+        An active TensorRT engine build or inference call cannot be interrupted;
+        prepare expensive engines before capture when shutdown must be bounded.
+        """
         stopped = self._worker.stop(timeout)
 
         if not stopped:
@@ -171,9 +237,21 @@ class InferenceConsumer:
         self.start()
         return self
 
-    def __exit__(self, *_: object) -> None:
-        """Stop inference and close its runner on context exit."""
-        self.stop()
+    def __exit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: object,
+    ) -> None:
+        """Stop inference without masking an exception from the managed body."""
+        try:
+            self.stop()
+
+        except Exception:
+            if exception_type is None:
+                raise
+
+            logger.exception("Inference cleanup failed after an earlier exception")
 
 
 __all__ = ["InferenceConsumer", "InferenceResultSource"]

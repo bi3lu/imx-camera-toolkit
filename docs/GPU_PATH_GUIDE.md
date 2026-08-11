@@ -80,6 +80,12 @@ Any mismatch rebuilds the engine. Do not copy an engine between Jetsons,
 JetPack images, TensorRT versions, or model revisions. Never deserialize an
 engine from an untrusted source.
 
+Build or load the engine with a known `FrameSpec` before opening Argus; TensorRT
+compilation is synchronous and cannot be interrupted. For non-square camera
+inputs, select `resize_mode="letterbox"` to preserve geometry. Result metadata
+contains the exact source/model shapes, X/Y scale, and centered padding needed
+to map detections back to video coordinates.
+
 ## Examples
 
 - [`examples/yolo_detection.py`](../examples/yolo_detection.py) demonstrates
