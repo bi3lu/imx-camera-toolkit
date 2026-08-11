@@ -18,13 +18,17 @@ production-preview = [
     "uvicorn>=0.35,<1.0",
 ]
 tensorrt = [
-    "cryptography>=50.0,<51",
-    "numpy>=1.24,<2.0",
     "pybind11>=2.11,<3.0",
+]
+tensorrt-build = [
+    "pybind11>=2.11,<3.0",
+]
+model-security = [
+    "cryptography>=50.0,<51",
 ]
 tensorrt-test = [
     "cryptography>=50.0,<51",
-    "numpy>=1.24,<2.0",
+    "numpy>=1.21,<2.0",
     "onnx>=1.22,<2.0",
     "onnxruntime>=1.18,<1.24",
     "pybind11>=2.11,<3.0",

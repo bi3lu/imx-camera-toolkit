@@ -39,7 +39,7 @@ Install a repository environment that can see JetPack system packages:
 
 ```bash
 uv venv --system-site-packages --allow-existing .venv
-uv sync --extra production-preview --extra tensorrt --group dev
+uv sync --extra production-preview --extra tensorrt-build --group dev
 sudo apt-get install python-gi-dev libgstreamer1.0-dev \
   libgstreamer-plugins-base1.0-dev gstreamer1.0-libav \
   gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-nice \

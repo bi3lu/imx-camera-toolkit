@@ -46,13 +46,19 @@ no BGR image, NumPy camera input, host upload, or implicit CPU fallback.
 
 ## Installation and native build
 
-TensorRT and CUDA must come from the target JetPack installation. They are not
-installed from PyPI because engine and runtime compatibility is platform
-specific. Install the optional Python build/runtime dependencies with:
+TensorRT, CUDA, and a compatible NumPy must come from the target JetPack
+installation. They are not installed from PyPI because engine, runtime, OpenCV,
+and NumPy compatibility is platform specific. Install only the native-extension
+build dependency with:
 
 ```bash
-uv sync --extra tensorrt
+uv sync --extra tensorrt-build
 ```
+
+The legacy `tensorrt` extra remains an alias for the same build dependency.
+Applications that verify signed model manifests can independently install
+`--extra model-security`. The `tensorrt-test` extra is intended for isolated
+test environments and permits NumPy 1.21 or newer.
 
 The native module additionally needs JetPack's Multimedia API and development
 headers:

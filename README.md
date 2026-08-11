@@ -286,15 +286,16 @@ for the pipeline contract and opt-in IMX219/IMX477 hardware validation commands.
 
 ### Optional TensorRT runner
 
-The `tensorrt` extra adds a reference `TensorRTRunner` without making any model
-framework a core dependency. On JetPack 6.2.2 it uses a small pybind11/CUDA
+The `tensorrt-build` extra adds the pybind11 build dependency used by the
+reference `TensorRTRunner` without replacing JetPack's system NumPy. On JetPack
+6.2.2 the runner uses a small pybind11/CUDA
 extension to import `NvBufSurface` through EGLImage, preprocess NV12 directly
 into a TensorRT device binding, and execute on one runner-owned CUDA stream.
 Camera pixels never become a BGR/NumPy host image and are never uploaded from
 RAM.
 
 ```bash
-uv sync --extra tensorrt
+uv sync --extra tensorrt-build
 sudo apt-get install python-gi-dev libgstreamer1.0-dev \
   libgstreamer-plugins-base1.0-dev cmake ninja-build
 uv run imx-camera-build-interop
