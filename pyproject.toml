@@ -43,13 +43,11 @@ imx-camera-build-interop = "imx_camera_toolkit._internal.inference.build:main"
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
-[tool.hatch.build]
-force-include = {
-    "native" = "native",
-    "view/advanced.html" = "view/advanced.html",
-    "view/simple.html" = "view/simple.html",
-    "view/production.html" = "view/production.html",
-}
+[tool.hatch.build.force-include]
+"native" = "native"
+"view/advanced.html" = "view/advanced.html"
+"view/simple.html" = "view/simple.html"
+"view/production.html" = "view/production.html"
 
 [tool.hatch.build.targets.wheel]
 packages = ["imx_camera_toolkit"]
