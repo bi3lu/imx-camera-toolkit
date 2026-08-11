@@ -926,9 +926,12 @@ uv run imx-camera preview --field-mode \
 For a direct remote listener, field mode also requires an explicit Host
 allowlist and either `--tls-certfile` plus `--tls-keyfile`, or
 `--behind-tls-proxy` when the proxy forwards the HTTPS scheme. Never put an
-admin token in preview JavaScript; use a separate `stream:read` credential or
-let an authenticated reverse proxy enforce preview access. The recommended
-topology is TLS/mTLS on `:443` forwarding to `127.0.0.1:8000`.
+admin token in preview JavaScript. The production preview serves a public,
+data-free login shell in field mode and exchanges a separate `stream:read`
+Bearer credential for a session-only HttpOnly, SameSite cookie; this also lets
+native HLS media requests authenticate without embedding a token in the URL.
+An authenticated reverse proxy may enforce preview access instead. The
+recommended topology is TLS/mTLS on `:443` forwarding to `127.0.0.1:8000`.
 Deployment-specific device identity or signing keys can additionally be
 provisioned through Jetson OP-TEE secure storage; the toolkit intentionally
 does not copy those private keys into browser assets or ordinary YAML files.

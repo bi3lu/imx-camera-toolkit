@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -93,43 +94,124 @@ class CudaOverlayRenderer:
         self._max_age_ns = int(max_result_age_seconds * 1_000_000_000)
         self._interop = interop or NativeCudaInterop()
         self._stream: CudaStream | None = self._interop.create_stream()
+        self._metrics_lock = threading.Lock()
+        self._rendered_frames = 0
+        self._empty_results = 0
+        self._stale_results = 0
+        self._failed_frames = 0
+        self._last_error: Exception | None = None
 
     @property
     def memory_type(self) -> MemoryType:
         """The renderer never requests a host BGR image."""
         return MemoryType.NVMM
 
+    @property
+    def rendered_frames(self) -> int:
+        """Frames on which at least one overlay was drawn."""
+        with self._metrics_lock:
+            return self._rendered_frames
+
+    @property
+    def empty_results(self) -> int:
+        """Frames without a current result or drawable overlay."""
+        with self._metrics_lock:
+            return self._empty_results
+
+    @property
+    def stale_results(self) -> int:
+        """Frames skipped because the newest inference result was too old."""
+        with self._metrics_lock:
+            return self._stale_results
+
+    @property
+    def failed_frames(self) -> int:
+        """Frames whose mapper, CUDA import, draw, or synchronization failed."""
+        with self._metrics_lock:
+            return self._failed_frames
+
+    @property
+    def last_error(self) -> Exception | None:
+        """Most recent historical renderer failure."""
+        with self._metrics_lock:
+            return self._last_error
+
+    def health(self) -> dict[str, object]:
+        """Return renderer metrics suitable for a preview health provider."""
+        with self._metrics_lock:
+            return {
+                "healthy": self._last_error is None,
+                "rendered_frames": self._rendered_frames,
+                "empty_results": self._empty_results,
+                "stale_results": self._stale_results,
+                "failed_frames": self._failed_frames,
+                "last_error": (
+                    None if self._last_error is None else str(self._last_error)
+                ),
+            }
+
     def render(self, frame: GpuFrame) -> None:
         """Draw the newest non-stale result and synchronize before encode."""
-        result = self._inference.latest_result
-        stream = self._stream
-        if result is None or stream is None:
-            return
-        if time.monotonic_ns() - result.frame_timestamp_ns > self._max_age_ns:
-            return
-        rectangles = tuple(self._mapper(result))
-        if not rectangles:
-            return
-        surface = self._interop.import_frame(frame)
-        for rectangle in rectangles:
-            if not isinstance(rectangle, OverlayRectangle):
-                raise TypeError("mapper must return OverlayRectangle values")
-            self._interop.draw_nv12_rectangle(
-                surface,
-                left=rectangle.left,
-                top=rectangle.top,
-                width=rectangle.width,
-                height=rectangle.height,
-                thickness=rectangle.thickness,
-                yuv=_rgb_to_limited_bt709(rectangle.color_rgb),
-                stream=stream,
-            )
-        stream.synchronize()
+        try:
+            result = self._inference.latest_result
+            stream = self._stream
+
+            if result is None:
+                with self._metrics_lock:
+                    self._empty_results += 1
+
+                return
+
+            if stream is None:
+                raise RuntimeError("CUDA overlay renderer is closed")
+
+            if time.monotonic_ns() - result.frame_timestamp_ns > self._max_age_ns:
+                with self._metrics_lock:
+                    self._stale_results += 1
+
+                return
+
+            rectangles = tuple(self._mapper(result))
+
+            if not rectangles:
+                with self._metrics_lock:
+                    self._empty_results += 1
+
+                return
+
+            surface = self._interop.import_frame(frame)
+
+            for rectangle in rectangles:
+                if not isinstance(rectangle, OverlayRectangle):
+                    raise TypeError("mapper must return OverlayRectangle values")
+
+                self._interop.draw_nv12_rectangle(
+                    surface,
+                    left=rectangle.left,
+                    top=rectangle.top,
+                    width=rectangle.width,
+                    height=rectangle.height,
+                    thickness=rectangle.thickness,
+                    yuv=_rgb_to_limited_bt709(rectangle.color_rgb),
+                    stream=stream,
+                )
+            stream.synchronize()
+
+        except Exception as error:
+            with self._metrics_lock:
+                self._failed_frames += 1
+                self._last_error = error
+
+            raise
+
+        with self._metrics_lock:
+            self._rendered_frames += 1
 
     def close(self) -> None:
         """Synchronize and release the renderer-owned CUDA stream."""
         if self._stream is not None:
             self._stream.synchronize()
+
         self._stream = None
 
 
