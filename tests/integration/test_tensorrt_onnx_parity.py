@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from imx_camera_toolkit import FrameFormat, MemoryType
+from imx_camera_toolkit._internal.camera.backends import GpuGStreamerCaptureBackend
+from imx_camera_toolkit._internal.camera.pipeline import build_gpu_gstreamer_pipeline
+from imx_camera_toolkit._internal.inference.interop import NativeCudaInterop
 from imx_camera_toolkit.inference import FrameSpec, ShapeProfile, TensorRTRunner
-from packages.camera.backends import GpuGStreamerCaptureBackend
-from packages.camera.pipeline import build_gpu_gstreamer_pipeline
-from packages.inference.interop import NativeCudaInterop
 
 np = pytest.importorskip("numpy")
 onnx = pytest.importorskip("onnx")

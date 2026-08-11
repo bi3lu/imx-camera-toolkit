@@ -1,6 +1,6 @@
 [project]
 name = "imx-camera-toolkit"
-version = "0.6.1"
+version = "0.7.0"
 description = "CSI IMX camera capture, control, and streaming toolkit for NVIDIA Jetson"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -35,24 +35,22 @@ tensorrt-test = [
 ]
 
 [project.scripts]
-imx-camera = "packages.cli:main"
-imx-camera-toolkit = "packages.cli:main"
-imx-camera-build-interop = "packages.inference.build:main"
+imx-camera = "imx_camera_toolkit._internal.cli:main"
+imx-camera-toolkit = "imx_camera_toolkit._internal.cli:main"
+imx-camera-build-interop = "imx_camera_toolkit._internal.inference.build:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
-[tool.hatch.build]
-force-include = {
-    "native" = "native",
-    "view/advanced.html" = "view/advanced.html",
-    "view/simple.html" = "view/simple.html",
-    "view/production.html" = "view/production.html",
-}
+[tool.hatch.build.force-include]
+"native" = "native"
+"view/advanced.html" = "view/advanced.html"
+"view/simple.html" = "view/simple.html"
+"view/production.html" = "view/production.html"
 
 [tool.hatch.build.targets.wheel]
-packages = ["packages", "imx_camera_toolkit"]
+packages = ["imx_camera_toolkit"]
 
 [dependency-groups]
 dev = [
@@ -75,6 +73,9 @@ markers = [
     "hardware: exercises a physical Jetson CSI camera and is skipped unless configured.",
 ]
 
+[tool.coverage.report]
+precision = 2
+
 [tool.ruff]
 target-version = "py310"
 line-length = 88
@@ -84,15 +85,15 @@ select = ["E", "F", "I", "B", "UP", "SIM", "S"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["imx_camera_toolkit", "packages"]
+known-first-party = ["imx_camera_toolkit"]
 
 [tool.ruff.lint.per-file-ignores]
-"packages/api/api.py" = ["B008"]
-"packages/camera/controls/v4l2.py" = ["S603"]
-"packages/camera_control/capabilities/argus.py" = ["S603"]
-"packages/diagnostics.py" = ["S603"]
-"packages/inference/build.py" = ["S603", "S607"]
-"packages/telemetry.py" = ["S603"]
+"imx_camera_toolkit/_internal/api/api.py" = ["B008"]
+"imx_camera_toolkit/_internal/camera/controls/v4l2.py" = ["S603"]
+"imx_camera_toolkit/_internal/camera_control/capabilities/argus.py" = ["S603"]
+"imx_camera_toolkit/_internal/diagnostics.py" = ["S603"]
+"imx_camera_toolkit/_internal/inference/build.py" = ["S603", "S607"]
+"imx_camera_toolkit/_internal/telemetry.py" = ["S603"]
 "tests/**/*.py" = ["S101", "S104"]
 
 [tool.black]
@@ -101,7 +102,7 @@ target-version = ["py310"]
 
 [tool.mypy]
 python_version = "3.10"
-files = ["imx_camera_toolkit", "packages", "tests"]
+files = ["imx_camera_toolkit", "tests"]
 strict = true
 warn_unused_ignores = true
 pretty = true

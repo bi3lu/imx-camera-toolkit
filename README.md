@@ -65,15 +65,15 @@ intermediate frames.
 
 | Package | Responsibility |
 | --- | --- |
-| [`packages/camera`](packages/camera/README.md) | CSI camera acquisition through `nvarguscamerasrc`, frame conversion, JPEG encoding, and frame synchronization. |
-| [`packages/camera_control`](packages/camera_control/README.md) | Validated runtime exposure, gain, white-balance, denoise, sensor-mode, and HDR control for NVIDIA Argus cameras. |
-| [`packages/frames`](packages/frames/README.md) | Minimal `FrameSource` protocol and adapter from the toolkit camera to external processing pipelines. |
-| [`packages/inference`](packages/inference/README.md) | Model-neutral inference contracts, validated TensorRT engine caching, and optional NvBufSurface/CUDA interop. |
-| [`packages/consumers`](packages/consumers/README.md) | Independent latest-frame slots, worker consumers, and inference-preview adaptation. |
-| [`packages/production_preview`](packages/production_preview/README.md) | Optional shared H.264/H.265 encoding through NVENC or, for H.264, x264, with WebRTC, HLS, GPU overlays, and client metrics. |
-| [`packages/stream`](packages/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
-| [`packages/api`](packages/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
-| [`packages/testing`](packages/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
+| [`imx_camera_toolkit/_internal/camera`](imx_camera_toolkit/_internal/camera/README.md) | CSI camera acquisition through `nvarguscamerasrc`, frame conversion, JPEG encoding, and frame synchronization. |
+| [`imx_camera_toolkit/_internal/camera_control`](imx_camera_toolkit/_internal/camera_control/README.md) | Validated runtime exposure, gain, white-balance, denoise, sensor-mode, and HDR control for NVIDIA Argus cameras. |
+| [`imx_camera_toolkit/_internal/frames`](imx_camera_toolkit/_internal/frames/README.md) | Minimal `FrameSource` protocol and adapter from the toolkit camera to external processing pipelines. |
+| [`imx_camera_toolkit/_internal/inference`](imx_camera_toolkit/_internal/inference/README.md) | Model-neutral inference contracts, validated TensorRT engine caching, and optional NvBufSurface/CUDA interop. |
+| [`imx_camera_toolkit/_internal/consumers`](imx_camera_toolkit/_internal/consumers/README.md) | Independent latest-frame slots, worker consumers, and inference-preview adaptation. |
+| [`imx_camera_toolkit/_internal/production_preview`](imx_camera_toolkit/_internal/production_preview/README.md) | Optional shared H.264/H.265 encoding through NVENC or, for H.264, x264, with WebRTC, HLS, GPU overlays, and client metrics. |
+| [`imx_camera_toolkit/_internal/stream`](imx_camera_toolkit/_internal/stream/README.md) | Framework-neutral construction of `multipart/x-mixed-replace` MJPEG body parts. |
+| [`imx_camera_toolkit/_internal/api`](imx_camera_toolkit/_internal/api/README.md) | FastAPI application, camera lifecycle management, snapshots, health reporting, MJPEG delivery, and browser view rendering. |
+| [`imx_camera_toolkit/_internal/testing`](imx_camera_toolkit/_internal/testing/mock_camera.py) | Deterministic, thread-safe camera substitute for tests and benchmarks without Jetson hardware. |
 | [`view/advanced.html`](view/advanced.html) | Browser preview with runtime camera controls. |
 | [`view/simple.html`](view/simple.html) | Browser preview without a camera-control panel. |
 
@@ -106,11 +106,11 @@ is not a support claim and must not be treated as a working configuration.
 
 ## Installation
 
-Install the core package when the application only needs camera capture and
-raw-frame integration:
+The project is not published on PyPI yet. Until the first PyPI release, install
+the core package from the latest available `v0.6.1` Git tag:
 
 ```bash
-uv add imx-camera-toolkit
+uv add "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
 ```
 
 The core package has no PyPI runtime dependencies. JetPack supplies the system
@@ -119,7 +119,7 @@ OpenCV build with GStreamer support required for camera capture.
 Install the optional browser preview stack when FastAPI and Uvicorn are needed:
 
 ```bash
-uv add "imx-camera-toolkit[preview]"
+uv add "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
 ```
 
 Install the production WebRTC/HLS HTTP layer separately; JetPack continues to
@@ -127,7 +127,7 @@ provide GStreamer and CUDA. Orin Nano additionally needs the system x264
 GStreamer plugin because that SoC does not expose NVENC:
 
 ```bash
-uv add "imx-camera-toolkit[production-preview]"
+uv add "imx-camera-toolkit[production-preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
 ```
 
 Clone the repository and create a virtual environment that can access the
@@ -192,8 +192,8 @@ dependencies = [
 ## Public Python namespace
 
 External applications should import from `imx_camera_toolkit`. The repository
-internal `packages` namespace remains an implementation detail and should not
-be used by new projects.
+internal `imx_camera_toolkit._internal` namespace is private and may change
+without notice; applications should not import from it.
 
 ```python
 from imx_camera_toolkit import Camera, CameraConfig
@@ -289,7 +289,7 @@ without `buffer.map()`, NumPy conversion, or a host-memory image copy.
 
 `GpuCamera` remains model-agnostic: applications own TensorRT engines,
 preprocessing, CUDA synchronization, and model/GPU/TensorRT-aware engine cache
-validation. See [the camera documentation](packages/camera/README.md#gpu-first-nvmm-capture)
+validation. See [the camera documentation](imx_camera_toolkit/_internal/camera/README.md#gpu-first-nvmm-capture)
 for the pipeline contract and opt-in IMX219/IMX477 hardware validation commands.
 
 ### Optional TensorRT runner
@@ -313,7 +313,7 @@ The runner supports dynamic min/opt/max input profiles and caches local engine
 bytes only beside matching metadata for the ONNX hash, TensorRT version,
 compute capability, precision, input name, and complete shape profile.
 Model-specific decoding and overlays remain application-owned. See
-[GPU inference integration](packages/inference/README.md) for usage and the
+[GPU inference integration](imx_camera_toolkit/_internal/inference/README.md) for usage and the
 TensorRT/ONNX Runtime parity test.
 
 ### Production preview
@@ -332,7 +332,7 @@ The production transport shares one encoder among all clients and exposes
 encode FPS, actual bitrate, active clients, and per-client drop rates. Optional
 `CudaOverlayRenderer` draws normalized rectangles on an isolated NVMM surface;
 the existing `InferencePreviewSource` remains the CPU/JPEG fallback. See
-[production browser preview](packages/production_preview/README.md) for
+[production browser preview](imx_camera_toolkit/_internal/production_preview/README.md) for
 installation, signaling, HLS storage, overlay wiring, and the 720p/30 +
 TensorRT acceptance benchmark.
 
@@ -395,7 +395,7 @@ branch at preview speed and passes every fresh JPEG, the newest result, and a
 `PreviewOverlayContext` to an application renderer. Its `detection_age_ns`
 property can be exposed directly in UI telemetry. The renderer remains
 model-specific; capture remains unaware of boxes, masks, YOLO, or other output
-schemas. See [consumer integration](packages/consumers/README.md).
+schemas. See [consumer integration](imx_camera_toolkit/_internal/consumers/README.md).
 
 Workers expose `healthy`, `consecutive_failures`, the current `last_error`, and
 historical `last_failure`. A successful callback clears only the current error
@@ -551,9 +551,16 @@ Install development dependencies and run the standard quality gate:
 uv sync --extra preview --group dev
 uv run black --check .
 uv run ruff check .
-uv run mypy imx_camera_toolkit packages tests
-uv run pytest -m "not benchmark"
+uv run mypy imx_camera_toolkit tests
+uv run pytest tests/unit tests/integration \
+  -m "not hardware and not benchmark" \
+  --cov=imx_camera_toolkit/_internal --cov-report=term-missing \
+  --cov-fail-under=65.5
 ```
+
+The 65.5% gate is a conservative floor based on the current 65.84% result from
+a clean GitHub-hosted runner. Jetson environments normally report higher
+coverage because optional GStreamer integration paths are available there.
 
 Install the local commit hooks once per clone. They reject staged whitespace
 errors or a stale lockfile, then run Ruff, Black, strict mypy, and the same host
@@ -730,7 +737,7 @@ curl -X PATCH http://localhost:8000/api/camera/control \
   -d '{"exposure_us": 5000, "gain": 2.0, "awb_mode": "daylight"}'
 ```
 
-Supported values are determined by `packages/camera_control/config.yml` and by
+Supported values are determined by `imx_camera_toolkit/_internal/camera_control/config.yml` and by
 the active JetPack driver. Exposure and gain are expressed in microseconds and
 linear gain respectively. The API rejects unsupported properties and malformed
 values with `422 Unprocessable Entity`.
@@ -766,10 +773,10 @@ built-in defaults.
 
 | File | Scope |
 | --- | --- |
-| [`packages/camera/config.yml`](packages/camera/config.yml) | Sensor ID, capture/output dimensions, frame rates, JPEG quality, and image transformation. |
-| [`packages/camera_control/config.yml`](packages/camera_control/config.yml) | Supported Argus properties, optional native HDR sensor modes, and initial runtime-control values. |
-| [`packages/stream/config.yml`](packages/stream/config.yml) | MJPEG multipart boundary and frame wait timeout. |
-| [`packages/api/config.yml`](packages/api/config.yml) | FastAPI metadata and snapshot wait timeout. |
+| [`imx_camera_toolkit/_internal/camera/config.yml`](imx_camera_toolkit/_internal/camera/config.yml) | Sensor ID, capture/output dimensions, frame rates, JPEG quality, and image transformation. |
+| [`imx_camera_toolkit/_internal/camera_control/config.yml`](imx_camera_toolkit/_internal/camera_control/config.yml) | Supported Argus properties, optional native HDR sensor modes, and initial runtime-control values. |
+| [`imx_camera_toolkit/_internal/stream/config.yml`](imx_camera_toolkit/_internal/stream/config.yml) | MJPEG multipart boundary and frame wait timeout. |
+| [`imx_camera_toolkit/_internal/api/config.yml`](imx_camera_toolkit/_internal/api/config.yml) | FastAPI metadata and snapshot wait timeout. |
 
 `CameraConfig` is the preferred immutable contract for passing and comparing
 camera settings between components. It contains the sensor, capture/output

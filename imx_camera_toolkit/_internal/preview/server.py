@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from packages.camera.models import Frame
-from packages.camera.publishing import JPEGPublisher
-from packages.stream.stream import MJPEGStream
+from imx_camera_toolkit._internal.camera.models import Frame
+from imx_camera_toolkit._internal.camera.publishing import JPEGPublisher
+from imx_camera_toolkit._internal.stream.stream import MJPEGStream
 
 logger = logging.getLogger(__name__)
 
@@ -212,8 +212,11 @@ class PreviewServer:
                 '"imx-camera-toolkit[preview]".'
             ) from error
 
-        from packages.api.api import NO_CACHE_HEADERS, load_camera_view
-        from packages.api.security import (
+        from imx_camera_toolkit._internal.api.api import (
+            NO_CACHE_HEADERS,
+            load_camera_view,
+        )
+        from imx_camera_toolkit._internal.api.security import (
             SecurityConfig,
             apply_security_middleware,
             build_authorizer,

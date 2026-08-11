@@ -1,6 +1,6 @@
 """Public asynchronous frame consumer API."""
 
-from packages.consumers import (
+from imx_camera_toolkit._internal.consumers import (
     FrameConsumer,
     InferenceConsumer,
     InferencePreviewSource,

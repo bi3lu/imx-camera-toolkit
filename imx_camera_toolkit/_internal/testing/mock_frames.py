@@ -6,14 +6,14 @@ import threading
 import time
 from math import isfinite
 
-from packages.camera.models import (
+from imx_camera_toolkit._internal.camera.models import (
     Frame,
     FrameFormat,
     GpuBufferHandle,
     GpuFrame,
     MemoryType,
 )
-from packages.frames import CaptureFrame
+from imx_camera_toolkit._internal.frames import CaptureFrame
 
 
 def mock_cpu_frame(

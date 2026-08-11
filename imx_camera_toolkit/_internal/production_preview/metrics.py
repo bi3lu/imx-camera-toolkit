@@ -7,7 +7,7 @@ import time
 import warnings
 from dataclasses import dataclass
 
-from packages.camera.models import (
+from imx_camera_toolkit._internal.camera.models import (
     EncodedStreamDescription,
     VideoCodec,
     VideoEncodeStats,

@@ -1,6 +1,6 @@
 """Public minimal frame-source integration API."""
 
-from packages.frames import (
+from imx_camera_toolkit._internal.frames import (
     CameraFrameSource,
     CaptureFrame,
     CaptureFrameSource,

@@ -9,8 +9,8 @@ from typing import Any, cast
 import pytest
 from fastapi import Response
 
-from packages.api.api import create_app
-from packages.testing.mock_camera import MockCamera
+from imx_camera_toolkit._internal.api.api import create_app
+from imx_camera_toolkit._internal.testing.mock_camera import MockCamera
 
 
 def _endpoint(application: Any, path: str) -> Callable[..., Any]:

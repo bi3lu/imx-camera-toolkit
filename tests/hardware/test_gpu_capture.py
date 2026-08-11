@@ -9,7 +9,7 @@ from types import ModuleType
 import pytest
 
 from imx_camera_toolkit import CameraConfig, FrameFormat, GpuCamera, MemoryType
-from packages.inference.interop import NativeCudaInterop
+from imx_camera_toolkit._internal.inference.interop import NativeCudaInterop
 
 pytestmark = pytest.mark.hardware
 

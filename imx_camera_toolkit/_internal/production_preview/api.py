@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response, Security
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.security.utils import get_authorization_scheme_param
 
-from packages.api.security import (
+from imx_camera_toolkit._internal.api.security import (
     BROWSER_SESSION_COOKIE,
     SecurityConfig,
     apply_security_middleware,
@@ -22,7 +22,7 @@ from packages.api.security import (
 from .config import PreviewTransport
 from .transport import ProductionPreviewServer
 
-VIEW_PATH = Path(__file__).parents[2] / "view" / "production.html"
+VIEW_PATH = Path(__file__).parents[3] / "view" / "production.html"
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
@@ -138,7 +138,7 @@ def create_production_preview_app(
     application = FastAPI(
         title="IMX Production Preview",
         description="Shared video encoding with WebRTC or HLS delivery",
-        version="0.6.1",
+        version="0.7.0",
         lifespan=lifespan,
         docs_url="/docs" if resolved_security.docs_enabled else None,
         redoc_url="/redoc" if resolved_security.docs_enabled else None,

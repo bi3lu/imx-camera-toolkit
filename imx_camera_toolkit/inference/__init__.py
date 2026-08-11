@@ -1,6 +1,6 @@
 """Public model-agnostic inference API."""
 
-from packages.inference import (
+from imx_camera_toolkit._internal.inference import (
     CudaInteropError,
     EngineBuildError,
     FrameSpec,

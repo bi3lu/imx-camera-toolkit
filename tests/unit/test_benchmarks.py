@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from packages import benchmarks
-from packages.benchmarks import (
+from imx_camera_toolkit._internal import benchmarks
+from imx_camera_toolkit._internal.benchmarks import (
     benchmark_camera_capture,
     benchmark_capture,
     benchmark_cpu_capture,
@@ -16,10 +16,10 @@ from packages.benchmarks import (
     benchmark_gpu_capture,
     benchmark_streaming,
 )
-from packages.camera.config import CameraConfig
-from packages.camera.models import CameraStats, Frame
-from packages.telemetry import TegrastatsSampler
-from packages.testing import mock_gpu_frame
+from imx_camera_toolkit._internal.camera.config import CameraConfig
+from imx_camera_toolkit._internal.camera.models import CameraStats, Frame
+from imx_camera_toolkit._internal.telemetry import TegrastatsSampler
+from imx_camera_toolkit._internal.testing import mock_gpu_frame
 
 
 class _FakePhysicalCamera:

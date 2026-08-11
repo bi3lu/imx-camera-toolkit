@@ -13,6 +13,12 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from imx_camera_toolkit import FrameFormat, MemoryType
+from imx_camera_toolkit._internal.inference.cache import (
+    EngineCache,
+    EngineCacheMetadata,
+    sha256_file,
+)
+from imx_camera_toolkit._internal.inference.interop import NativeCudaInterop
 from imx_camera_toolkit.inference import (
     FrameSpec,
     InferenceConfigurationError,
@@ -25,8 +31,6 @@ from imx_camera_toolkit.inference import (
     verify_signed_model,
 )
 from imx_camera_toolkit.testing import mock_gpu_frame
-from packages.inference.cache import EngineCache, EngineCacheMetadata, sha256_file
-from packages.inference.interop import NativeCudaInterop
 
 
 def test_dynamic_shape_profile_accepts_shapes_inside_all_bounds() -> None:

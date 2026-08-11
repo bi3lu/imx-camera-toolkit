@@ -34,7 +34,7 @@ repos:
 
       - id: mypy
         name: Mypy strict type check
-        entry: uv run --frozen mypy imx_camera_toolkit packages tests
+        entry: uv run --frozen mypy imx_camera_toolkit tests
         language: system
         pass_filenames: false
 

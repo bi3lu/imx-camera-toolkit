@@ -8,8 +8,12 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import Protocol, runtime_checkable
 
-from packages.camera.models import GpuFrame, GpuFrameExpiredError
-from packages.inference.contracts import FrameSpec, InferenceResult, InferenceRunner
+from imx_camera_toolkit._internal.camera.models import GpuFrame, GpuFrameExpiredError
+from imx_camera_toolkit._internal.inference.contracts import (
+    FrameSpec,
+    InferenceResult,
+    InferenceRunner,
+)
 
 from .latest import FrameConsumer, LatestFrameHub, LatestFrameSubscription
 

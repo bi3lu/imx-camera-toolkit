@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from packages.production_preview import (
+from imx_camera_toolkit._internal.production_preview import (
     CudaOverlayRenderer,
     DescribedEncodedVideoSource,
     EncodedVideoSource,
@@ -24,7 +24,7 @@ from packages.production_preview import (
 )
 
 if TYPE_CHECKING:
-    from packages.production_preview.api import (
+    from imx_camera_toolkit._internal.production_preview.api import (
         create_production_preview_app as create_production_preview_app,
     )
 
@@ -53,7 +53,9 @@ def __getattr__(name: str) -> Any:
     if name != "create_production_preview_app":
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     try:
-        from packages.production_preview.api import create_production_preview_app
+        from imx_camera_toolkit._internal.production_preview.api import (
+            create_production_preview_app,
+        )
     except ImportError as error:
         raise ImportError(
             "Production preview HTTP support is optional. Install it with "
