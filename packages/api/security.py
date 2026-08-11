@@ -13,12 +13,13 @@ import time
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import OAuth2PasswordBearer, SecurityScopes
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import Request
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 SCOPE_DESCRIPTIONS: dict[str, str] = {
@@ -29,6 +30,16 @@ SCOPE_DESCRIPTIONS: dict[str, str] = {
     "admin": "Read detailed device and client diagnostics.",
 }
 ALL_SCOPES = frozenset(SCOPE_DESCRIPTIONS)
+BROWSER_SESSION_COOKIE = "imx_camera_session"
+
+
+class BrowserSessionOAuth2PasswordBearer(OAuth2PasswordBearer):
+    """Read a Bearer header first and a same-site browser session second."""
+
+    async def __call__(self, request: Request) -> str | None:
+        """Return the regular OAuth2 token or the HttpOnly session cookie."""
+        token = await super().__call__(request)
+        return token or request.cookies.get(BROWSER_SESSION_COOKIE)
 
 
 def token_sha256(token: str) -> str:
@@ -381,15 +392,16 @@ Authorizer = Callable[..., Coroutine[Any, Any, None]]
 
 def build_authorizer(config: SecurityConfig) -> Authorizer:
     """Build a FastAPI OAuth2-scope dependency for one application."""
-    oauth2 = OAuth2PasswordBearer(
+    oauth2 = BrowserSessionOAuth2PasswordBearer(
         tokenUrl="/auth/token",
         scopes=SCOPE_DESCRIPTIONS,
+        scheme_name="OAuth2PasswordBearer",
         auto_error=False,
     )
 
     async def authorize(
         security_scopes: SecurityScopes,
-        token: Annotated[str | None, Depends(oauth2)],
+        token: str | None = Depends(oauth2),
     ) -> None:
         if not config.authentication_required:
             return
