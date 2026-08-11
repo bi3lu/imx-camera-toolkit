@@ -1,5 +1,13 @@
 # IMX Camera Toolkit
 
+![Platform: NVIDIA Jetson Orin](https://img.shields.io/badge/platform-NVIDIA%20Jetson%20Orin-76B900?logo=nvidia&logoColor=white)
+![JetPack 6.2.2](https://img.shields.io/badge/JetPack-6.2.2-76B900)
+![Ubuntu 22.04](https://img.shields.io/badge/Ubuntu-22.04-E95420?logo=ubuntu&logoColor=white)
+![Linux kernel 5.15](https://img.shields.io/badge/Linux%20kernel-5.15-FCC624?logo=linux&logoColor=black)
+![CUDA 12.6](https://img.shields.io/badge/CUDA-12.6-76B900?logo=nvidia&logoColor=white)
+![TensorRT 10.3](https://img.shields.io/badge/TensorRT-10.3-76B900)
+![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10--3.12-3776AB?logo=python&logoColor=white)
+
 ## Abstract
 
 IMX Camera Toolkit is a Python toolkit for acquiring, encoding, and serving
