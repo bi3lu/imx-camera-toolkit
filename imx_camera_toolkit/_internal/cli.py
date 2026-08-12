@@ -18,6 +18,7 @@ from .benchmarks import (
     benchmark_streaming,
 )
 from .camera.camera import Camera, CameraConfig, CameraTimeoutError
+from .camera.gpu_camera import GpuCamera
 from .diagnostics import diagnostics_as_dict, run_camera_smoke_test
 
 
@@ -109,6 +110,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="require forwarded HTTPS from a loopback reverse proxy",
     )
     _add_camera_arguments(preview)
+    _add_capture_backend_argument(preview)
 
     snapshot = subcommands.add_parser(
         "snapshot",
@@ -117,6 +119,7 @@ def _build_parser() -> argparse.ArgumentParser:
     snapshot.add_argument("path", nargs="?", default="snapshot.jpg")
     snapshot.add_argument("--timeout", type=float, default=5.0)
     _add_camera_arguments(snapshot)
+    _add_capture_backend_argument(snapshot)
 
     info = subcommands.add_parser(
         "info",
@@ -133,6 +136,7 @@ def _build_parser() -> argparse.ArgumentParser:
     camera_test.add_argument("--timeout", type=float, default=5.0)
     camera_test.add_argument("--json", action="store_true", help="emit JSON output")
     _add_camera_arguments(camera_test)
+    _add_capture_backend_argument(camera_test)
     return parser
 
 
@@ -142,6 +146,16 @@ def _add_camera_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=30)
+
+
+def _add_capture_backend_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the stable CPU/GPU capture selection to a CLI command."""
+    parser.add_argument(
+        "--backend",
+        choices=("cpu", "gpu"),
+        default="cpu",
+        help="cpu for BGR/OpenCV or gpu for NV12/NVMM capture",
+    )
 
 
 def _camera_config(
@@ -276,6 +290,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 width=arguments.width,
                 height=arguments.height,
                 fps=arguments.fps,
+                backend=arguments.backend,
             )
         ]
         _print_results(test_results, arguments.json)
@@ -362,6 +377,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             width=arguments.width,
             height=arguments.height,
             fps=arguments.fps,
+            backend=arguments.backend,
             host=arguments.host,
             port=arguments.port,
             allow_remote=arguments.allow_remote,
@@ -374,7 +390,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
-    camera = Camera(_camera_config(arguments, preview=True))
+    camera_config = _camera_config(arguments, preview=True)
+    camera = (
+        GpuCamera(camera_config)
+        if arguments.backend == "gpu"
+        else Camera(camera_config)
+    )
 
     with camera:
         _, jpeg = camera.wait_for_jpeg(-1, timeout=arguments.timeout)

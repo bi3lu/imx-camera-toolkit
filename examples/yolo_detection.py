@@ -80,7 +80,6 @@ def main() -> None:
     camera = GpuCamera(
         camera_config,
         video_config=VideoEncoderConfig(),
-        experimental=True,
     )
     runner.prepare(
         FrameSpec(

@@ -29,7 +29,7 @@ def main() -> None:
         ),
         inference_shape=(1, 3, 640, 640),
     )
-    camera = GpuCamera(experimental=True)
+    camera = GpuCamera()
     inference = InferenceConsumer(camera.subscribe_latest("custom-engine"), runner)
     results = inference.subscribe_results("output-printer")
 

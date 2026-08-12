@@ -154,6 +154,10 @@ def test_cli_preview_defaults_to_loopback_and_forwards_field_options(
     assert calls[-1]["host"] == "127.0.0.1"
     assert calls[-1]["allow_remote"] is False
     assert calls[-1]["field_mode"] is False
+    assert str(calls[-1]["backend"]) == "cpu"
+
+    assert main(("preview", "--backend", "gpu")) == 0
+    assert str(calls[-1]["backend"]) == "gpu"
 
     assert (
         main(

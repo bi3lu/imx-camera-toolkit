@@ -38,6 +38,7 @@ from imx_camera_toolkit import (
     OverlayRenderer,
     PipelineMetrics,
     PipelineStage,
+    PreviewBackend,
     PreviewOverlayContext,
     PreviewServer,
     PreviewSource,
@@ -207,6 +208,7 @@ from imx_camera_toolkit.frames import (
     FrameSource,
     GpuFrameSource,
 )
+from imx_camera_toolkit.preview import PreviewBackend as ModulePreviewBackend
 from imx_camera_toolkit.stream import MJPEGStream
 from imx_camera_toolkit.testing import MockCamera, MockFrameSource
 
@@ -215,6 +217,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     """External imports must resolve to the existing implementation classes."""
     assert __version__ == "0.7.0"
     assert CameraPreview.__module__ == "imx_camera_toolkit.preview"
+    assert PreviewBackend is ModulePreviewBackend
     assert PreviewServer.__module__ == "imx_camera_toolkit._internal.preview.server"
     assert PreviewSource.__module__ == "imx_camera_toolkit._internal.preview.server"
     assert create_preview_app.__module__ == "imx_camera_toolkit.preview"

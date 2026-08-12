@@ -420,8 +420,10 @@ class Camera:
         """Record a frame omitted from raw publication and return failures."""
         with self._stats_lock:
             self.dropped_frames += 1
+
             if failed_read:
                 self._consecutive_failures += 1
+
             return self._consecutive_failures
 
     def _reset_consecutive_failures(self) -> None:
@@ -439,6 +441,7 @@ class Camera:
                 exposures_us = list(self._software_hdr_processor.exposures_us)
 
             return {
+                "supported": True,
                 "enabled": self._software_hdr_settings.enabled,
                 "base_exposure_us": self._software_hdr_settings.base_exposure_us,
                 "settle_frames": self._software_hdr_settings.settle_frames,

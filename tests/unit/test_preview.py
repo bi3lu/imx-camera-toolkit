@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -72,6 +72,29 @@ def test_camera_preview_uses_documented_defaults() -> None:
     )
 
 
+def test_camera_preview_can_select_the_stable_gpu_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public facade must expose NVMM capture without an opt-in flag."""
+    captured: dict[str, object] = {}
+
+    class FakeGpuCamera:
+        def __init__(self, *, config: object) -> None:
+            captured["config"] = config
+
+    def fake_create_app(camera: object, **_: object) -> object:
+        captured["camera"] = camera
+        return object()
+
+    monkeypatch.setattr(preview_module, "GpuCamera", FakeGpuCamera)
+    monkeypatch.setattr(preview_module, "create_app", fake_create_app)
+
+    CameraPreview(backend="gpu").create_application()
+
+    assert isinstance(captured["camera"], FakeGpuCamera)
+    assert cast(Any, captured["config"]).enable_preview is True
+
+
 def test_create_preview_app_reuses_camera_without_taking_its_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -113,6 +136,7 @@ def test_create_preview_app_requires_a_camera_instance() -> None:
         ({"height": 0}, "height"),
         ({"fps": 0}, "fps"),
         ({"host": ""}, "host"),
+        ({"backend": "invalid"}, "backend"),
         ({"port": 0}, "port"),
         ({"port": 65536}, "port"),
     ],

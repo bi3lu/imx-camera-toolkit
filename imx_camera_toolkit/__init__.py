@@ -69,6 +69,7 @@ from .inference import (
 
 if TYPE_CHECKING:
     from .preview import CameraPreview as CameraPreview
+    from .preview import PreviewBackend as PreviewBackend
     from .preview import PreviewServer as PreviewServer
     from .preview import PreviewSource as PreviewSource
     from .preview import create_preview_app as create_preview_app
@@ -144,6 +145,7 @@ def __getattr__(name: str) -> Any:
     """
     if name not in {
         "CameraPreview",
+        "PreviewBackend",
         "PreviewServer",
         "PreviewSource",
         "create_preview_app",
@@ -155,6 +157,7 @@ def __getattr__(name: str) -> Any:
     try:
         from .preview import (
             CameraPreview,
+            PreviewBackend,
             PreviewServer,
             PreviewSource,
             create_preview_app,
@@ -171,6 +174,7 @@ def __getattr__(name: str) -> Any:
     globals().update(
         {
             "CameraPreview": CameraPreview,
+            "PreviewBackend": PreviewBackend,
             "PreviewServer": PreviewServer,
             "PreviewSource": PreviewSource,
             "create_preview_app": create_preview_app,
@@ -181,6 +185,7 @@ def __getattr__(name: str) -> Any:
     __all__.extend(
         (
             "CameraPreview",
+            "PreviewBackend",
             "PreviewServer",
             "PreviewSource",
             "create_preview_app",
