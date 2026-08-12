@@ -180,7 +180,7 @@ def test_cpu_camera_subscribe_latest_preserves_legacy_frame_contract() -> None:
 
 def test_gpu_camera_exposes_public_borrowed_latest_subscription() -> None:
     """GPU integrations can subscribe without accessing capture internals."""
-    camera = GpuCamera(experimental=True)
+    camera = GpuCamera()
     subscription = camera.subscribe_latest("inference")
     frame = mock_gpu_frame(object(), sequence=4)
 
@@ -195,7 +195,7 @@ def test_gpu_camera_exposes_public_borrowed_latest_subscription() -> None:
 
 def test_gpu_subscriber_keeps_processing_lease_after_new_publication() -> None:
     """Publishing a successor must not expire a frame inside a worker."""
-    camera = GpuCamera(experimental=True)
+    camera = GpuCamera()
     entered = threading.Event()
     release = threading.Event()
     payloads: list[object] = []

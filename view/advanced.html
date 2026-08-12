@@ -394,16 +394,23 @@
         function setSoftwareHdr(softwareHdr, captureFps = null) {
             const enabled = document.getElementById("software-hdr-enabled");
             const baseExposure = document.getElementById("software-hdr-exposure");
+            const applyButton = document.getElementById("apply-software-hdr");
+            const supported = softwareHdr.supported !== false;
 
             if (captureFps !== null) {
                 baseExposure.max = Math.max(100, Math.floor(1000000 / captureFps));
             }
             enabled.checked = softwareHdr.enabled;
+            enabled.disabled = !supported;
+            enabled.title = supported
+                ? ""
+                : "Software HDR requires the BGR/CPU camera backend.";
             setRangeValue(baseExposure, softwareHdr.base_exposure_us);
-            baseExposure.disabled = !softwareHdr.enabled;
-            document.getElementById("exposure-us").disabled = softwareHdr.enabled;
-            document.getElementById("gain").disabled = softwareHdr.enabled;
-            document.getElementById("reset-exposure").disabled = softwareHdr.enabled;
+            baseExposure.disabled = !supported || !softwareHdr.enabled;
+            applyButton.disabled = !supported;
+            document.getElementById("exposure-us").disabled = supported && softwareHdr.enabled;
+            document.getElementById("gain").disabled = supported && softwareHdr.enabled;
+            document.getElementById("reset-exposure").disabled = supported && softwareHdr.enabled;
             updateRangeValues();
         }
 

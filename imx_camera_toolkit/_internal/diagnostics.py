@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .camera.camera import Camera, CameraConfig
+from .camera.gpu_camera import GpuCamera
 
 
 @dataclass(frozen=True)
@@ -71,8 +72,16 @@ def collect_diagnostics(include_hardware: bool = False) -> list[DiagnosticCheck]
     ]
 
     if include_hardware:
-        checks.append(
-            _command_check("nvarguscamerasrc", ("gst-inspect-1.0", "nvarguscamerasrc"))
+        checks.extend(
+            _command_check(element, ("gst-inspect-1.0", element))
+            for element in (
+                "nvarguscamerasrc",
+                "nvvidconv",
+                "nvjpegenc",
+                "appsink",
+                "tee",
+                "queue",
+            )
         )
         checks.append(_command_check("v4l2", ("v4l2-ctl", "--list-devices")))
 
@@ -97,13 +106,14 @@ def run_camera_smoke_test(
     width: int = 1280,
     height: int = 720,
     fps: int = 30,
+    backend: str = "cpu",
 ) -> list[DiagnosticCheck]:
     """Open a physical camera, capture frames, and verify clean teardown.
 
     This test is intentionally opt-in because it accesses the connected CSI
-    sensor. It opens one raw-frame-only camera, waits for ``frames`` distinct
-    source frames, reports the observed capture rate, and always attempts to
-    release the backend before returning.
+    sensor. It opens the selected raw-frame camera, waits for ``frames``
+    distinct source frames, reports the observed capture rate, and always
+    attempts to release the backend before returning.
 
     Args:
         frames: Number of distinct raw frames to observe.
@@ -112,6 +122,7 @@ def run_camera_smoke_test(
         width: Capture and output width in pixels.
         height: Capture and output height in pixels.
         fps: Requested capture rate in frames per second.
+        backend: ``"cpu"`` for BGR/OpenCV or ``"gpu"`` for NV12/NVMM.
 
     Returns:
         Ordered diagnostic checks for open, first frame, frame rate, and close.
@@ -122,6 +133,9 @@ def run_camera_smoke_test(
     if timeout <= 0:
         raise ValueError("timeout must be greater than zero")
 
+    if backend not in {"cpu", "gpu"}:
+        raise ValueError("backend must be cpu or gpu")
+
     config = CameraConfig(
         sensor_id=sensor_id,
         capture_width=width,
@@ -131,7 +145,12 @@ def run_camera_smoke_test(
         fps=fps,
         enable_preview=False,
     )
-    camera = Camera(config)
+    camera = GpuCamera(config) if backend == "gpu" else Camera(config)
+    subscription = (
+        camera.subscribe_latest("diagnostic-smoke-test")
+        if isinstance(camera, GpuCamera)
+        else None
+    )
     checks: list[DiagnosticCheck] = []
     previous_frame_number = -1
     captured = 0
@@ -142,10 +161,22 @@ def run_camera_smoke_test(
         started_at = time.monotonic()
 
         while captured < frames:
-            frame_number, image = camera.wait_for_raw_frame(
-                previous_frame_number,
-                timeout=timeout,
-            )
+            if isinstance(camera, GpuCamera):
+                if subscription is None:
+                    raise RuntimeError("GPU diagnostic subscription is unavailable")
+                frame = subscription.receive(timeout=timeout)
+                if frame is None:
+                    frame_number, image = previous_frame_number, None
+                else:
+                    try:
+                        frame_number, image = frame.sequence, frame.payload()
+                    finally:
+                        frame.release()
+            else:
+                frame_number, image = camera.wait_for_raw_frame(
+                    previous_frame_number,
+                    timeout=timeout,
+                )
 
             if image is None or frame_number == previous_frame_number:
                 check_name = "first_frame" if captured == 0 else "capture_rate"
@@ -179,6 +210,8 @@ def run_camera_smoke_test(
 
     finally:
         try:
+            if subscription is not None:
+                subscription.close()
             camera.stop()
             status = "ok" if not camera.running else "error"
             detail = "released" if status == "ok" else "camera is still running"

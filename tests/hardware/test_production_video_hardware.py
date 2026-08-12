@@ -66,7 +66,6 @@ def test_720p_production_preview_runs_during_tensorrt(
             bitrate_bps=4_000_000,
             keyframe_interval=30,
         ),
-        experimental=True,
     )
 
     with camera:

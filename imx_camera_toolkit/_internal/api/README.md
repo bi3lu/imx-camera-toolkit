@@ -4,7 +4,8 @@ FastAPI application exposing a shared NVIDIA Jetson CSI camera as individual
 JPEG snapshots and a live MJPEG stream. It combines the `camera` package with
 the framework-neutral MJPEG iterator from the `stream` package.
 
-This API remains the debug/simple transport. Production H.264/H.265 WebRTC and
+This API remains the debug/simple transport and accepts either `Camera` or the
+hardware-JPEG branch of `GpuCamera`. Production H.264/H.265 WebRTC and
 HLS endpoints live in the optional
 [`production_preview`](../production_preview/README.md) package so enabling
 them never changes existing MJPEG URLs or OpenCV behavior.
@@ -25,27 +26,28 @@ them never changes existing MJPEG URLs or OpenCV behavior.
 ## Application lifecycle
 
 The module exports `create_app()`, a FastAPI application factory. Its lifespan
-handler starts one shared `Camera` during application startup and stops it
-during shutdown. Endpoints share that camera; the API does not create a camera
-per request or per connected MJPEG client.
+handler starts one shared CPU or GPU camera during application startup and
+stops it during shutdown. Endpoints share that camera; the API does not create
+a camera per request or per connected MJPEG client.
 
 Applications that already own a camera for inference or another pipeline can
 attach a preview without creating or managing another capture lifecycle:
 
 ```python
-from imx_camera_toolkit import Camera
+from imx_camera_toolkit import GpuCamera
 from imx_camera_toolkit.preview import create_preview_app
 
-camera = Camera()
+camera = GpuCamera()
 app = create_preview_app(camera)
 
 with camera:
     run_my_pipeline(camera)
 ```
 
-The helper enables JPEG preview on the supplied `Camera` and builds the FastAPI
-application with `manage_camera=False`. The application remains responsible
-for starting and stopping the camera.
+The helper enables JPEG preview on the supplied camera and builds the FastAPI
+application with `manage_camera=False`. On `GpuCamera` this adds the isolated
+`nvjpegenc` branch. The application remains responsible for starting and
+stopping the camera.
 
 For a local camera preview, run:
 

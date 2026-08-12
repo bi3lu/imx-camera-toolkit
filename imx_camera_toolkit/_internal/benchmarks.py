@@ -270,7 +270,7 @@ def benchmark_gpu_capture(
     consumer: Callable[[GpuFrame], object] | None = None,
     resource_sampler: ResourceSampler | None = None,
 ) -> CameraBenchmarkResult:
-    """Benchmark experimental NVMM capture and an optional GPU consumer."""
+    """Benchmark stable NVMM capture and an optional GPU consumer."""
     if frames <= 0:
         raise ValueError("frames must be greater than zero")
 
@@ -281,7 +281,7 @@ def benchmark_gpu_capture(
         raise ValueError("consumer must be callable or None")
 
     resolved_config = replace(config or CameraConfig(), enable_preview=False)
-    camera = GpuCamera(resolved_config, experimental=True)
+    camera = GpuCamera(resolved_config)
     subscription = camera.subscribe_latest("benchmark-gpu")
     sampler = _resource_sampler(resource_sampler)
     latencies_ns: list[int] = []
@@ -327,7 +327,7 @@ def benchmark_gpu_capture(
         gpu_utilization_percent=gpu_percent,
         width=resolved_config.output_width,
         height=resolved_config.output_height,
-        backend="gpu-experimental",
+        backend="gpu",
     )
 
 

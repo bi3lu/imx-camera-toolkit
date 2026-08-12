@@ -1,6 +1,6 @@
-# GPU release checklist
+# CPU/GPU release checklist
 
-Use this checklist before tagging a release that contains the experimental GPU
+Use this checklist before tagging a release that changes either stable capture
 path. A host-only green workflow is not sufficient evidence for Jetson support.
 
 ## Host gate
@@ -47,7 +47,10 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 
 ## Release gate
 
-- Confirm `GpuCamera` still requires `experimental=True`.
+- Confirm `GpuCamera()` remains usable without a feature flag and reports the
+  stable NV12/NVMM contract.
+- Confirm `preview`, `snapshot`, and `test` accept both `--backend cpu` and
+  `--backend gpu`.
 - Update the tested hardware matrix without promoting untested sensors.
 - Review package version consistency and the release notes in the pull request.
 - Build wheel and source distribution from a clean checkout.

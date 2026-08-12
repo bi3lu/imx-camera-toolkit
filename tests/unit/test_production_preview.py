@@ -117,10 +117,24 @@ def test_auto_backend_selects_x264_when_orin_nano_has_no_nvenc(
     )
     camera = GpuCamera(
         video_config=VideoEncoderConfig(backend=VideoEncoderBackend.AUTO),
-        experimental=True,
     )
 
     assert camera._resolve_encoder_backend() is VideoEncoderBackend.X264
+
+
+def test_runtime_rebuild_preserves_the_resolved_orin_nano_x264_backend() -> None:
+    """Controls and preview changes must not revert AUTO to absent NVENC."""
+    camera = GpuCamera(
+        video_config=VideoEncoderConfig(backend=VideoEncoderBackend.AUTO),
+    )
+    camera._resolved_video_encoder_backend = VideoEncoderBackend.X264.value
+
+    camera.apply_argus_properties(("wbmode=daylight",))
+    camera.set_preview_enabled(True)
+
+    assert "x264enc name=video_encoder" in camera.pipeline
+    assert "nvv4l2h264enc" not in camera.pipeline
+    assert "appsink name=preview_sink" in camera.pipeline
 
 
 def test_custom_public_encoder_factory_survives_overlay_rebuild() -> None:
@@ -153,7 +167,6 @@ def test_custom_public_encoder_factory_survives_overlay_rebuild() -> None:
     camera = GpuCamera(
         video_config=VideoEncoderConfig(),
         encoder_pipeline_factory=factory,
-        experimental=True,
     )
     camera.set_video_overlay(_FakeNvmmOverlay())
 
@@ -235,7 +248,6 @@ def test_gpu_camera_can_wire_overlay_after_inference_subscription() -> None:
     """An application may assemble inference before finalizing the pipeline."""
     camera = GpuCamera(
         video_config=HardwareVideoConfig(),
-        experimental=True,
     )
 
     camera.set_video_overlay(_FakeNvmmOverlay())
@@ -247,7 +259,7 @@ def test_gpu_camera_can_wire_overlay_after_inference_subscription() -> None:
 
 def test_gpu_camera_rejects_overlay_without_hardware_video() -> None:
     """A renderer must not silently activate a host or unencoded branch."""
-    camera = GpuCamera(experimental=True)
+    camera = GpuCamera()
 
     with pytest.raises(CameraConfigurationError, match="hardware video"):
         camera.set_video_overlay(_FakeNvmmOverlay())

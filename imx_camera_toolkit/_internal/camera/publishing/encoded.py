@@ -66,7 +66,14 @@ class EncodedJPEGPublisher:
         """Wait for preview bytes newer than a known identifier."""
         with self._condition:
             self._condition.wait_for(
-                lambda: self._frame_number != previous_frame_number or not is_running(),
+                lambda: (
+                    self._jpeg is not None
+                    and (
+                        previous_frame_number < 0
+                        or self._frame_number != previous_frame_number
+                    )
+                )
+                or not is_running(),
                 timeout=timeout,
             )
             return self._frame_number, self._jpeg
