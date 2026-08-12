@@ -211,7 +211,13 @@ class MockCamera:
 
         with self._condition:
             self._condition.wait_for(
-                lambda: self._frame_number != previous_frame_number
+                lambda: (
+                    self._jpeg is not None
+                    and (
+                        previous_frame_number < 0
+                        or self._frame_number != previous_frame_number
+                    )
+                )
                 or not self._running,
                 timeout=timeout,
             )
