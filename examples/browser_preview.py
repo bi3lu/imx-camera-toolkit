@@ -4,7 +4,7 @@ from imx_camera_toolkit import preview
 
 
 def main() -> None:
-    """Start the preview with the documented default camera configuration."""
+    """Start the stable GPU preview with the documented camera settings."""
     preview(
         sensor_id=0,
         width=1280,
