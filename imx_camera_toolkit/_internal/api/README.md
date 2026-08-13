@@ -110,8 +110,8 @@ HTML image element:
 ## Browser view customization
 
 `GET /` serves one of two customizable bundled templates. The default
-[`view/simple.html`](../../view/simple.html) provides the live preview without
-a control panel. [`view/advanced.html`](../../view/advanced.html) adds runtime
+[`view/simple.html`](../../../view/simple.html) provides the live preview without
+a control panel. [`view/advanced.html`](../../../view/advanced.html) adds runtime
 camera controls. You may freely change HTML, CSS, JavaScript, title, layout,
 and styling. The selected template is read for every request, so refreshing the
 browser applies changes without restarting the server.
