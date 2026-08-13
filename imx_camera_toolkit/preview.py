@@ -45,6 +45,15 @@ class CameraPreview:
             hardware JPEG encoding.
         host: Address on which to expose the preview server.
         port: TCP port on which to expose the preview server.
+        allow_remote: Explicitly allow an unauthenticated non-loopback
+            development bind.
+        field_mode: Enable authentication and HTTP deployment hardening.
+        token_file: Protected JSON file containing bearer-token digests and
+            scopes.
+        allowed_hosts: Accepted HTTP `Host` values in field mode.
+        behind_tls_proxy: Trust HTTPS metadata from a loopback reverse proxy.
+        ssl_certfile: Optional certificate for direct TLS termination.
+        ssl_keyfile: Optional private key for direct TLS termination.
     """
 
     sensor_id: int = 0

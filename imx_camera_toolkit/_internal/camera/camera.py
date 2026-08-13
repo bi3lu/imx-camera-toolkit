@@ -282,12 +282,12 @@ class Camera:
 
     @property
     def pipeline(self) -> str:
-        """str: GStreamer pipeline used by the next capture open operation."""
+        """Return the GStreamer pipeline used by the next open operation."""
         return self._pipeline
 
     @property
     def argus_properties(self) -> tuple[str, ...]:
-        """tuple[str, ...]: Current Argus source property assignments."""
+        """Return the current Argus source property assignments."""
         with self._lifecycle_lock:
             return self._argus_properties
 
@@ -451,17 +451,17 @@ class Camera:
 
     @property
     def running(self) -> bool:
-        """bool: Whether the background capture loop is active."""
+        """Return whether the background capture loop is active."""
         return self._running.is_set()
 
     @property
     def frame_available(self) -> bool:
-        """bool: Whether at least one JPEG frame is currently available."""
+        """Return whether at least one JPEG frame is currently available."""
         return self._publisher.frame_available
 
     @property
     def preview_enabled(self) -> bool:
-        """bool: Whether JPEG encoding for preview clients is enabled."""
+        """Return whether JPEG encoding for preview clients is enabled."""
         return self._enable_preview
 
     def set_preview_enabled(self, enabled: bool) -> None:
@@ -495,22 +495,22 @@ class Camera:
 
     @property
     def frame_number(self) -> int:
-        """int: Monotonically increasing identifier of the latest JPEG frame."""
+        """Return the monotonically increasing latest JPEG-frame identifier."""
         return self._publisher.frame_number
 
     @property
     def jpeg(self) -> bytes | None:
-        """bytes | None: Latest JPEG frame, or ``None`` when unavailable."""
+        """Return the latest JPEG frame, or ``None`` when unavailable."""
         return self._publisher.jpeg
 
     @property
     def raw_frame_number(self) -> int:
-        """int: Identifier of the newest processed raw BGR frame."""
+        """Return the identifier of the newest processed raw BGR frame."""
         return self._raw_publisher.frame_number
 
     @property
     def raw_frame(self) -> object | None:
-        """object | None: Newest processed raw BGR frame without a copy.
+        """Return the newest processed raw BGR frame without a copy.
 
         Consumers must treat this payload as read-only. It is shared with JPEG
         encoding and external frame consumers to avoid needless copy overhead.
@@ -568,12 +568,12 @@ class Camera:
 
     @property
     def frames_encoded(self) -> int:
-        """int: Number of frames successfully JPEG-encoded."""
+        """Return the number of successfully JPEG-encoded frames."""
         return self._publisher.frames_encoded
 
     @property
     def last_frame_time(self) -> float | None:
-        """float | None: Unix timestamp of the latest encoded JPEG frame."""
+        """Return the Unix timestamp of the latest encoded JPEG frame."""
         return self._publisher.last_frame_time
 
     def start(self) -> None:

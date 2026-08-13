@@ -574,6 +574,7 @@ class WebRTCPeer:
             return
 
         def state(name: str) -> str | None:
+            """Return one normalized WebRTC state property."""
             try:
                 value = webrtc.get_property(name)
 

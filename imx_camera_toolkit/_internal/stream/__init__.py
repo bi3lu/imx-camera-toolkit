@@ -1,0 +1,1 @@
+"""Private MJPEG streaming implementation."""

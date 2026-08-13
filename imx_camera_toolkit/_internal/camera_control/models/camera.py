@@ -123,12 +123,12 @@ class CameraCapabilities:
 
     @property
     def hdr_supported(self) -> bool:
-        """bool: Whether declared sensor modes include an HDR mode."""
+        """Return whether declared sensor modes include an HDR mode."""
         return any(mode.hdr for mode in self.sensor_modes)
 
     @property
     def sensor_mode_metadata_available(self) -> bool:
-        """bool: Whether complete mode descriptors were supplied."""
+        """Return whether complete mode descriptors were supplied."""
         return bool(self.sensor_modes)
 
     def supports(self, property_name: str) -> bool:
