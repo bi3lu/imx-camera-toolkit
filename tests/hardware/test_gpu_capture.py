@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import nullcontext
 from types import ModuleType
 
 import pytest
@@ -48,7 +49,10 @@ def test_physical_sensor_delivers_nvmm_at_30_fps(width: int, height: int) -> Non
     previous_sequence = 0
     imported_nvmm = False
     native = ModuleType("_hardware_gst_buffer_probe")
-    native.NvmmSurface = lambda payload, _width, _height: payload  # type: ignore[attr-defined]
+    context = object()
+    native.CudaPrimaryContext = lambda ordinal: context  # type: ignore[attr-defined]
+    native.CudaContextGuard = lambda owner: nullcontext()  # type: ignore[attr-defined]
+    native.NvmmSurface = lambda owner, payload, _width, _height: payload  # type: ignore[attr-defined]
     interop = NativeCudaInterop(native)
     camera = GpuCamera(config)
     subscription = camera.subscribe_latest("hardware-validation")

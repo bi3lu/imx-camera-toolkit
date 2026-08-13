@@ -243,6 +243,32 @@ class TensorRTRunner:
         return self._cache.engine_path
 
     def prepare(self, frame_spec: FrameSpec) -> None:
+        """Load or build resources under the retained primary CUDA context."""
+        if not isinstance(frame_spec, FrameSpec):
+            raise TypeError("frame_spec must be a FrameSpec")
+
+        if (
+            frame_spec.format is not FrameFormat.NV12_NVMM
+            or frame_spec.memory_type is not MemoryType.NVMM
+        ):
+            raise InferenceConfigurationError(
+                "TensorRTRunner requires NV12_NVMM frames in NVMM memory"
+            )
+
+        if not self._onnx_path.is_file():
+            raise InferenceConfigurationError(
+                f"ONNX model does not exist: {self._onnx_path}"
+            )
+
+        self._load_tensorrt()
+        self._load_numpy()
+        interop = self._interop or NativeCudaInterop()
+        self._interop = interop
+
+        with interop.activate():
+            self._prepare_activated(frame_spec)
+
+    def _prepare_activated(self, frame_spec: FrameSpec) -> None:
         """Load or build a compatible engine and allocate its CUDA bindings."""
         if not isinstance(frame_spec, FrameSpec):
             raise TypeError("frame_spec must be a FrameSpec")
@@ -564,6 +590,27 @@ class TensorRTRunner:
         return names[0]
 
     def infer(self, frame: GpuFrame) -> InferenceResult:
+        """Run inference under the retained primary context on this thread."""
+        if not isinstance(frame, GpuFrame):
+            raise TypeError("frame must be a GpuFrame")
+
+        if not self.prepared:
+            raise InferenceError("TensorRTRunner is not prepared")
+
+        if self._frame_spec != FrameSpec.from_gpu_frame(frame):
+            raise InferenceConfigurationError(
+                "GpuFrame does not match the FrameSpec used by prepare"
+            )
+
+        interop = self._interop
+
+        if interop is None:
+            raise InferenceError("TensorRTRunner resources are incomplete")
+
+        with interop.activate():
+            return self._infer_activated(frame)
+
+    def _infer_activated(self, frame: GpuFrame) -> InferenceResult:
         """Preprocess NVMM, execute TensorRT, and return named output tensors."""
         if not isinstance(frame, GpuFrame):
             raise TypeError("frame must be a GpuFrame")
@@ -594,54 +641,58 @@ class TensorRTRunner:
         input_buffer = self._buffers[input_name]
 
         try:
-            interop.preprocess_nv12(
-                surface,
-                input_buffer,
-                width=self._inference_shape[3],
-                height=self._inference_shape[2],
-                channel_order=self._channel_order,
-                scale=float(self._scale),
-                mean=(
-                    float(self._mean[0]),
-                    float(self._mean[1]),
-                    float(self._mean[2]),
-                ),
-                standard_deviation=(
-                    float(self._standard_deviation[0]),
-                    float(self._standard_deviation[1]),
-                    float(self._standard_deviation[2]),
-                ),
-                resize_mode=self._resize_mode,
-                padding_value=(
-                    float(self._padding_value[0]),
-                    float(self._padding_value[1]),
-                    float(self._padding_value[2]),
-                ),
-                stream=stream,
-            )
-
-            if not context.execute_async_v3(stream.handle):
-                raise InferenceError("TensorRT execute_async_v3 failed")
-
-            outputs: list[TensorOutput] = []
-
-            for name in self._output_names:
-                raw = self._buffers[name].copy_to_host(stream)
-                dtype = self._tensor_dtypes[name]
-                shape = self._tensor_shapes[name]
-                array = numpy.frombuffer(raw, dtype=dtype).reshape(shape).copy()
-                outputs.append(
-                    TensorOutput(
-                        name=name,
-                        shape=shape,
-                        dtype=str(dtype),
-                        data=array,
-                    )
+            try:
+                interop.preprocess_nv12(
+                    surface,
+                    input_buffer,
+                    width=self._inference_shape[3],
+                    height=self._inference_shape[2],
+                    channel_order=self._channel_order,
+                    scale=float(self._scale),
+                    mean=(
+                        float(self._mean[0]),
+                        float(self._mean[1]),
+                        float(self._mean[2]),
+                    ),
+                    standard_deviation=(
+                        float(self._standard_deviation[0]),
+                        float(self._standard_deviation[1]),
+                        float(self._standard_deviation[2]),
+                    ),
+                    resize_mode=self._resize_mode,
+                    padding_value=(
+                        float(self._padding_value[0]),
+                        float(self._padding_value[1]),
+                        float(self._padding_value[2]),
+                    ),
+                    stream=stream,
                 )
 
-        except Exception:
-            stream.synchronize()
-            raise
+                if not context.execute_async_v3(stream.handle):
+                    raise InferenceError("TensorRT execute_async_v3 failed")
+
+                outputs: list[TensorOutput] = []
+
+                for name in self._output_names:
+                    raw = self._buffers[name].copy_to_host(stream)
+                    dtype = self._tensor_dtypes[name]
+                    shape = self._tensor_shapes[name]
+                    array = numpy.frombuffer(raw, dtype=dtype).reshape(shape).copy()
+                    outputs.append(
+                        TensorOutput(
+                            name=name,
+                            shape=shape,
+                            dtype=str(dtype),
+                            data=array,
+                        )
+                    )
+
+            except Exception:
+                stream.synchronize()
+                raise
+
+        finally:
+            del surface
 
         inference_time_ns = time.monotonic_ns() - started_ns
         output_tuple = tuple(outputs)
@@ -681,20 +732,40 @@ class TensorRTRunner:
         )
 
     def close(self) -> None:
-        """Synchronize the runner stream and release runner-owned resources."""
+        """Release resources under the retained context on the calling thread."""
+        interop = self._interop
+
+        if interop is not None:
+            with interop.activate():
+                self._close_cuda_resources()
+
+        else:
+            self._close_cuda_resources()
+
+    def _close_cuda_resources(self) -> None:
+        """Release TensorRT and CUDA objects in dependency order."""
+        synchronization_error: Exception | None = None
+
         if self._stream is not None:
-            self._stream.synchronize()
+            try:
+                self._stream.synchronize()
+
+            except Exception as error:
+                synchronization_error = error
 
         self._output_names = ()
         self._tensor_dtypes.clear()
         self._tensor_shapes.clear()
+        self._context = None
         self._buffers.clear()
         self._stream = None
-        self._context = None
         self._engine = None
         self._runtime = None
         self._frame_spec = None
         self._closed = True
+
+        if synchronization_error is not None:
+            raise synchronization_error
 
     def __enter__(self) -> TensorRTRunner:
         """Return this runner; callers still invoke ``prepare`` explicitly."""

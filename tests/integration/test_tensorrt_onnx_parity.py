@@ -164,11 +164,21 @@ def test_tensorrt_and_onnx_runtime_boxes_match_for_one_nvmm_frame(
         np.testing.assert_allclose(actual_boxes, expected_boxes, rtol=1e-3, atol=1e-3)
         assert result.inference_time_ns > 0
         assert result.metadata["cuda_stream"] != 0
-        assert result.metadata["preprocessing"] == {
+        preprocessing = result.metadata["preprocessing"]
+        assert preprocessing == {
             "source": "NV12_NVMM",
             "layout": "NCHW",
             "channel_order": "RGB",
             "scale": 1.0 / 255.0,
+            "padding_value": [114.0, 114.0, 114.0],
+            "transform": {
+                "resize_mode": "stretch",
+                "scale": [0.05, 64.0 / 720.0],
+                "pad_x": 0,
+                "pad_y": 0,
+                "source_shape": [720, 1280],
+                "model_shape": [64, 64],
+            },
         }
 
         runner.close()

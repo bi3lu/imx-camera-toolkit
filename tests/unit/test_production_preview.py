@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
 
@@ -696,6 +697,12 @@ class _FakeOverlayInterop:
     def __init__(self) -> None:
         self.stream = _FakeStream()
         self.draws: list[dict[str, object]] = []
+        self.activations = 0
+
+    def activate(self) -> Any:
+        """Record each context scope entered by the renderer."""
+        self.activations += 1
+        return nullcontext()
 
     def create_stream(self) -> _FakeStream:
         """Return the renderer-owned test stream."""
@@ -739,6 +746,12 @@ def test_cuda_overlay_draws_latest_result_without_cpu_image_payload() -> None:
     assert renderer.stale_results == 0
     assert renderer.failed_frames == 0
     assert renderer.last_error is None
+    assert interop.activations == 2
+
+    renderer.close()
+
+    assert interop.stream.synchronizations == 2
+    assert interop.activations == 3
 
 
 def test_cuda_overlay_reports_empty_stale_and_failed_frames() -> None:
@@ -776,6 +789,7 @@ def test_cuda_overlay_reports_empty_stale_and_failed_frames() -> None:
     assert renderer.failed_frames == 1
     assert isinstance(renderer.last_error, TypeError)
     assert renderer.health()["healthy"] is False
+    renderer.close()
 
 
 def test_overlay_health_provider_failure_does_not_break_debug_health() -> None:
