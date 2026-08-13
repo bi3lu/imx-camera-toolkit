@@ -93,7 +93,8 @@ class CudaOverlayRenderer:
         self._mapper = mapper or _default_mapper
         self._max_age_ns = int(max_result_age_seconds * 1_000_000_000)
         self._interop = interop or NativeCudaInterop()
-        self._stream: CudaStream | None = self._interop.create_stream()
+        with self._interop.activate():
+            self._stream: CudaStream | None = self._interop.create_stream()
         self._metrics_lock = threading.Lock()
         self._rendered_frames = 0
         self._empty_results = 0
@@ -153,49 +154,56 @@ class CudaOverlayRenderer:
     def render(self, frame: GpuFrame) -> None:
         """Draw the newest non-stale result and synchronize before encode."""
         try:
-            result = self._inference.latest_result
-            stream = self._stream
+            with self._interop.activate():
+                result = self._inference.latest_result
+                stream = self._stream
 
-            if result is None:
-                with self._metrics_lock:
-                    self._empty_results += 1
+                if result is None:
+                    with self._metrics_lock:
+                        self._empty_results += 1
 
-                return
+                    return
 
-            if stream is None:
-                raise RuntimeError("CUDA overlay renderer is closed")
+                if stream is None:
+                    raise RuntimeError("CUDA overlay renderer is closed")
 
-            if time.monotonic_ns() - result.frame_timestamp_ns > self._max_age_ns:
-                with self._metrics_lock:
-                    self._stale_results += 1
+                if time.monotonic_ns() - result.frame_timestamp_ns > self._max_age_ns:
+                    with self._metrics_lock:
+                        self._stale_results += 1
 
-                return
+                    return
 
-            rectangles = tuple(self._mapper(result))
+                rectangles = tuple(self._mapper(result))
 
-            if not rectangles:
-                with self._metrics_lock:
-                    self._empty_results += 1
+                if not rectangles:
+                    with self._metrics_lock:
+                        self._empty_results += 1
 
-                return
+                    return
 
-            surface = self._interop.import_frame(frame)
+                surface = self._interop.import_frame(frame)
 
-            for rectangle in rectangles:
-                if not isinstance(rectangle, OverlayRectangle):
-                    raise TypeError("mapper must return OverlayRectangle values")
+                try:
+                    for rectangle in rectangles:
+                        if not isinstance(rectangle, OverlayRectangle):
+                            raise TypeError(
+                                "mapper must return OverlayRectangle values"
+                            )
 
-                self._interop.draw_nv12_rectangle(
-                    surface,
-                    left=rectangle.left,
-                    top=rectangle.top,
-                    width=rectangle.width,
-                    height=rectangle.height,
-                    thickness=rectangle.thickness,
-                    yuv=_rgb_to_limited_bt709(rectangle.color_rgb),
-                    stream=stream,
-                )
-            stream.synchronize()
+                        self._interop.draw_nv12_rectangle(
+                            surface,
+                            left=rectangle.left,
+                            top=rectangle.top,
+                            width=rectangle.width,
+                            height=rectangle.height,
+                            thickness=rectangle.thickness,
+                            yuv=_rgb_to_limited_bt709(rectangle.color_rgb),
+                            stream=stream,
+                        )
+                    stream.synchronize()
+
+                finally:
+                    del surface
 
         except Exception as error:
             with self._metrics_lock:
@@ -209,10 +217,14 @@ class CudaOverlayRenderer:
 
     def close(self) -> None:
         """Synchronize and release the renderer-owned CUDA stream."""
-        if self._stream is not None:
-            self._stream.synchronize()
+        stream = self._stream
 
-        self._stream = None
+        if stream is None:
+            return
+
+        with self._interop.activate():
+            stream.synchronize()
+            self._stream = None
 
 
 __all__ = ["CudaOverlayRenderer", "OverlayRectangle", "RectangleMapper"]

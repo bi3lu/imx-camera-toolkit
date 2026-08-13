@@ -86,6 +86,12 @@ inputs, select `resize_mode="letterbox"` to preserve geometry. Result metadata
 contains the exact source/model shapes, X/Y scale, and centered padding needed
 to map detections back to video coordinates.
 
+The native bridge retains the CUDA primary context shared with CUDA Runtime and
+TensorRT. The runner activates it around preparation, worker-thread inference,
+result copies, and cleanup; CUDA overlays do the same in their GStreamer
+callback thread. Do not add `pycuda.autoinit`, create a separate driver context,
+reset the device, or move engine preparation into the inference worker.
+
 ## Examples
 
 For a complete Jetson bring-up and secure deployment procedure, use the

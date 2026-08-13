@@ -29,7 +29,8 @@ provide a local ONNX model path. The weekly trusted-branch run reads
 
 - NVMM capture at 1280x720 and 1920x1080 at 30 FPS;
 - simultaneous TensorRT and H.264 production preview using the resolved
-  NVENC/x264 backend;
+  NVENC/x264 backend, with engine preparation on the main thread, inference on
+  its consumer thread, and CUDA overlay rendering on the GStreamer thread;
 - WebRTC decode smoke test with matching SDP fmtp, real RTP counters, a
   late-joining peer, and a subscription beginning mid-GOP;
 - TensorRT/ONNX Runtime output parity;

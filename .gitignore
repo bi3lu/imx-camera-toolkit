@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Temp stuff like YOLO models, local development scripts etc.
+temp/
