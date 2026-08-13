@@ -112,10 +112,10 @@ is not a support claim and must not be treated as a working configuration.
 ## Installation
 
 The project is not published on PyPI yet. Until the first PyPI release, install
-the core package from the latest available `v0.6.1` Git tag:
+the core package from the `v0.7.1` Git tag:
 
 ```bash
-uv add "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
+uv add "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.7.1"
 ```
 
 The core package has no PyPI runtime dependencies. JetPack supplies the system
@@ -124,7 +124,7 @@ OpenCV build with GStreamer support required for camera capture.
 Install the optional browser preview stack when FastAPI and Uvicorn are needed:
 
 ```bash
-uv add "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
+uv add "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.7.1"
 ```
 
 Install the production WebRTC/HLS HTTP layer separately; JetPack continues to
@@ -132,7 +132,7 @@ provide GStreamer and CUDA. Orin Nano additionally needs the system x264
 GStreamer plugin because that SoC does not expose NVENC:
 
 ```bash
-uv add "imx-camera-toolkit[production-preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
+uv add "imx-camera-toolkit[production-preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.7.1"
 ```
 
 Clone the repository and create a virtual environment that can access the
@@ -165,12 +165,12 @@ uv run python -c "import cv2; print(cv2.__version__)"
 
 ## Using the toolkit as a Git dependency
 
-Pin the v0.6.1 release tag in the consuming project's `pyproject.toml`:
+Pin the v0.7.1 release tag in the consuming project's `pyproject.toml`:
 
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
+    "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.7.1"
 ]
 ```
 
@@ -190,7 +190,7 @@ To consume the Git dependency with the browser-preview extra, declare it as:
 ```toml
 [project]
 dependencies = [
-    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.6.1"
+    "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.7.1"
 ]
 ```
 
