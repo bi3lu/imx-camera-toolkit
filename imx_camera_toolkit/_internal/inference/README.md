@@ -110,7 +110,7 @@ frame_spec = FrameSpec(
 )
 runner.prepare(frame_spec)
 
-with GpuCamera(experimental=True) as camera:
+with GpuCamera() as camera:
     frame = camera.read(timeout=2.0)
     if frame is not None:
         result = runner.infer(frame)
@@ -147,7 +147,7 @@ from imx_camera_toolkit.inference import FrameSpec
 frame_spec = FrameSpec(1280, 720, FrameFormat.NV12_NVMM, MemoryType.NVMM)
 runner.prepare(frame_spec)
 
-with GpuCamera(experimental=True) as camera:
+with GpuCamera() as camera:
     with InferenceConsumer(
         camera.subscribe_latest("primary-inference"),
         runner,

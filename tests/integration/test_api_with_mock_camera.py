@@ -9,6 +9,7 @@ from typing import Any, cast
 import pytest
 from fastapi import Response
 
+from imx_camera_toolkit import GpuCamera
 from imx_camera_toolkit._internal.api.api import create_app
 from imx_camera_toolkit._internal.testing.mock_camera import MockCamera
 
@@ -133,3 +134,16 @@ def test_api_can_leave_an_existing_camera_lifecycle_to_the_application() -> None
     _run_lifespan(application, verify)
 
     assert camera.running is False
+
+
+def test_mjpeg_api_accepts_the_stable_gpu_camera_contract() -> None:
+    """GPU hardware JPEG and runtime controls must use the shared camera API."""
+    camera = GpuCamera(enable_preview=True)
+    application = create_app(camera, manage_camera=False)
+
+    health = _endpoint(application, "/api/health")()
+    controls = _endpoint(application, "/api/camera/control")()
+
+    assert health["frame_format"] == "NV12_NVMM"
+    assert health["frame_memory_type"] == "NVMM"
+    assert controls["software_hdr"]["supported"] is False

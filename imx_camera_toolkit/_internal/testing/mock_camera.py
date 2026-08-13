@@ -23,6 +23,17 @@ class MockCamera:
     Args:
         start_error: Optional exception raised when ``start()`` is called.
         auto_start: Whether the mock should be started during initialization.
+        frames_captured: Synthetic successful capture count.
+        dropped_frames: Synthetic dropped-frame count.
+        frames_encoded: Synthetic encoded-frame count.
+        last_frame_time: Unix timestamp of the latest published JPEG.
+        last_error: Current synthetic capture error.
+        recovery_attempts: Synthetic recovery-attempt count.
+        recoveries: Synthetic successful-recovery count.
+        consecutive_failures: Synthetic uninterrupted failure count.
+        last_recovery_error: Most recent synthetic recovery error.
+        output_width: Reported synthetic frame width in pixels.
+        output_height: Reported synthetic frame height in pixels.
     """
 
     start_error: Exception | None = None
@@ -65,25 +76,25 @@ class MockCamera:
 
     @property
     def running(self) -> bool:
-        """bool: Whether the mock camera is active."""
+        """Return whether the mock camera is active."""
         with self._condition:
             return self._running
 
     @property
     def frame_available(self) -> bool:
-        """bool: Whether a JPEG frame has been published."""
+        """Return whether a JPEG frame has been published."""
         with self._condition:
             return self._jpeg is not None
 
     @property
     def frame_number(self) -> int:
-        """int: Identifier of the latest published JPEG frame."""
+        """Return the identifier of the latest published JPEG frame."""
         with self._condition:
             return self._frame_number
 
     @property
     def jpeg(self) -> bytes | None:
-        """bytes | None: Latest JPEG bytes, or ``None`` when unavailable."""
+        """Return the latest JPEG bytes, or ``None`` when unavailable."""
         with self._condition:
             return self._jpeg
 
@@ -211,7 +222,13 @@ class MockCamera:
 
         with self._condition:
             self._condition.wait_for(
-                lambda: self._frame_number != previous_frame_number
+                lambda: (
+                    self._jpeg is not None
+                    and (
+                        previous_frame_number < 0
+                        or self._frame_number != previous_frame_number
+                    )
+                )
                 or not self._running,
                 timeout=timeout,
             )

@@ -50,7 +50,7 @@ def test_physical_sensor_delivers_nvmm_at_30_fps(width: int, height: int) -> Non
     native = ModuleType("_hardware_gst_buffer_probe")
     native.NvmmSurface = lambda payload, _width, _height: payload  # type: ignore[attr-defined]
     interop = NativeCudaInterop(native)
-    camera = GpuCamera(config, experimental=True)
+    camera = GpuCamera(config)
     subscription = camera.subscribe_latest("hardware-validation")
 
     with camera:
@@ -87,3 +87,29 @@ def test_physical_sensor_delivers_nvmm_at_30_fps(width: int, height: int) -> Non
     assert 27.0 <= observed_fps <= 33.0
     assert jpeg is not None and jpeg.startswith(b"\xff\xd8")
     assert imported_nvmm is True
+
+
+def test_stable_gpu_runtime_controls_and_preview_reconfiguration() -> None:
+    """Exercise live Argus controls and a full-graph JPEG topology restart."""
+    camera = GpuCamera(
+        CameraConfig(
+            sensor_id=SENSOR_ID,
+            capture_width=1280,
+            capture_height=720,
+            output_width=1280,
+            output_height=720,
+            fps=30,
+            enable_preview=False,
+        )
+    )
+
+    with camera:
+        camera.apply_argus_properties(("wbmode=daylight",))
+        assert camera.argus_properties == ("wbmode=daylight",)
+        camera.apply_argus_properties(("wbmode=auto",))
+        camera.set_preview_enabled(True)
+        _, jpeg = camera.wait_for_jpeg(0, timeout=2.0)
+
+        assert camera.running is True
+        assert camera.argus_properties == ("wbmode=auto",)
+        assert jpeg is not None and jpeg.startswith(b"\xff\xd8")

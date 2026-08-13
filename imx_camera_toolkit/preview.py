@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
 import uvicorn
 
@@ -13,12 +13,15 @@ from imx_camera_toolkit._internal.api.security import SecurityConfig
 from imx_camera_toolkit._internal.preview import PreviewServer, PreviewSource
 
 from .api import ViewMode, create_app
-from .camera import Camera, CameraConfig
+from .camera import Camera, CameraConfig, GpuCamera
+
+PreviewBackend: TypeAlias = Literal["cpu", "gpu"]
 
 __all__ = [
     "CameraPreview",
     "PreviewServer",
     "PreviewSource",
+    "PreviewBackend",
     "create_preview_app",
     "preview",
     "serve",
@@ -29,7 +32,7 @@ __all__ = [
 class CameraPreview:
     """Configure and run a browser preview using the existing camera API.
 
-    The facade composes :class:`Camera` with the FastAPI application factory.
+    The facade composes the selected CPU or GPU camera with the FastAPI factory.
     Camera startup and cleanup remain owned by the API lifespan handler, so the
     camera is opened when Uvicorn starts and stopped during graceful shutdown.
 
@@ -38,14 +41,26 @@ class CameraPreview:
         width: Capture and output frame width, in pixels.
         height: Capture and output frame height, in pixels.
         fps: Capture and JPEG encoding limit, in frames per second.
+        backend: ``"cpu"`` for BGR/OpenCV or ``"gpu"`` for NVMM capture and
+            hardware JPEG encoding.
         host: Address on which to expose the preview server.
         port: TCP port on which to expose the preview server.
+        allow_remote: Explicitly allow an unauthenticated non-loopback
+            development bind.
+        field_mode: Enable authentication and HTTP deployment hardening.
+        token_file: Protected JSON file containing bearer-token digests and
+            scopes.
+        allowed_hosts: Accepted HTTP `Host` values in field mode.
+        behind_tls_proxy: Trust HTTPS metadata from a loopback reverse proxy.
+        ssl_certfile: Optional certificate for direct TLS termination.
+        ssl_keyfile: Optional private key for direct TLS termination.
     """
 
     sensor_id: int = 0
     width: int = 1280
     height: int = 720
     fps: int = 30
+    backend: PreviewBackend = "cpu"
     host: str = "127.0.0.1"
     port: int = 8000
     allow_remote: bool = False
@@ -80,11 +95,15 @@ class CameraPreview:
         if not isinstance(self.host, str) or not self.host.strip():
             raise ValueError("host must be a non-empty string")
 
+        if self.backend not in {"cpu", "gpu"}:
+            raise ValueError("backend must be cpu or gpu")
+
         for name in ("allow_remote", "field_mode", "behind_tls_proxy"):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a boolean")
 
         remote = not _is_loopback_host(self.host)
+
         if remote and not (self.allow_remote or self.field_mode):
             raise ValueError(
                 "remote bind requires allow_remote=True or field_mode=True"
@@ -105,6 +124,7 @@ class CameraPreview:
 
         if any(not host.strip() for host in self.allowed_hosts):
             raise ValueError("allowed_hosts must contain non-empty host names")
+
         if self.field_mode and "*" in self.allowed_hosts:
             raise ValueError("field mode does not allow a wildcard host")
 
@@ -114,17 +134,18 @@ class CameraPreview:
         Returns:
             FastAPI application that owns this preview's camera lifecycle.
         """
-        camera = Camera(
-            config=CameraConfig(
-                sensor_id=self.sensor_id,
-                capture_width=self.width,
-                capture_height=self.height,
-                output_width=self.width,
-                output_height=self.height,
-                fps=self.fps,
-                max_fps=float(self.fps),
-                enable_preview=True,
-            )
+        config = CameraConfig(
+            sensor_id=self.sensor_id,
+            capture_width=self.width,
+            capture_height=self.height,
+            output_width=self.width,
+            output_height=self.height,
+            fps=self.fps,
+            max_fps=float(self.fps),
+            enable_preview=True,
+        )
+        camera = (
+            GpuCamera(config=config) if self.backend == "gpu" else Camera(config=config)
         )
         return create_app(
             camera,
@@ -157,6 +178,7 @@ class CameraPreview:
         its resources when the Uvicorn server shuts down.
         """
         application = self.create_application()
+
         if self.ssl_certfile is not None and self.ssl_keyfile is not None:
             uvicorn.run(
                 application,
@@ -165,6 +187,7 @@ class CameraPreview:
                 ssl_certfile=self.ssl_certfile,
                 ssl_keyfile=self.ssl_keyfile,
             )
+
         else:
             uvicorn.run(application, host=self.host, port=self.port)
 
@@ -172,10 +195,13 @@ class CameraPreview:
 def _is_loopback_host(host: str) -> bool:
     """Return whether a bind address is restricted to this device."""
     normalized = host.strip().strip("[]").lower()
+
     if normalized == "localhost":
         return True
+
     try:
         return ip_address(normalized).is_loopback
+
     except ValueError:
         return False
 
@@ -183,10 +209,12 @@ def _is_loopback_host(host: str) -> bool:
 def _default_allowed_hosts(host: str) -> tuple[str, ...]:
     """Derive a conservative Host allowlist from a concrete bind address."""
     normalized = host.strip()
+
     if normalized in {"0.0.0.0", "::", "[::]"}:  # noqa: S104
         raise ValueError(
             "wildcard field bind requires at least one allowed_hosts entry"
         )
+
     return (normalized, "localhost", "127.0.0.1", "[::1]")
 
 
@@ -195,6 +223,7 @@ def preview(
     width: int = 1280,
     height: int = 720,
     fps: int = 30,
+    backend: PreviewBackend = "cpu",
     host: str = "127.0.0.1",
     port: int = 8000,
     allow_remote: bool = False,
@@ -212,6 +241,7 @@ def preview(
         width: Capture and output frame width, in pixels.
         height: Capture and output frame height, in pixels.
         fps: Capture and JPEG encoding limit, in frames per second.
+        backend: ``"cpu"`` for BGR/OpenCV or ``"gpu"`` for NVMM capture.
         host: Address on which to expose the preview server.
         port: TCP port on which to expose the preview server.
         allow_remote: Explicitly allow a non-loopback bind in development mode.
@@ -227,6 +257,7 @@ def preview(
         width=width,
         height=height,
         fps=fps,
+        backend=backend,
         host=host,
         port=port,
         allow_remote=allow_remote,
@@ -240,7 +271,7 @@ def preview(
 
 
 def create_preview_app(
-    camera: Camera,
+    camera: Camera | GpuCamera,
     *,
     config_path: str | Path | None = None,
     view_mode: ViewMode = "simple",
@@ -266,11 +297,11 @@ def create_preview_app(
         FastAPI application backed by the supplied camera.
 
     Raises:
-        TypeError: If ``camera`` is not a :class:`Camera` instance.
+        TypeError: If ``camera`` is not a CPU or GPU camera instance.
         ValueError: If view configuration is invalid.
     """
-    if not isinstance(camera, Camera):
-        raise TypeError("camera must be a Camera instance")
+    if not isinstance(camera, (Camera, GpuCamera)):
+        raise TypeError("camera must be a Camera or GpuCamera instance")
 
     camera.set_preview_enabled(True)
     return create_app(

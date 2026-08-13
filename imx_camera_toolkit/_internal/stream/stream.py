@@ -46,12 +46,12 @@ class JPEGCamera(Protocol):
 
     @property
     def running(self) -> bool:
-        """bool: Whether the camera capture loop is active."""
+        """Return whether the camera capture loop is active."""
         ...
 
     @property
     def frame_number(self) -> int:
-        """int: Identifier of the newest JPEG frame."""
+        """Return the identifier of the newest JPEG frame."""
         ...
 
     def wait_for_jpeg(
@@ -265,7 +265,7 @@ class MJPEGStream:
 
     @property
     def content_type(self) -> str:
-        """str: Content type for an HTTP response carrying this stream."""
+        """Return the content type for an HTTP response carrying this stream."""
         return f"multipart/x-mixed-replace; boundary={self._boundary}"
 
     @property

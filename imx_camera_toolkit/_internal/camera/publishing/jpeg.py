@@ -37,19 +37,19 @@ class JPEGPublisher:
 
     @property
     def frame_available(self) -> bool:
-        """bool: Whether a JPEG frame has been encoded."""
+        """Return whether a JPEG frame has been encoded."""
         with self._condition:
             return self._jpeg is not None
 
     @property
     def frame_number(self) -> int:
-        """int: Identifier of the newest JPEG frame."""
+        """Return the identifier of the newest JPEG frame."""
         with self._condition:
             return self._frame_number
 
     @property
     def jpeg(self) -> bytes | None:
-        """bytes | None: Latest JPEG frame, or ``None`` when unavailable."""
+        """Return the latest JPEG frame, or ``None`` when unavailable."""
         with self._condition:
             return self._jpeg
 
@@ -106,7 +106,14 @@ class JPEGPublisher:
         """
         with self._condition:
             self._condition.wait_for(
-                lambda: self._frame_number != previous_frame_number or not is_running(),
+                lambda: (
+                    self._jpeg is not None
+                    and (
+                        previous_frame_number < 0
+                        or self._frame_number != previous_frame_number
+                    )
+                )
+                or not is_running(),
                 timeout=timeout,
             )
             return self._frame_number, self._jpeg

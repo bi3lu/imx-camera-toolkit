@@ -1,17 +1,17 @@
 # CPU, GPU, and browser mode guide
 
-The stable and experimental paths deliberately solve different problems. Do
-not choose a camera class from the desired model name; choose it from the
-memory domain required by the next consumer.
+The CPU and GPU paths are stable, supported APIs that deliberately solve
+different problems. Choose the camera class from the memory domain required by
+the next consumer, not from the desired model name.
 
 | Requirement | Capture API | Browser path | Cost and status |
 | --- | --- | --- | --- |
-| OpenCV, NumPy, CPU processing, snapshots | `Camera` | MJPEG | Stable. NV12 is converted to BGR and copied into host RAM. |
+| OpenCV, NumPy, CPU processing, software HDR | `Camera` | MJPEG | Recommended when the next consumer needs BGR in host RAM. |
 | Simple diagnostics in any desktop browser | `Camera` or GPU JPEG branch | MJPEG | Debug-oriented. Easy to deploy, but JPEG and multipart delivery cost CPU/network bandwidth. |
-| TensorRT or custom CUDA consumer | `GpuCamera(experimental=True)` | Optional WebRTC | Experimental. The borrowed NV12 frame remains in NVMM. |
-| DeepStream application | `GpuCamera(experimental=True)` or a native DeepStream source | WebRTC/HLS outside capture | Experimental toolkit interop. Prefer a native DeepStream pipeline when DeepStream owns the full graph. |
-| Low-latency production browser preview | `GpuCamera(experimental=True)` | H.264 WebRTC | One shared NVENC encoder where available, or shared CPU x264 on Orin Nano. |
-| Reverse-proxy-friendly segmented delivery | `GpuCamera(experimental=True)` | H.264/H.265 HLS | Simpler HTTP deployment, with more latency than WebRTC. H.265 requires NVENC. |
+| TensorRT or custom CUDA consumer | `GpuCamera` | Optional WebRTC | Recommended. The borrowed NV12 frame remains in NVMM. |
+| DeepStream application | `GpuCamera` or a native DeepStream source | WebRTC/HLS outside capture | Supported toolkit interop. Prefer a native DeepStream pipeline when DeepStream owns the full graph. |
+| Low-latency production browser preview | `GpuCamera` | H.264 WebRTC | Recommended. One shared NVENC encoder where available, or shared CPU x264 on Orin Nano. |
+| Reverse-proxy-friendly segmented delivery | `GpuCamera` | H.264/H.265 HLS | Supported. Simpler HTTP deployment, with more latency than WebRTC. H.265 requires NVENC. |
 
 `Camera.read(copy=False)` only avoids another Python-side array copy. It does
 not turn BGR host memory into CUDA or NVMM memory. Conversely, `GpuFrame` is a
@@ -88,6 +88,9 @@ to map detections back to video coordinates.
 
 ## Examples
 
+For a complete Jetson bring-up and secure deployment procedure, use the
+[GPU Camera and YOLO deployment guide](GPU_CAMERA_YOLO_GUIDE.md).
+
 - [`examples/yolo_detection.py`](../examples/yolo_detection.py) demonstrates
   an end-to-end YOLO export producing `[x1, y1, x2, y2, score, class]`, with a
   model-owned decoder and CUDA rectangle overlay feeding WebRTC.
@@ -103,7 +106,7 @@ mask interpretation, and overlay policy are intentionally not part of capture.
 
 ## Deployment benchmark
 
-Run the complete stable CPU and experimental GPU matrix on the target Jetson:
+Run the complete stable CPU/GPU matrix on the target Jetson:
 
 ```bash
 uv run imx-camera benchmark jetson --resolution all --backend all \
@@ -123,15 +126,28 @@ clocks, cooling state, camera mode, model, and client count in the benchmark
 artifact; results are not portable across those conditions. NVIDIA documents
 the sampler format in the [tegrastats guide](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/AT/JetsonLinuxDevelopmentTools/TegrastatsUtility.html).
 
-## Experimental API policy
+The same stable backend selection is available for operational commands:
 
-`GpuCamera` requires `experimental=True` on every construction. Until the API
-is promoted, minor releases may change NVMM handle details, native build
-requirements, encoder properties, or supported JetPack versions. `Camera`,
-`Frame`, BGR `raw_frame`, and the MJPEG debug path retain their existing stable
-semantics.
+```bash
+uv run imx-camera test --backend gpu --frames 60
+uv run imx-camera snapshot frame.jpg --backend gpu
+uv run imx-camera preview --backend gpu --port 8000
+```
 
-Promotion requires successful unit CI plus the separate Jetson hardware
-workflow for the supported sensor/resolution matrix, TensorRT parity, 720p/30
-production encode, clean shutdown/recovery, and a documented compatibility
-matrix update.
+The GPU preview command retains NV12/NVMM for consumers and uses the isolated
+`nvjpegenc` branch for browser JPEGs. Runtime Argus controls are shared across
+both paths. Host-memory software HDR remains CPU-only by design; `GpuCamera`
+does not silently add BGR conversion to provide it.
+
+## Stable API and compatibility policy
+
+`GpuCamera`, `GpuFrame`, retained subscriptions, TensorRT interop, and the
+shared production encoder are stable APIs. Construction needs no feature flag.
+The CPU `Camera`/`Frame` contract remains unchanged; applications select CPU or
+GPU explicitly and no API silently converts between BGR/CPU and NV12/NVMM.
+
+Stable refers to the public contract, not portability of native artifacts.
+Cached TensorRT engines remain local to the matching JetPack, TensorRT, model,
+shape profile, and GPU. Supported hardware claims still require the separate
+Jetson workflow for the sensor/resolution matrix, TensorRT parity, 720p/30
+production encode, clean shutdown/recovery, and a compatibility-matrix update.

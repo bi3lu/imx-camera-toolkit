@@ -28,10 +28,15 @@ not provide inference models, model loaders, trackers, batching, CUDA-stream
 management, DeepStream pipelines, ROS 2 integration, multi-camera
 synchronization, or telemetry backends. Applications retain ownership of those
 policies and receive a BGR/CPU `Frame.image` payload for their own chosen vision
-stack. Optional GPU sources use the separate borrowed `GpuFrame` contract.
+stack. GPU sources use the separate borrowed `GpuFrame` contract.
 
 Start with the [CPU/GPU and browser mode guide](docs/GPU_PATH_GUIDE.md) before
-selecting `Camera`, experimental `GpuCamera`, MJPEG, WebRTC, or HLS.
+selecting `Camera`, `GpuCamera`, MJPEG, WebRTC, or HLS.
+
+For an end-to-end deployment procedure, follow the
+[GPU Camera and YOLO guide](docs/GPU_CAMERA_YOLO_GUIDE.md). The
+[documentation index](docs/README.md) links the architecture, component, and
+release documents by task.
 
 ## System architecture
 
@@ -243,7 +248,7 @@ The existing `Camera` and `Frame` contracts remain the OpenCV-compatible CPU
 path. Their explicit output identity is `FrameFormat.BGR_CPU` in
 `MemoryType.CPU`, while the legacy `frame.format` field remains `"BGR"`.
 
-Optional GPU-first capture sources expose `GpuFrame` with
+GPU-first capture sources expose `GpuFrame` with
 `FrameFormat.NV12_NVMM` and `MemoryType.NVMM`. A GPU frame has no `image` or
 implicit NumPy conversion. It carries exactly one borrowed DMA-BUF descriptor
 or a checked `GpuBufferHandle` around `Gst.Buffer` or `NvBufSurface`.
@@ -272,8 +277,7 @@ with GpuCamera(
         output_height=1080,
         fps=30,
         enable_preview=True,
-    ),
-    experimental=True,
+    )
 ) as camera:
     frame = camera.read(timeout=1.0)
 
@@ -290,7 +294,7 @@ without `buffer.map()`, NumPy conversion, or a host-memory image copy.
 `GpuCamera` remains model-agnostic: applications own TensorRT engines,
 preprocessing, CUDA synchronization, and model/GPU/TensorRT-aware engine cache
 validation. See [the camera documentation](imx_camera_toolkit/_internal/camera/README.md#gpu-first-nvmm-capture)
-for the pipeline contract and opt-in IMX219/IMX477 hardware validation commands.
+for the pipeline contract and IMX219/IMX477 hardware validation commands.
 
 ### Optional TensorRT runner
 
@@ -379,7 +383,7 @@ dedicated thread. Give each expensive inference consumer its own runner;
 from imx_camera_toolkit import GpuCamera
 from imx_camera_toolkit.consumers import InferenceConsumer
 
-with GpuCamera(experimental=True) as camera:
+with GpuCamera() as camera:
     inference = InferenceConsumer(
         camera.subscribe_latest("primary-inference"),
         runner,
@@ -601,16 +605,20 @@ smoke testing, snapshots, browser preview, and benchmarks:
 uv run imx-camera info --json
 uv run imx-camera diagnose --hardware
 uv run imx-camera test --frames 30 --timeout 5
+uv run imx-camera test --backend gpu --frames 30 --timeout 5
 uv run imx-camera snapshot snapshot.jpg
-uv run imx-camera preview --port 8000
+uv run imx-camera snapshot gpu-snapshot.jpg --backend gpu
+uv run imx-camera preview --backend gpu --port 8000
 uv run imx-camera benchmark capture --frames 1000
 uv run imx-camera benchmark camera --frames 300
 uv run imx-camera benchmark camera --frames 300 \
   --cpu-model my_application.models:cpu_model
 ```
 
-`diagnose --hardware` checks for the locally installed Argus GStreamer element
-and V4L2 command-line utility. `test` is the explicit physical-camera check: it
+`diagnose --hardware` checks the locally installed Argus, NVMM conversion,
+hardware JPEG, appsink/tee/queue elements, and V4L2 utility. `test`, `snapshot`,
+and `preview` accept `--backend cpu|gpu`; CPU is the backward-compatible
+default, while GPU selects stable NV12/NVMM capture and hardware JPEG. `test`
 opens the configured sensor, waits for the first frame, measures a sequence of
 distinct frames, and verifies that the backend is released. It may access the
 camera and should therefore not run concurrently with another camera process.
@@ -626,6 +634,10 @@ frames, and mean delivery latency; they do not measure network or browser
 throughput.
 
 ## Examples
+
+The [GPU Camera and YOLO deployment guide](docs/GPU_CAMERA_YOLO_GUIDE.md)
+covers JetPack preparation, sensor validation, ONNX export, native CUDA
+interop, local WebRTC commissioning, field mode, TLS, and systemd operation.
 
 The runnable examples are intentionally small and use only public imports:
 
@@ -649,12 +661,13 @@ For the simplest Python integration, start a preview through the public facade:
 ```python
 from imx_camera_toolkit import preview
 
-preview()
+preview(backend="gpu")
 ```
 
 The facade starts a simple browser view and releases camera resources during
-server shutdown. Its defaults are sensor `0`, `1280x720`, `30` FPS,
-`127.0.0.1`, and port `8000`.
+server shutdown. Select `backend="gpu"` for the NVMM + `nvjpegenc` path or
+`backend="cpu"` for BGR/OpenCV. The backward-compatible defaults are CPU,
+sensor `0`, `1280x720`, `30` FPS, `127.0.0.1`, and port `8000`.
 
 Configure the camera and server explicitly when needed:
 
@@ -662,6 +675,7 @@ Configure the camera and server explicitly when needed:
 from imx_camera_toolkit import preview
 
 preview(
+    backend="gpu",
     sensor_id=0,
     width=1920,
     height=1080,
@@ -675,7 +689,7 @@ For reusable configuration, use the object-oriented variant:
 ```python
 from imx_camera_toolkit import CameraPreview
 
-camera_preview = CameraPreview()
+camera_preview = CameraPreview(backend="gpu")
 camera_preview.run()
 ```
 
@@ -764,6 +778,9 @@ curl -X PUT http://localhost:8000/api/camera/software-hdr \
 
 Software HDR changes sensor exposure during capture. Do not combine it with
 manual exposure or gain changes from another client while it is enabled.
+Software HDR fuses BGR images and is therefore available only with the CPU
+`Camera` path. `GpuCamera` reports `supported: false` and retains NVMM; select a
+native sensor HDR mode through Argus when the driver provides one.
 
 ## Configuration
 

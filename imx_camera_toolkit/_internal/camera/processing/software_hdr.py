@@ -97,7 +97,7 @@ class SoftwareHDRProcessor:
 
     @property
     def exposures_us(self) -> tuple[int, int, int]:
-        """tuple[int, int, int]: Resolved -2 EV, 0 EV, and +2 EV exposures."""
+        """Return the resolved -2 EV, 0 EV, and +2 EV exposures."""
         return self._exposures_us
 
     def start(self, set_exposure: Callable[[int], None]) -> None:

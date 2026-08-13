@@ -120,10 +120,9 @@ class _FakeGpuSubscription:
 
 
 class _FakeGpuCamera:
-    """Experimental GPU camera test double for benchmark orchestration."""
+    """Stable GPU camera test double for benchmark orchestration."""
 
-    def __init__(self, config: CameraConfig, *, experimental: bool) -> None:
-        assert experimental is True
+    def __init__(self, config: CameraConfig) -> None:
         self.config = config
         self.sequence = 0
 
@@ -214,7 +213,7 @@ def test_camera_benchmark_reports_latency_cpu_gpu_and_resolution(
     assert result.backend == "cpu"
 
 
-def test_gpu_benchmark_uses_experimental_latest_frame_path(
+def test_gpu_benchmark_uses_stable_latest_frame_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """GPU reports must avoid polling duplicate frames and expose resources."""
@@ -232,7 +231,7 @@ def test_gpu_benchmark_uses_experimental_latest_frame_path(
     assert result.frames_per_second > 0
     assert result.gpu_utilization_percent == 62.5
     assert (result.width, result.height) == (1920, 1080)
-    assert result.backend == "gpu-experimental"
+    assert result.backend == "gpu"
 
 
 def test_tegrastats_parser_accepts_jetpack_gr3d_output() -> None:

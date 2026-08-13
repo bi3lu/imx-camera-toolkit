@@ -74,7 +74,6 @@ camera = GpuCamera(
         bitrate_bps=4_000_000,
         keyframe_interval=30,
     ),
-    experimental=True,
 )
 transport = ProductionPreviewServer(camera, ProductionPreviewConfig())
 app = create_production_preview_app(transport)

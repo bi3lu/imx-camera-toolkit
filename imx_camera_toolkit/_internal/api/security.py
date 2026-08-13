@@ -215,6 +215,7 @@ class _TokenBucket:
     """Small thread-safe token bucket keyed by request identity."""
 
     def __init__(self, rate: float, burst: int) -> None:
+        """Initialize a limiter with a refill rate and maximum burst."""
         self._rate = float(rate)
         self._burst = float(burst)
         self._buckets: dict[str, tuple[float, float]] = {}
@@ -269,10 +270,12 @@ class RequestSizeLimitMiddleware:
     """Reject request bodies that exceed the configured byte ceiling."""
 
     def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        """Initialize the middleware with an ASGI app and byte limit."""
         self.app = app
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Reject oversized HTTP requests before forwarding them."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
@@ -300,6 +303,7 @@ class RequestSizeLimitMiddleware:
         exceeded = False
 
         async def limited_receive() -> Message:
+            """Count streamed request bytes before forwarding a message."""
             nonlocal consumed, exceeded
             message = await receive()
 
@@ -327,10 +331,12 @@ class RateLimitMiddleware:
     """Apply independent per-IP and per-token request buckets."""
 
     def __init__(self, app: ASGIApp, rate: float, burst: int) -> None:
+        """Initialize independent request buckets for the ASGI app."""
         self.app = app
         self._limiter = _TokenBucket(rate, burst)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Rate-limit HTTP requests by client address and credential."""
         if scope["type"] != "http" or scope.get("path") == "/healthz":
             await self.app(scope, receive, send)
             return
@@ -359,11 +365,15 @@ class SecurityHeadersMiddleware:
     """Attach browser hardening headers without buffering streaming bodies."""
 
     def __init__(self, app: ASGIApp, hsts: bool = False) -> None:
+        """Initialize response hardening and optional HSTS."""
         self.app = app
         self._hsts = hsts
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Attach security headers to each HTTP response."""
+
         async def send_with_headers(message: Message) -> None:
+            """Add hardening headers before forwarding a response message."""
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", ()))
                 headers.extend(
@@ -403,6 +413,7 @@ def build_authorizer(config: SecurityConfig) -> Authorizer:
         security_scopes: SecurityScopes,
         token: str | None = Depends(oauth2),
     ) -> None:
+        """Authorize a bearer token against the requested OAuth2 scopes."""
         if not config.authentication_required:
             return
 

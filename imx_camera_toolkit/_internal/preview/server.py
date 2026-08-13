@@ -97,17 +97,17 @@ class PreviewServer:
 
     @property
     def running(self) -> bool:
-        """bool: Whether this preview transport is accepting or reading frames."""
+        """Return whether this preview transport accepts or reads frames."""
         return self._running.is_set()
 
     @property
     def frame_number(self) -> int:
-        """int: Identifier of the newest preview JPEG frame."""
+        """Return the identifier of the newest preview JPEG frame."""
         return self._publisher.frame_number
 
     @property
     def jpeg(self) -> bytes | None:
-        """bytes | None: Latest preview JPEG, when an image was published."""
+        """Return the latest preview JPEG, when an image was published."""
         return self._publisher.jpeg
 
     def publish(self, frame: Frame | object) -> bool:

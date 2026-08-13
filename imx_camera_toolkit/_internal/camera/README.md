@@ -68,8 +68,8 @@ The core Python package has no PyPI runtime dependencies. YAML configuration is
 used when PyYAML is available; otherwise `Camera` safely uses its built-in
 configuration defaults.
 
-For deployment choices and the experimental GPU compatibility policy, see the
-[CPU/GPU and browser mode guide](../../docs/GPU_PATH_GUIDE.md).
+For deployment choices and the stable GPU compatibility policy, see the
+[CPU/GPU and browser mode guide](../../../docs/GPU_PATH_GUIDE.md).
 
 Install the project dependencies with:
 
@@ -183,7 +183,7 @@ config = CameraConfig(
     enable_preview=True,
 )
 
-with GpuCamera(config, experimental=True) as camera:
+with GpuCamera(config) as camera:
     frame = camera.read(timeout=1.0)
     if frame is not None:
         run_tensor_rt(frame.payload(), frame.width, frame.height)
@@ -222,7 +222,6 @@ camera = GpuCamera(
         bitrate_bps=4_000_000,
         keyframe_interval=30,
     ),
-    experimental=True,
 )
 ```
 

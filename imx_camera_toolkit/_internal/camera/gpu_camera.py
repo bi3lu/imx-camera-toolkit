@@ -6,6 +6,8 @@ import logging
 import threading
 import time
 from collections import deque
+from collections.abc import Sequence
+from dataclasses import replace
 from math import isfinite
 from pathlib import Path
 from typing import Protocol
@@ -18,6 +20,12 @@ from imx_camera_toolkit._internal.consumers.latest import (
 from .backends import GpuGStreamerCaptureBackend
 from .camera import CameraRecoveryPolicy
 from .config import CameraConfig, load_camera_config
+from .controls import V4L2Controls
+from .controls.argus import (
+    apply_live_properties,
+    manual_control_properties,
+    non_manual_control_properties,
+)
 from .errors import (
     CameraConfigurationError,
     CameraDependencyError,
@@ -66,6 +74,11 @@ class _GpuBackend(Protocol):
         """Stable backend identifier."""
         ...
 
+    @property
+    def argus_source(self) -> object | None:
+        """Live ``nvarguscamerasrc`` element, when the backend is open."""
+        ...
+
     def open(self) -> None:
         """Open both pipeline branches."""
         ...
@@ -88,12 +101,12 @@ class _GpuBackend(Protocol):
 
 
 class GpuCamera:
-    """Experimentally capture newest NV12 frames without CPU conversion.
+    """Capture newest NV12 frames without CPU conversion.
 
-    ``GpuCamera`` is an explicit opt-in API. It never changes ``Camera`` or its
-    BGR/NumPy ``raw_frame`` behavior. The inference branch yields borrowed
-    :class:`GpuFrame` leases, while the optional preview branch is isolated by
-    a leaky GStreamer queue and NVIDIA JPEG encoder.
+    ``GpuCamera`` is the stable GPU-first counterpart to ``Camera``. It never
+    changes the CPU camera's BGR/NumPy behavior. The inference branch yields
+    borrowed :class:`GpuFrame` leases, while the optional preview branch is
+    isolated by a leaky GStreamer queue and NVIDIA JPEG encoder.
     """
 
     STATS_WINDOW_NS = 1_000_000_000
@@ -111,18 +124,8 @@ class GpuCamera:
         overlay_error_policy: str = "fail-open",
         encoder_pipeline_factory: VideoEncoderPipelineFactory | None = None,
         argus_properties: tuple[str, ...] = (),
-        experimental: bool = False,
     ) -> None:
         """Initialize an NVMM pipeline without opening the camera."""
-        if not isinstance(experimental, bool):
-            raise CameraConfigurationError("experimental must be a boolean")
-
-        if not experimental:
-            raise CameraConfigurationError(
-                "GpuCamera is an experimental API; pass experimental=True "
-                "after reviewing the GPU compatibility guide"
-            )
-
         if config is not None and config_path is not None:
             raise CameraConfigurationError(
                 "config and config_path cannot be used together"
@@ -137,29 +140,35 @@ class GpuCamera:
             raise CameraConfigurationError(
                 "video_config must be a HardwareVideoConfig or None"
             )
+
         if overlay_error_policy not in {"fail-open", "fail-closed"}:
             raise CameraConfigurationError(
                 "overlay_error_policy must be fail-open or fail-closed"
             )
+
         if encoder_pipeline_factory is not None and not callable(
             encoder_pipeline_factory
         ):
             raise CameraConfigurationError(
                 "encoder_pipeline_factory must be callable or None"
             )
+
         if encoder_pipeline_factory is not None and video_config is None:
             raise CameraConfigurationError(
                 "encoder_pipeline_factory requires video_config"
             )
+
         if video_overlay is not None:
             if video_config is None:
                 raise CameraConfigurationError(
                     "video_overlay requires a video encoder configuration"
                 )
+
             if not isinstance(video_overlay, VideoOverlayRenderer):
                 raise CameraConfigurationError(
                     "video_overlay must implement VideoOverlayRenderer"
                 )
+
             if video_overlay.memory_type is not MemoryType.NVMM:
                 raise CameraConfigurationError(
                     "production video overlays must operate on NVMM; use "
@@ -184,11 +193,22 @@ class GpuCamera:
             max_fps=base_config.max_fps,
             output_format=FrameFormat.NV12_NVMM,
         )
+
+        if self._config.sensor_mode is not None and any(
+            property_value.startswith("sensor-mode=")
+            for property_value in argus_properties
+        ):
+            raise CameraConfigurationError(
+                "CameraConfig.sensor_mode cannot be combined with an "
+                "argus_properties sensor-mode setting"
+            )
+
         config_properties = (
             ()
             if self._config.sensor_mode is None
             else (f"sensor-mode={self._config.sensor_mode}",)
         )
+
         self._argus_properties = normalize_argus_properties(
             (*config_properties, *argus_properties)
         )
@@ -196,6 +216,7 @@ class GpuCamera:
         self._video_overlay = video_overlay
         self._overlay_error_policy = overlay_error_policy
         self._encoder_pipeline_factory = encoder_pipeline_factory
+        self._v4l2_controls = V4L2Controls(self._config.sensor_id)
         self._resolved_video_encoder_backend: str | None = None
         self._encoded_stream_description: EncodedStreamDescription | None = None
         self._pipeline = ""
@@ -230,8 +251,14 @@ class GpuCamera:
 
     @property
     def api_stability(self) -> str:
-        """Release status of the explicitly enabled GPU capture contract."""
-        return "experimental"
+        """Release status of the GPU capture contract."""
+        return "stable"
+
+    @property
+    def argus_properties(self) -> tuple[str, ...]:
+        """Current Argus source property assignments."""
+        with self._lifecycle_lock:
+            return self._argus_properties
 
     @property
     def config(self) -> CameraConfig:
@@ -276,6 +303,79 @@ class GpuCamera:
     def preview_enabled(self) -> bool:
         """Whether the independent JPEG branch is part of the pipeline."""
         return self._config.enable_preview
+
+    def set_preview_enabled(self, enabled: bool) -> None:
+        """Enable or disable the isolated hardware JPEG branch.
+
+        Changing GStreamer topology requires a bounded camera restart when the
+        capture worker is active. If the new pipeline cannot start, the prior
+        configuration is restored and reopened before the error is re-raised.
+        """
+        if not isinstance(enabled, bool):
+            raise CameraConfigurationError("enabled must be a boolean")
+
+        with self._lifecycle_lock:
+            if enabled == self._config.enable_preview:
+                return
+
+            old_config = self._config
+            old_pipeline = self._pipeline
+            was_running = self.running
+
+            if was_running:
+                self.stop()
+                if self._backend is not None:
+                    raise CameraRecoveryError("GPU camera capture thread did not stop")
+
+            self._config = replace(self._config, enable_preview=enabled)
+            self._rebuild_pipeline()
+
+            if not enabled:
+                self._preview_publisher.clear()
+
+            if not was_running:
+                return
+
+            try:
+                self.start()
+
+            except Exception:
+                self._config = old_config
+                self._pipeline = old_pipeline
+
+                try:
+                    self.start()
+
+                except Exception:
+                    logger.exception("Could not restore the previous NVMM pipeline")
+
+                raise
+
+    @property
+    def software_hdr_state(self) -> dict[str, object]:
+        """Report why host-memory software HDR is unavailable on GPU frames."""
+        return {
+            "supported": False,
+            "enabled": False,
+            "base_exposure_us": None,
+            "settle_frames": 0,
+            "bracket_ev": [],
+            "exposures_us": [],
+        }
+
+    def configure_software_hdr(
+        self,
+        *,
+        enabled: bool,
+        base_exposure_us: int | None = None,
+        settle_frames: int | None = None,
+    ) -> dict[str, object]:
+        """Reject CPU image fusion without silently leaving NVMM."""
+        del enabled, base_exposure_us, settle_frames
+        raise CameraConfigurationError(
+            "software HDR requires the BGR/CPU Camera path; native sensor HDR "
+            "can be selected through an Argus sensor mode"
+        )
 
     @property
     def video_config(self) -> HardwareVideoConfig | None:
@@ -393,9 +493,55 @@ class GpuCamera:
         backend: VideoEncoderBackend | None = None,
     ) -> None:
         """Regenerate the camera graph from public configuration only."""
-        definition = self._encoder_pipeline(backend)
+        selected_backend = backend
+
+        if (
+            selected_backend is None
+            and self._encoder_pipeline_factory is None
+            and self._resolved_video_encoder_backend
+            in {item.value for item in VideoEncoderBackend}
+        ):
+            selected_backend = VideoEncoderBackend(self._resolved_video_encoder_backend)
+
+        definition = self._encoder_pipeline(selected_backend)
+
+        self._pipeline = self._build_pipeline(
+            self._argus_properties,
+            definition=definition,
+        )
+
+        if definition is not None:
+            if (
+                self._encoder_pipeline_factory is not None
+                or selected_backend is not None
+                or self._video_config is not None
+                and self._video_config.backend is not VideoEncoderBackend.AUTO
+            ):
+                self._resolved_video_encoder_backend = definition.backend
+
+            else:
+                self._resolved_video_encoder_backend = None
+
+            self._encoded_stream_description = definition.description
+
+    def _build_pipeline(
+        self,
+        argus_properties: Sequence[str],
+        *,
+        definition: VideoEncoderPipeline | None = None,
+    ) -> str:
+        """Build a candidate graph without changing active camera state."""
+        if definition is None:
+            resolved_backend = self._resolved_video_encoder_backend
+            backend = (
+                VideoEncoderBackend(resolved_backend)
+                if self._encoder_pipeline_factory is None
+                and resolved_backend in {item.value for item in VideoEncoderBackend}
+                else None
+            )
+            definition = self._encoder_pipeline(backend)
         factory = None if definition is None else lambda *_: definition
-        self._pipeline = build_gpu_gstreamer_pipeline(
+        return build_gpu_gstreamer_pipeline(
             sensor_id=self._config.sensor_id,
             capture_width=self._config.capture_width,
             capture_height=self._config.capture_height,
@@ -408,19 +554,8 @@ class GpuCamera:
             video_config=self._video_config,
             enable_video_overlay=self._video_overlay is not None,
             encoder_pipeline_factory=factory,
-            argus_properties=self._argus_properties,
+            argus_properties=argus_properties,
         )
-        if definition is not None:
-            if (
-                self._encoder_pipeline_factory is not None
-                or backend is not None
-                or self._video_config is not None
-                and self._video_config.backend is not VideoEncoderBackend.AUTO
-            ):
-                self._resolved_video_encoder_backend = definition.backend
-            else:
-                self._resolved_video_encoder_backend = None
-            self._encoded_stream_description = definition.description
 
     @property
     def gpu_frame_number(self) -> int:
@@ -987,6 +1122,80 @@ class GpuCamera:
             self._backend.close()
 
         self._backend = None
+
+    def apply_argus_properties(
+        self,
+        properties: Sequence[str],
+        *,
+        restart_required: bool = False,
+    ) -> None:
+        """Apply safe Argus controls live or rebuild the complete NVMM graph."""
+        normalized = normalize_argus_properties(properties)
+        new_pipeline = self._build_pipeline(normalized)
+
+        with self._lifecycle_lock:
+            if normalized == self._argus_properties:
+                return
+
+            backend = self._backend
+            source = backend.argus_source if backend is not None else None
+
+            if self.running and source is not None and not restart_required:
+                self._v4l2_controls.apply_manual_controls(
+                    manual_control_properties(self._argus_properties),
+                    manual_control_properties(normalized),
+                )
+
+                apply_live_properties(
+                    source,
+                    non_manual_control_properties(self._argus_properties),
+                    non_manual_control_properties(normalized),
+                )
+
+                self._argus_properties = normalized
+                self._pipeline = new_pipeline
+                return
+
+        self.reconfigure_argus_properties(normalized)
+
+    def reconfigure_argus_properties(self, properties: Sequence[str]) -> None:
+        """Rebuild the complete NVMM pipeline with new Argus properties."""
+        normalized = normalize_argus_properties(properties)
+        new_pipeline = self._build_pipeline(normalized)
+
+        with self._lifecycle_lock:
+            if normalized == self._argus_properties:
+                return
+
+            old_properties = self._argus_properties
+            old_pipeline = self._pipeline
+            was_running = self.running
+
+            if was_running:
+                self.stop()
+                if self._backend is not None:
+                    raise CameraRecoveryError("GPU camera capture thread did not stop")
+
+            self._argus_properties = normalized
+            self._pipeline = new_pipeline
+
+            if not was_running:
+                return
+
+            try:
+                self.start()
+
+            except Exception:
+                self._argus_properties = old_properties
+                self._pipeline = old_pipeline
+
+                try:
+                    self.start()
+
+                except Exception:
+                    logger.exception("Could not restore the previous NVMM pipeline")
+
+                raise
 
     def stop(self) -> None:
         """Stop and close inference and preview branches together."""

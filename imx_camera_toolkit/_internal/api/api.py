@@ -21,6 +21,7 @@ except ImportError:
     yaml = None
 
 from imx_camera_toolkit._internal.camera.camera import Camera, CameraConfig
+from imx_camera_toolkit._internal.camera.gpu_camera import GpuCamera
 from imx_camera_toolkit._internal.camera_control.camera_control import (
     CameraController,
     ProfileNotFoundError,
@@ -294,7 +295,7 @@ def load_camera_view(
     return html.replace(CAMERA_STREAM_TEMPLATE, CAMERA_STREAM_PATH)
 
 
-def _camera_status(camera: Camera) -> dict[str, object]:
+def _camera_status(camera: Camera | GpuCamera) -> dict[str, object]:
     """Return JSON-serializable state and capture metrics for a camera.
 
     Args:
@@ -361,7 +362,7 @@ def _camera_status(camera: Camera) -> dict[str, object]:
 
 
 def create_app(
-    camera: Camera | None = None,
+    camera: Camera | GpuCamera | None = None,
     *,
     config_path: str | Path | None = None,
     view_mode: ViewMode = DEFAULT_VIEW_MODE,
@@ -377,7 +378,8 @@ def create_app(
     can set ``manage_camera=False``.
 
     Args:
-        camera: Camera to expose. When omitted, creates a default ``Camera``.
+        camera: CPU or GPU camera to expose. When omitted, creates a default
+            CPU ``Camera`` for backward compatibility.
         config_path: Optional path to a YAML API configuration file.
         view_mode: Bundled camera view: ``"simple"`` for preview only or
             ``"advanced"`` for preview with runtime control panel.
