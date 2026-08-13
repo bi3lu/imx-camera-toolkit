@@ -174,7 +174,9 @@ uv run imx-camera-build-interop
 The encoder branch inserts a device-side `nvvidconv` copy before the overlay
 hook. In-place drawing therefore cannot mutate the capture surface being read
 by TensorRT. The application-owned mapper keeps boxes, masks, labels, and model
-decoding outside capture.
+decoding outside capture. Stream creation, each GStreamer-thread render call,
+surface destruction, synchronization, and renderer shutdown all activate the
+interop runtime's retained primary CUDA context.
 
 For environments without CUDA overlay support, retain
 `InferencePreviewSource`: it overlays JPEGs through an application CPU renderer
@@ -236,7 +238,10 @@ IMX_TENSORRT_ONNX=/opt/models/model.onnx \
 uv run pytest tests/hardware/test_production_video_hardware.py
 ```
 
-Both backends require at least 25 encode FPS and successful TensorRT inference.
-When NVENC is selected, the test additionally requires less than half of one
-CPU core during the sample window. The x264 fallback is software encoding and
-is therefore not subject to the NVENC CPU ceiling.
+The test prepares TensorRT on the main thread, requires at least ten successful
+inference calls on the dedicated consumer thread, and requires a successful
+CUDA overlay from the GStreamer callback thread. Both backends require at least
+25 encode FPS with no inference or overlay errors. When NVENC is selected, the
+test additionally requires less than half of one CPU core during the sample
+window. The x264 fallback is software encoding and is therefore not subject to
+the NVENC CPU ceiling.
