@@ -79,7 +79,7 @@ class CameraController:
 
     @property
     def revision(self) -> int:
-        """int: Monotonically increasing version of the current settings."""
+        """Return the monotonically increasing current-settings version."""
         with self._lock:
             return self._revision
 

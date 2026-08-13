@@ -60,7 +60,7 @@ class CameraConfig:
 
     @property
     def preview_fps(self) -> float:
-        """float: Resolved maximum rate used by the JPEG preview encoder."""
+        """Return the resolved maximum rate used by the JPEG preview encoder."""
         return float(self.fps) if self.max_fps is None else float(self.max_fps)
 
     @property

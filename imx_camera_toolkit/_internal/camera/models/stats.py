@@ -22,6 +22,10 @@ class CameraStats:
         recovery_count: Number of successful backend recovery operations.
         consecutive_failures: Current uninterrupted source-read failure count.
         running: Whether the capture worker is currently active.
+        pipeline: Per-stage latency and drop metrics.
+        consumer_dropped_frames: Named latest-frame consumer drop counters.
+        last_capture_timestamp_ns: Optional source timestamp of the latest
+            successful frame in its native clock domain.
     """
 
     captured_frames: int

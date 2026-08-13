@@ -164,6 +164,8 @@ def benchmark_camera_capture(
         config: Optional base camera configuration for the tested sensor.
         model: Optional CPU model callable receiving each BGR image. It cannot
             be combined with JPEG preview.
+        resource_sampler: Optional callback returning process and device
+            resource measurements for the completed benchmark.
 
     Returns:
         End-to-end result for the current local Jetson and sensor setup.

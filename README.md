@@ -33,6 +33,11 @@ stack. GPU sources use the separate borrowed `GpuFrame` contract.
 Start with the [CPU/GPU and browser mode guide](docs/GPU_PATH_GUIDE.md) before
 selecting `Camera`, `GpuCamera`, MJPEG, WebRTC, or HLS.
 
+For an end-to-end deployment procedure, follow the
+[GPU Camera and YOLO guide](docs/GPU_CAMERA_YOLO_GUIDE.md). The
+[documentation index](docs/README.md) links the architecture, component, and
+release documents by task.
+
 ## System architecture
 
 ```text
@@ -629,6 +634,10 @@ frames, and mean delivery latency; they do not measure network or browser
 throughput.
 
 ## Examples
+
+The [GPU Camera and YOLO deployment guide](docs/GPU_CAMERA_YOLO_GUIDE.md)
+covers JetPack preparation, sensor validation, ONNX export, native CUDA
+interop, local WebRTC commissioning, field mode, TLS, and systemd operation.
 
 The runnable examples are intentionally small and use only public imports:
 

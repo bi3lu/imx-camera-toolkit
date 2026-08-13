@@ -88,6 +88,9 @@ to map detections back to video coordinates.
 
 ## Examples
 
+For a complete Jetson bring-up and secure deployment procedure, use the
+[GPU Camera and YOLO deployment guide](GPU_CAMERA_YOLO_GUIDE.md).
+
 - [`examples/yolo_detection.py`](../examples/yolo_detection.py) demonstrates
   an end-to-end YOLO export producing `[x1, y1, x2, y2, score, class]`, with a
   model-owned decoder and CUDA rectangle overlay feeding WebRTC.

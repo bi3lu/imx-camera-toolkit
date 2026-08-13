@@ -26,7 +26,7 @@ class RawFramePublisher:
 
     @property
     def frame(self) -> object | None:
-        """object | None: Newest processed BGR frame without a copy."""
+        """Return the newest processed BGR frame without a copy."""
         with self._condition:
             return self._frame.image if self._frame is not None else None
 
@@ -38,7 +38,7 @@ class RawFramePublisher:
 
     @property
     def frame_number(self) -> int:
-        """int: Monotonically increasing identifier of the newest raw frame."""
+        """Return the monotonically increasing newest raw-frame identifier."""
         with self._condition:
             return self._frame_number
 

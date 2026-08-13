@@ -69,7 +69,7 @@ used when PyYAML is available; otherwise `Camera` safely uses its built-in
 configuration defaults.
 
 For deployment choices and the stable GPU compatibility policy, see the
-[CPU/GPU and browser mode guide](../../docs/GPU_PATH_GUIDE.md).
+[CPU/GPU and browser mode guide](../../../docs/GPU_PATH_GUIDE.md).
 
 Install the project dependencies with:
 
