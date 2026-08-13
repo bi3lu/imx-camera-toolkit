@@ -44,6 +44,14 @@ The kernel performs resize, NV12 color conversion, channel ordering,
 normalization, and NCHW layout directly into runner-owned CUDA memory. There is
 no BGR image, NumPy camera input, host upload, or implicit CPU fallback.
 
+The interop runtime retains device 0's primary CUDA context rather than
+creating a separate driver context. `prepare()`, `infer()`, and `close()` push
+that context for the calling thread for their complete GPU-resource scope.
+This is required because engines are normally prepared on the application
+thread, inference runs on an `InferenceConsumer` worker, and cleanup may run on
+either thread. Native streams, allocations, and imported NVMM surfaces retain
+the same context owner until their own cleanup completes.
+
 ## Installation and native build
 
 TensorRT, CUDA, and a compatible NumPy must come from the target JetPack
@@ -158,7 +166,9 @@ with GpuCamera() as camera:
 
 Create a separate `TensorRTRunner` for each independent inference consumer.
 Each runner owns its CUDA stream, while each `InferenceConsumer` owns its worker
-thread. Slow consumers overwrite only their own unread slot and automatically
+thread. The runner activates its retained primary CUDA context on that worker;
+applications must not move `prepare()` into the worker as a context workaround.
+Slow consumers overwrite only their own unread slot and automatically
 contribute named drop counters to camera health metrics.
 
 `InferenceConsumer` also discovers `runner.prepared_frame_spec`, so the explicit

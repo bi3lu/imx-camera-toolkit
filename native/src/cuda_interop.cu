@@ -19,6 +19,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -45,19 +46,78 @@ void check_driver(CUresult result, const char* operation) {
         (description == nullptr ? "unknown CUDA driver error" : description));
 }
 
+class CudaPrimaryContext {
+public:
+    explicit CudaPrimaryContext(int device_ordinal = 0) {
+        check_driver(cuInit(0), "cuInit");
+        check_driver(cuDeviceGet(&device_, device_ordinal), "cuDeviceGet");
+        check_driver(
+            cuDevicePrimaryCtxRetain(&context_, device_),
+            "cuDevicePrimaryCtxRetain");
+    }
+
+    ~CudaPrimaryContext() {
+        if (context_ != nullptr) {
+            cuDevicePrimaryCtxRelease(device_);
+        }
+    }
+
+    CudaPrimaryContext(const CudaPrimaryContext&) = delete;
+    CudaPrimaryContext& operator=(const CudaPrimaryContext&) = delete;
+
+    CUcontext get() const { return context_; }
+
+private:
+    CUdevice device_{};
+    CUcontext context_{nullptr};
+};
+
+class CudaContextGuard {
+public:
+    explicit CudaContextGuard(
+        const std::shared_ptr<CudaPrimaryContext>& owner)
+        : owner_(owner) {
+        if (!owner_) {
+            throw std::invalid_argument("CUDA context owner is null");
+        }
+
+        check_driver(cuCtxPushCurrent(owner_->get()), "cuCtxPushCurrent");
+        active_ = true;
+    }
+
+    ~CudaContextGuard() { close(); }
+
+    CudaContextGuard(const CudaContextGuard&) = delete;
+    CudaContextGuard& operator=(const CudaContextGuard&) = delete;
+
+    void close() noexcept {
+        if (!active_) {
+            return;
+        }
+
+        CUcontext popped = nullptr;
+        cuCtxPopCurrent(&popped);
+        active_ = false;
+    }
+
+private:
+    std::shared_ptr<CudaPrimaryContext> owner_;
+    bool active_{false};
+};
+
 class CudaStream {
 public:
-    CudaStream() {
+    explicit CudaStream(const std::shared_ptr<CudaPrimaryContext>& owner)
+        : owner_(owner) {
+        if (!owner_) {
+            throw std::invalid_argument("CUDA context owner is null");
+        }
         check_cuda(
             cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking),
             "cudaStreamCreateWithFlags");
     }
 
-    ~CudaStream() {
-        if (stream_ != nullptr) {
-            cudaStreamDestroy(stream_);
-        }
-    }
+    ~CudaStream() { cleanup(); }
 
     CudaStream(const CudaStream&) = delete;
     CudaStream& operator=(const CudaStream&) = delete;
@@ -73,23 +133,40 @@ public:
     }
 
 private:
+    void cleanup() noexcept {
+        if (stream_ == nullptr) {
+            return;
+        }
+
+        try {
+            CudaContextGuard guard(owner_);
+            cudaStreamDestroy(stream_);
+            stream_ = nullptr;
+        } catch (...) {
+            // Destructors cannot recover from a CUDA context activation failure.
+        }
+    }
+
+    std::shared_ptr<CudaPrimaryContext> owner_;
     cudaStream_t stream_{nullptr};
 };
 
 class DeviceBuffer {
 public:
-    explicit DeviceBuffer(std::size_t size) : size_(size) {
+    DeviceBuffer(
+        const std::shared_ptr<CudaPrimaryContext>& owner,
+        std::size_t size)
+        : owner_(owner), size_(size) {
+        if (!owner_) {
+            throw std::invalid_argument("CUDA context owner is null");
+        }
         if (size == 0) {
             throw std::invalid_argument("device buffer size must be positive");
         }
         check_cuda(cudaMalloc(&pointer_, size_), "cudaMalloc");
     }
 
-    ~DeviceBuffer() {
-        if (pointer_ != nullptr) {
-            cudaFree(pointer_);
-        }
-    }
+    ~DeviceBuffer() { cleanup(); }
 
     DeviceBuffer(const DeviceBuffer&) = delete;
     DeviceBuffer& operator=(const DeviceBuffer&) = delete;
@@ -116,6 +193,21 @@ public:
     }
 
 private:
+    void cleanup() noexcept {
+        if (pointer_ == nullptr) {
+            return;
+        }
+
+        try {
+            CudaContextGuard guard(owner_);
+            cudaFree(pointer_);
+            pointer_ = nullptr;
+        } catch (...) {
+            // Destructors cannot recover from a CUDA context activation failure.
+        }
+    }
+
+    std::shared_ptr<CudaPrimaryContext> owner_;
     void* pointer_{nullptr};
     std::size_t size_{0};
 };
@@ -123,9 +215,14 @@ private:
 class NvmmSurface {
 public:
     NvmmSurface(
+        const std::shared_ptr<CudaPrimaryContext>& owner,
         const py::object& gst_buffer,
         unsigned int expected_width,
-        unsigned int expected_height) {
+        unsigned int expected_height)
+        : owner_(owner) {
+        if (!owner_) {
+            throw std::invalid_argument("CUDA context owner is null");
+        }
         if (!pyg_boxed_check(gst_buffer.ptr(), GST_TYPE_BUFFER)) {
             throw std::invalid_argument("object is not a boxed Gst.Buffer");
         }
@@ -271,24 +368,31 @@ public:
 
 private:
     void cleanup() noexcept {
-        if (uv_surface_ != 0) {
-            cudaDestroySurfaceObject(uv_surface_);
-            uv_surface_ = 0;
-        }
+        try {
+            CudaContextGuard guard(owner_);
 
-        if (y_surface_ != 0) {
-            cudaDestroySurfaceObject(y_surface_);
-            y_surface_ = 0;
-        }
+            if (uv_surface_ != 0) {
+                cudaDestroySurfaceObject(uv_surface_);
+                uv_surface_ = 0;
+            }
 
-        if (cuda_registered_) {
-            cuGraphicsUnregisterResource(cuda_resource_);
-            cuda_registered_ = false;
-        }
+            if (y_surface_ != 0) {
+                cudaDestroySurfaceObject(y_surface_);
+                y_surface_ = 0;
+            }
 
-        if (egl_mapped_ && surface_ != nullptr) {
-            NvBufSurfaceUnMapEglImage(surface_, 0);
-            egl_mapped_ = false;
+            if (cuda_registered_) {
+                cuGraphicsUnregisterResource(cuda_resource_);
+                cuda_resource_ = nullptr;
+                cuda_registered_ = false;
+            }
+
+            if (egl_mapped_ && surface_ != nullptr) {
+                NvBufSurfaceUnMapEglImage(surface_, 0);
+                egl_mapped_ = false;
+            }
+        } catch (...) {
+            // Continue releasing CPU-side Gst ownership without throwing.
         }
 
         if (mapped_ && buffer_ != nullptr) {
@@ -302,6 +406,7 @@ private:
         }
     }
 
+    std::shared_ptr<CudaPrimaryContext> owner_;
     GstBuffer* buffer_{nullptr};
     GstMapInfo map_info_ = GST_MAP_INFO_INIT;
     NvBufSurface* surface_{nullptr};
@@ -715,19 +820,42 @@ PYBIND11_MODULE(_cuda_interop, module) {
 
     module.doc() = "Jetson NvBufSurface/EGLImage CUDA interoperability";
 
+    py::class_<CudaPrimaryContext, std::shared_ptr<CudaPrimaryContext>>(
+        module,
+        "CudaPrimaryContext")
+        .def(py::init<int>(), py::arg("device_ordinal") = 0);
+
+    py::class_<CudaContextGuard>(module, "CudaContextGuard")
+        .def(py::init<const std::shared_ptr<CudaPrimaryContext>&>())
+        .def("close", &CudaContextGuard::close)
+        .def(
+            "__enter__",
+            [](CudaContextGuard& guard) -> CudaContextGuard& { return guard; },
+            py::return_value_policy::reference_internal)
+        .def(
+            "__exit__",
+            [](CudaContextGuard& guard, py::object, py::object, py::object) {
+                guard.close();
+                return false;
+            });
+
     py::class_<CudaStream>(module, "CudaStream")
-        .def(py::init<>())
+        .def(py::init<const std::shared_ptr<CudaPrimaryContext>&>())
         .def_property_readonly("handle", &CudaStream::handle)
         .def("synchronize", &CudaStream::synchronize);
 
     py::class_<DeviceBuffer>(module, "DeviceBuffer")
-        .def(py::init<std::size_t>())
+        .def(py::init<const std::shared_ptr<CudaPrimaryContext>&, std::size_t>())
         .def_property_readonly("pointer", &DeviceBuffer::pointer)
         .def_property_readonly("size", &DeviceBuffer::size)
         .def("copy_to_host", &DeviceBuffer::copy_to_host);
 
     py::class_<NvmmSurface>(module, "NvmmSurface")
-        .def(py::init<const py::object&, unsigned int, unsigned int>())
+        .def(py::init<
+             const std::shared_ptr<CudaPrimaryContext>&,
+             const py::object&,
+             unsigned int,
+             unsigned int>())
         .def_property_readonly("width", &NvmmSurface::width)
         .def_property_readonly("height", &NvmmSurface::height);
 

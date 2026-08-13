@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from contextlib import AbstractContextManager
 from types import ModuleType
 from typing import Any, Protocol
 
@@ -48,6 +49,10 @@ class NvmmSurface(Protocol):
 
 class InteropRuntime(Protocol):
     """Operations required by :class:`TensorRTRunner`."""
+
+    def activate(self) -> AbstractContextManager[None]:
+        """Activate this runtime's CUDA context on the calling thread."""
+        ...
 
     def compute_capability(self) -> tuple[int, int]:
         """Return active CUDA device major/minor capability."""
@@ -108,6 +113,11 @@ class NativeCudaInterop:
 
         self._native = native_module
         self._gst = gstreamer_module
+        self._context = self._native.CudaPrimaryContext(0)
+
+    def activate(self) -> Any:
+        """Activate the retained primary CUDA context on the calling thread."""
+        return self._native.CudaContextGuard(self._context)
 
     def _load_gstreamer(self) -> Any:
         """Load the canonical Gst namespace used by PyGObject overrides."""
@@ -131,14 +141,17 @@ class NativeCudaInterop:
 
     def create_stream(self) -> CudaStream:
         """Create the stream later passed to ``execute_async_v3``."""
-        return self._native.CudaStream()  # type: ignore[no-any-return]
+        return self._native.CudaStream(self._context)  # type: ignore[no-any-return]
 
     def allocate(self, size: int) -> CudaBuffer:
         """Allocate a device buffer without creating a host image."""
         if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
             raise CudaInteropError("device allocation size must be positive")
 
-        return self._native.DeviceBuffer(size)  # type: ignore[no-any-return]
+        return self._native.DeviceBuffer(  # type: ignore[no-any-return]
+            self._context,
+            size,
+        )
 
     def import_frame(self, frame: GpuFrame) -> NvmmSurface:
         """Retain and register the opaque Gst.Buffer backing ``frame``."""
@@ -155,6 +168,7 @@ class NativeCudaInterop:
 
         try:
             return self._native.NvmmSurface(  # type: ignore[no-any-return]
+                self._context,
                 payload,
                 frame.width,
                 frame.height,

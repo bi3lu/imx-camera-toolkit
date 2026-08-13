@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from contextlib import nullcontext
 from types import ModuleType
 
 import pytest
@@ -26,7 +27,12 @@ def test_native_interop_accepts_real_overridden_gst_buffer() -> None:
     payload = gst.Buffer.new()
     calls: list[object] = []
     native = ModuleType("fake_cuda_interop")
-    native.NvmmSurface = lambda buffer, width, height: calls.append(buffer)  # type: ignore[attr-defined]
+    context = object()
+    native.CudaPrimaryContext = lambda ordinal: context  # type: ignore[attr-defined]
+    native.CudaContextGuard = lambda owner: nullcontext()  # type: ignore[attr-defined]
+    native.NvmmSurface = lambda owner, buffer, width, height: calls.append(  # type: ignore[attr-defined]
+        buffer
+    )
 
     NativeCudaInterop(native).import_frame(mock_gpu_frame(payload))
 

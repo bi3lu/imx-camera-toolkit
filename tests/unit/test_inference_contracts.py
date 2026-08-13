@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
@@ -176,10 +178,13 @@ def test_tensorrt_runner_validates_letterbox_padding_without_cuda(
 
 def test_native_interop_passes_checked_gst_buffer_object_to_cpp() -> None:
     """Python must not map pixels or convert the Gst.Buffer to an array."""
-    calls: list[tuple[object, int, int]] = []
+    calls: list[tuple[object, object, int, int]] = []
     native = ModuleType("fake_cuda_interop")
-    native.NvmmSurface = lambda payload, width, height: calls.append(  # type: ignore[attr-defined]
-        (payload, width, height)
+    context = object()
+    native.CudaPrimaryContext = lambda ordinal: context  # type: ignore[attr-defined]
+    native.CudaContextGuard = lambda owner: nullcontext()  # type: ignore[attr-defined]
+    native.NvmmSurface = lambda owner, payload, width, height: calls.append(  # type: ignore[attr-defined]
+        (owner, payload, width, height)
     )
     payload_type = type("Buffer", (), {"__module__": "gi.overrides.Gst"})
     gst = ModuleType("gi.repository.Gst")
@@ -190,7 +195,98 @@ def test_native_interop_passes_checked_gst_buffer_object_to_cpp() -> None:
     surface = NativeCudaInterop(native, gstreamer_module=gst).import_frame(frame)
 
     assert surface is None
-    assert calls == [(payload, 1920, 1080)]
+    assert calls == [(context, payload, 1920, 1080)]
+
+
+def test_native_interop_retains_and_activates_primary_cuda_context() -> None:
+    """All native resources must share the retained device primary context."""
+    native = ModuleType("fake_cuda_interop")
+    context = object()
+    calls: list[tuple[str, object]] = []
+
+    def activate(owner: object) -> AbstractContextManager[None]:
+        calls.append(("activate", owner))
+        return nullcontext()
+
+    native.CudaPrimaryContext = lambda ordinal: context  # type: ignore[attr-defined]
+    native.CudaContextGuard = activate  # type: ignore[attr-defined]
+    native.CudaStream = lambda owner: calls.append(("stream", owner))  # type: ignore[attr-defined]
+    native.DeviceBuffer = lambda owner, size: calls.append(  # type: ignore[attr-defined]
+        (f"buffer:{size}", owner)
+    )
+    interop = NativeCudaInterop(native)
+
+    with interop.activate():
+        interop.create_stream()
+        interop.allocate(16)
+
+    assert calls == [
+        ("activate", context),
+        ("stream", context),
+        ("buffer:16", context),
+    ]
+
+
+class _TrackingInterop:
+    """Host fake that exposes whether a calling thread entered activation."""
+
+    def __init__(self) -> None:
+        self.active_depth = 0
+        self.activations = 0
+
+    @contextmanager
+    def activate(self) -> Iterator[None]:
+        """Track nested runner context scopes."""
+        self.active_depth += 1
+        self.activations += 1
+
+        try:
+            yield
+
+        finally:
+            self.active_depth -= 1
+
+
+def test_tensorrt_prepare_and_close_run_inside_interop_activation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TensorRT creation and destruction must use a scoped CUDA context."""
+    model_path = tmp_path / "model.onnx"
+    model_path.write_bytes(b"model")
+    interop = _TrackingInterop()
+    runner = TensorRTRunner(
+        model_path,
+        cache_dir=tmp_path / "engines",
+        input_name="input",
+        shape_profile=ShapeProfile(
+            minimum=(1, 3, 1, 1),
+            optimum=(1, 3, 1, 1),
+            maximum=(1, 3, 1, 1),
+        ),
+        inference_shape=(1, 3, 1, 1),
+        interop=interop,  # type: ignore[arg-type]
+        tensorrt_module=ModuleType("fake_tensorrt"),
+        numpy_module=ModuleType("fake_numpy"),
+    )
+    operations: list[str] = []
+
+    def prepare_activated(frame_spec: FrameSpec) -> None:
+        assert interop.active_depth > 0
+        operations.append("prepare")
+
+    def close_activated() -> None:
+        assert interop.active_depth > 0
+        operations.append("close")
+
+    monkeypatch.setattr(runner, "_prepare_activated", prepare_activated)
+    runner.prepare(FrameSpec(1, 1, FrameFormat.NV12_NVMM, MemoryType.NVMM))
+    monkeypatch.setattr(runner, "_close_cuda_resources", close_activated)
+    runner.close()
+
+    assert operations == ["prepare", "close"]
+    assert interop.activations == 2
+    assert interop.active_depth == 0
 
 
 def test_tensorrt_runner_auto_selects_the_only_onnx_input(tmp_path: Path) -> None:
