@@ -215,7 +215,7 @@ from imx_camera_toolkit.testing import MockCamera, MockFrameSource
 
 def test_public_namespace_reexports_stable_library_types() -> None:
     """External imports must resolve to the existing implementation classes."""
-    assert __version__ == "0.7.0"
+    assert __version__ == "0.7.1"
     assert CameraPreview.__module__ == "imx_camera_toolkit.preview"
     assert PreviewBackend is ModulePreviewBackend
     assert PreviewServer.__module__ == "imx_camera_toolkit._internal.preview.server"
