@@ -99,6 +99,7 @@ jobs:
               raise SystemExit("wheel does not contain imx_camera_toolkit")
 
           required = {
+              "imx_camera_toolkit/py.typed",
               "native/CMakeLists.txt",
               "view/advanced.html",
               "view/production.html",
@@ -112,6 +113,34 @@ jobs:
           if legacy:
               raise SystemExit(f"wheel contains legacy packages namespace: {legacy}")
           PY
+      - name: Verify installed wheel typing
+        run: |
+          consumer_dir=$(mktemp -d)
+          uv venv --python "$(command -v python)" "$consumer_dir/venv"
+          uv pip install --python "$consumer_dir/venv/bin/python" \
+            "$PWD"/dist/*.whl 'mypy>=1.15,<2.0'
+          cd "$consumer_dir"
+          unset PYTHONPATH MYPYPATH
+          cat > consumer_test.py <<'PY'
+          from imx_camera_toolkit import Camera
+
+          camera: Camera
+          PY
+          cat > mypy.ini <<'INI'
+          [mypy]
+          INI
+          "$consumer_dir/venv/bin/python" -I - <<'PY'
+          import sys
+          from importlib.metadata import version
+          from pathlib import Path
+          import imx_camera_toolkit
+
+          package = Path(imx_camera_toolkit.__file__).resolve()
+          assert package.is_relative_to(Path(sys.prefix).resolve()), package
+          assert imx_camera_toolkit.__version__ == version("imx-camera-toolkit")
+          PY
+          "$consumer_dir/venv/bin/python" -I -m mypy \
+            --strict --config-file mypy.ini consumer_test.py
       - name: Export CycloneDX SBOM
         run: >-
           uv export --all-extras --format cyclonedx1.5 --frozen

@@ -262,6 +262,7 @@ class Camera:
         self._last_frame_timestamp_ns: int | None = None
         self._last_capture_timestamp_ns: int | None = None
         self._consecutive_failures = 0
+        self._consecutive_recovery_attempts = 0
         self.last_error: Exception | None = None
         self.recovery_attempts = 0
         self.recoveries = 0
@@ -413,6 +414,7 @@ class Camera:
             self._last_frame_timestamp_ns = timestamp_ns
             self._last_capture_timestamp_ns = capture_timestamp_ns
             self._consecutive_failures = 0
+            self._consecutive_recovery_attempts = 0
             self._capture_timestamps_ns.append(timestamp_ns)
             self._prune_capture_timestamps(timestamp_ns)
 
@@ -673,11 +675,13 @@ class Camera:
                     consecutive_read_failures = self._record_dropped_frame(
                         failed_read=True
                     )
+
                     if (
                         consecutive_read_failures
                         >= self._recovery_policy.max_consecutive_read_failures
                     ):
                         raise CameraReadError("camera backend stopped producing frames")
+
                     time.sleep(0.02)
                     continue
 
@@ -722,22 +726,31 @@ class Camera:
     def _recover_backend(self) -> bool:
         """Reopen the capture backend after a transient capture failure.
 
+        Attempts share one budget until a successful source read resets it.
+        Opening a backend alone does not renew that budget.
+
         Returns:
             ``True`` when a new backend is opened and capture may continue.
         """
-        for attempt in range(self._recovery_policy.max_attempts):
-            if not self.running:
-                return False
+        while self.running:
+            with self._stats_lock:
+                if (
+                    self._consecutive_recovery_attempts
+                    >= self._recovery_policy.max_attempts
+                ):
+                    return False
+
+                attempt = self._consecutive_recovery_attempts
+                self._consecutive_recovery_attempts += 1
+                self.recovery_attempts += 1
 
             if attempt:
                 time.sleep(self._recovery_policy.initial_backoff * (2**attempt))
 
-            with self._stats_lock:
-                self.recovery_attempts += 1
-
             with self._lifecycle_lock:
                 if not self.running:
                     return False
+
                 try:
                     self._release_backend()
                     backend = self._create_backend()
@@ -756,6 +769,7 @@ class Camera:
 
             with self._stats_lock:
                 self.recoveries += 1
+
             self._reset_consecutive_failures()
             self.last_recovery_error = None
             self.last_error = None
@@ -791,6 +805,7 @@ class Camera:
             capture_timestamp_ns=capture_timestamp_ns,
         )
         published_frame = self._raw_publisher.latest_frame
+
         if published_frame is not None:
             self._frame_hub.publish(published_frame)
 
@@ -804,6 +819,7 @@ class Camera:
                     PipelineStage.ENCODER,
                     encoder_duration_ns,
                 )
+
             else:
                 self._metrics.record_consumer_drop("preview")
 

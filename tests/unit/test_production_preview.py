@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any, cast
 
@@ -643,6 +644,13 @@ def test_production_preview_bounds_signaling_payloads_and_session_rate(
     server.create_hls_session()
     with pytest.raises(RuntimeError, match="session rate limit"):
         server.create_hls_session()
+
+
+def test_production_api_version_matches_distribution_metadata() -> None:
+    """Production HTTP metadata must track the installed package version."""
+    server = ProductionPreviewServer(_FakeEncodedSource())
+    application = create_production_preview_app(server, manage_server=False)
+    assert application.version == version("imx-camera-toolkit")
 
 
 def test_production_feedback_rejects_nan_and_absurd_counters() -> None:

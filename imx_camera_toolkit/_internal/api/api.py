@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from importlib.metadata import version as distribution_version
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
@@ -62,7 +63,7 @@ class APIConfig:
 
     title: str = "IMX Camera API"
     description: str = "Snapshots and MJPEG streaming for an NVIDIA Jetson CSI camera."
-    version: str = "0.7.2"
+    version: str = distribution_version("imx-camera-toolkit")
     snapshot_timeout: float = 2.0
 
 

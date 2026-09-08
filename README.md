@@ -529,6 +529,11 @@ uv sync --extra preview --group dev
 
 ## Packaging
 
+`project.version` in `pyproject.toml` is the single source of the package
+version. `imx_camera_toolkit.__version__` reads installed distribution metadata.
+On a workstation or Jetson, run `uv sync` after checking out the repository or
+changing its version to refresh the editable installation and its metadata.
+
 The project uses Hatchling and produces standard Python source and wheel
 distributions. Build artifacts are written to `dist/`:
 

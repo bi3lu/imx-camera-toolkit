@@ -35,5 +35,24 @@ jobs:
           fi
       - name: Build wheel and source distribution
         run: uv build
+      - name: Verify installed wheel version matches release tag
+        run: |
+          consumer_dir=$(mktemp -d)
+          uv venv --python "$(command -v python)" "$consumer_dir/venv"
+          uv pip install --python "$consumer_dir/venv/bin/python" "$PWD"/dist/*.whl
+          cd "$consumer_dir"
+          "$consumer_dir/venv/bin/python" -I - <<'PY'
+          import os
+          import sys
+          from importlib.metadata import version
+          from pathlib import Path
+          import imx_camera_toolkit
+
+          package = Path(imx_camera_toolkit.__file__).resolve()
+          assert package.is_relative_to(Path(sys.prefix).resolve()), package
+          installed_version = version("imx-camera-toolkit")
+          assert imx_camera_toolkit.__version__ == installed_version
+          assert os.environ["GITHUB_REF_NAME"] == f"v{installed_version}"
+          PY
       - name: Publish with PyPI Trusted Publishing
         run: uv publish --trusted-publishing always dist/*
