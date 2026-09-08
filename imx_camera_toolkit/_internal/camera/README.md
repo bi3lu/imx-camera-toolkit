@@ -30,6 +30,11 @@ replaceable without changing the `Camera` API used by applications.
 unexpected backend exception or a sustained sequence of failed reads. The
 default policy uses up to three retries with exponential backoff. The retry
 budget spans reopened backends and resets only after a valid frame arrives.
+For CPU capture, a backend that repeatedly opens successfully but returns only
+failed reads consumes exactly `max_attempts` recovery opens before capture
+stops with `CameraRecoveryError`. A valid source frame renews the budget;
+`recovery_attempts` and `recoveries` remain cumulative diagnostics, with
+`recoveries` counting successful backend reopenings.
 The GPU backend also requires its first NVMM frame before `open()` succeeds;
 an Argus `AlreadyAllocated` error fails fast as `CameraOpenError`. Recovery
 statistics are available through `recovery_attempts`, `recoveries`, and
