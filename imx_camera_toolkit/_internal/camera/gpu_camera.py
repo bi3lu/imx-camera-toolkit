@@ -62,6 +62,7 @@ from .publishing import (
     EncodedVideoPublisher,
     GpuFramePublisher,
 )
+from .recovery import RecoveryController
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,7 @@ class GpuCamera:
         self._stats_lock = threading.Lock()
         self._capture_timestamps_ns: deque[int] = deque()
         self._sequence = 0
-        self._consecutive_recovery_attempts = 0
+        self._recovery = RecoveryController()
         self._last_capture_error_log_at = 0.0
         self._suppressed_capture_error_logs = 0
 
@@ -247,7 +248,16 @@ class GpuCamera:
         self.last_error: Exception | None = None
         self.recovery_attempts = 0
         self.recoveries = 0
-        self.last_recovery_error: Exception | None = None
+
+    @property
+    def last_recovery_error(self) -> Exception | None:
+        """Last recovery error, retaining the public diagnostic contract."""
+        return self._recovery.last_error
+
+    @last_recovery_error.setter
+    def last_recovery_error(self, error: Exception | None) -> None:
+        """Update recovery diagnostics without renewing the retry budget."""
+        self._recovery.last_error = error
 
     @property
     def api_stability(self) -> str:
@@ -444,20 +454,24 @@ class GpuCamera:
                 raise CameraConfigurationError(
                     "video overlay can be changed only while camera is stopped"
                 )
+
             if renderer is not None:
                 if self._video_config is None:
                     raise CameraConfigurationError(
                         "video overlay requires a hardware video or general "
                         "video encoder configuration"
                     )
+
                 if not isinstance(renderer, VideoOverlayRenderer):
                     raise CameraConfigurationError(
                         "renderer must implement VideoOverlayRenderer"
                     )
+
                 if renderer.memory_type is not MemoryType.NVMM:
                     raise CameraConfigurationError(
                         "production video overlay renderer must use NVMM"
                     )
+
             self._video_overlay = renderer
             self._rebuild_pipeline()
 
@@ -468,6 +482,7 @@ class GpuCamera:
         """Build the selected public encoder definition."""
         if self._video_config is None:
             return None
+
         if self._encoder_pipeline_factory is not None:
             definition = self._encoder_pipeline_factory(
                 self._video_config,
@@ -475,11 +490,14 @@ class GpuCamera:
                 self._config.output_height,
                 self._config.fps,
             )
+
             if not isinstance(definition, VideoEncoderPipeline):
                 raise CameraConfigurationError(
                     "encoder_pipeline_factory must return VideoEncoderPipeline"
                 )
+
             return definition
+
         return build_video_encoder_pipeline(
             self._video_config,
             self._config.output_width,
@@ -540,6 +558,7 @@ class GpuCamera:
                 else None
             )
             definition = self._encoder_pipeline(backend)
+
         factory = None if definition is None else lambda *_: definition
         return build_gpu_gstreamer_pipeline(
             sensor_id=self._config.sensor_id,
@@ -664,7 +683,7 @@ class GpuCamera:
             self._backend = backend
             self.last_error = None
             self.last_recovery_error = None
-            self._consecutive_recovery_attempts = 0
+            self._recovery.record_frame_success()
             self._running.set()
             self._thread = threading.Thread(
                 target=self._capture_loop,
@@ -729,6 +748,7 @@ class GpuCamera:
         missing = GpuGStreamerCaptureBackend.missing_elements(
             tuple(dict.fromkeys(required))
         )
+
         if missing:
             backend_name = "camera"
 
@@ -911,9 +931,10 @@ class GpuCamera:
             self._last_frame_timestamp_ns = frame.timestamp_ns
             self._last_capture_timestamp_ns = frame.capture_timestamp_ns
             self._consecutive_failures = 0
-            self._consecutive_recovery_attempts = 0
+            self._recovery.record_frame_success()
             self._capture_timestamps_ns.append(frame.timestamp_ns)
             self._prune_capture_timestamps(frame.timestamp_ns)
+
         self.last_error = None
         self.last_recovery_error = None
         self._last_capture_error_log_at = 0.0
@@ -954,14 +975,13 @@ class GpuCamera:
         """Recreate the full tee pipeline after an error in either branch."""
         while self.running:
             with self._stats_lock:
-                if (
-                    self._consecutive_recovery_attempts
-                    >= self._recovery_policy.max_attempts
-                ):
+                attempt = self._recovery.begin_attempt(
+                    self._recovery_policy.max_attempts
+                )
+
+                if attempt is None:
                     return False
 
-                self._consecutive_recovery_attempts += 1
-                attempt = self._consecutive_recovery_attempts
                 self.recovery_attempts += 1
 
             if not self.running:

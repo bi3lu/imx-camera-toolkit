@@ -53,6 +53,7 @@ from .models import (
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
+from .recovery import RecoveryController
 
 logger = logging.getLogger(__name__)
 
@@ -262,11 +263,20 @@ class Camera:
         self._last_frame_timestamp_ns: int | None = None
         self._last_capture_timestamp_ns: int | None = None
         self._consecutive_failures = 0
-        self._consecutive_recovery_attempts = 0
+        self._recovery = RecoveryController()
         self.last_error: Exception | None = None
         self.recovery_attempts = 0
         self.recoveries = 0
-        self.last_recovery_error: Exception | None = None
+
+    @property
+    def last_recovery_error(self) -> Exception | None:
+        """Last recovery error, retaining the public diagnostic contract."""
+        return self._recovery.last_error
+
+    @last_recovery_error.setter
+    def last_recovery_error(self, error: Exception | None) -> None:
+        """Update recovery diagnostics without renewing the retry budget."""
+        self._recovery.last_error = error
 
     def _build_pipeline(self, argus_properties: Sequence[str]) -> str:
         """Build a pipeline using this camera's resolved static configuration."""
@@ -414,7 +424,7 @@ class Camera:
             self._last_frame_timestamp_ns = timestamp_ns
             self._last_capture_timestamp_ns = capture_timestamp_ns
             self._consecutive_failures = 0
-            self._consecutive_recovery_attempts = 0
+            self._recovery.record_frame_success()
             self._capture_timestamps_ns.append(timestamp_ns)
             self._prune_capture_timestamps(timestamp_ns)
 
@@ -734,14 +744,13 @@ class Camera:
         """
         while self.running:
             with self._stats_lock:
-                if (
-                    self._consecutive_recovery_attempts
-                    >= self._recovery_policy.max_attempts
-                ):
+                admitted_attempt = self._recovery.begin_attempt(
+                    self._recovery_policy.max_attempts
+                )
+                if admitted_attempt is None:
                     return False
 
-                attempt = self._consecutive_recovery_attempts
-                self._consecutive_recovery_attempts += 1
+                attempt = admitted_attempt - 1
                 self.recovery_attempts += 1
 
             if attempt:
