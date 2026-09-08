@@ -92,10 +92,13 @@ def test_recovery_budget_resets_only_after_a_valid_frame(
         """Bound a broken recovery loop without relying on thread timing."""
         nonlocal reads
         reads += 1
+
         if reads > expected_reads:
             camera._running.clear()
+
         if valid_frame and reads == max_attempts * read_threshold + 1:
             return True, bytearray(b"frame")
+
         return False, None
 
     def open_backend() -> None:
@@ -121,9 +124,11 @@ def test_recovery_budget_resets_only_after_a_valid_frame(
         assert subscription.closed
         assert isinstance(camera.last_error, CameraRecoveryError)
         assert "exhausted" in str(camera.last_error)
+
     finally:
         subscription.close()
         camera.stop()
+
     assert backend.closed
 
 
@@ -142,6 +147,7 @@ def test_failed_and_successful_opens_share_recovery_budget(
         """Fail the first two attempts, then allow the backend to reopen."""
         nonlocal opens
         opens += 1
+
         if opens < 3:
             raise RuntimeError("backend unavailable")
 
@@ -154,5 +160,6 @@ def test_failed_and_successful_opens_share_recovery_budget(
         assert opens == 3
         assert camera.recovery_attempts == 3
         assert camera.recoveries == 1
+
     finally:
         camera.stop()
