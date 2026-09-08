@@ -26,6 +26,13 @@ replaceable without changing the `Camera` API used by applications.
 
 ## Capture recovery
 
+Both camera implementations compose the private `RecoveryController` in
+`recovery.py` for retry admission, the consecutive attempt count, frame-success
+reset, and storage of the last recovery error. The controller performs no I/O
+and knows no backend or frame type. Cameras retain lifecycle locking, resource
+cleanup, retry delays, logging, and their existing diagnostic clearing rules.
+Public `recovery_attempts` and `recoveries` remain cumulative camera counters.
+
 `Camera` automatically attempts to reopen its capture backend after an
 unexpected backend exception or a sustained sequence of failed reads. The
 default policy uses up to three retries with exponential backoff. The retry
