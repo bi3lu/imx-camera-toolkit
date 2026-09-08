@@ -6,9 +6,10 @@ from typing import Any
 
 import pytest
 
-from imx_camera_toolkit import CameraRecoveryError
+from imx_camera_toolkit import CameraRecoveryError, GpuCamera
 from imx_camera_toolkit._internal.camera.backends.base import CaptureBackend
 from imx_camera_toolkit._internal.camera.camera import Camera, CameraRecoveryPolicy
+from imx_camera_toolkit.testing import mock_gpu_frame
 
 
 class RecordingBackend(CaptureBackend):
@@ -154,12 +155,110 @@ def test_failed_and_successful_opens_share_recovery_budget(
     monkeypatch.setattr(backend, "open", open_backend)
     monkeypatch.setattr(camera, "_create_backend", lambda: backend)
     camera._running.set()
+
     try:
         assert camera._recover_backend()
         assert not camera._recover_backend()
         assert opens == 3
         assert camera.recovery_attempts == 3
         assert camera.recoveries == 1
+
+    finally:
+        camera.stop()
+
+
+@pytest.mark.parametrize("camera_type", [Camera, GpuCamera])
+def test_shared_recovery_contract_preserves_diagnostics_and_frame_reset(
+    monkeypatch: pytest.MonkeyPatch, camera_type: type[Camera] | type[GpuCamera]
+) -> None:
+    """Both cameras share a budget while keeping their diagnostic semantics."""
+    camera = camera_type(
+        enable_preview=False,
+        recovery_policy=CameraRecoveryPolicy(max_attempts=3, initial_backoff=0),
+    )
+    failure = RuntimeError("backend unavailable")
+    opens = 0
+
+    def create_backend() -> RecordingBackend:
+        """Fail once and then return successfully opening replacements."""
+        nonlocal opens
+        opens += 1
+
+        if opens == 1:
+            raise failure
+
+        return RecordingBackend()
+
+    monkeypatch.setattr(camera, "_create_backend", create_backend)
+    camera._running.set()
+    try:
+        assert camera._recover_backend()
+        assert camera.recovery_attempts == 2
+        assert camera.recoveries == 1
+        assert camera.last_recovery_error is (
+            failure if isinstance(camera, GpuCamera) else None
+        )
+        assert camera._recover_backend()
+        assert not camera._recover_backend()
+        assert opens == 3
+        assert camera.recovery_attempts == 3
+        assert camera.recoveries == 2
+
+        if isinstance(camera, GpuCamera):
+            frame = mock_gpu_frame(object())
+
+            try:
+                camera._record_capture(frame)
+
+            finally:
+                frame.release()
+
+        else:
+            camera._record_capture(123)
+
+        assert camera.last_recovery_error is None
+        assert camera._recover_backend()
+        assert camera.recovery_attempts == 4
+        assert camera.recoveries == 3
+        camera._running.clear()
+        assert not camera._recover_backend()
+        assert camera.recovery_attempts == 4
+
+    finally:
+        camera.stop()
+
+
+@pytest.mark.parametrize(
+    ("camera_type", "expected_delays"),
+    [(Camera, [0.02, 0.04]), (GpuCamera, [0.01, 0.02, 0.04])],
+)
+def test_recovery_backoff_remains_camera_owned(
+    monkeypatch: pytest.MonkeyPatch,
+    camera_type: type[Camera] | type[GpuCamera],
+    expected_delays: list[float],
+) -> None:
+    """Refactoring state must preserve each camera's existing retry timing."""
+    camera = camera_type(
+        enable_preview=False,
+        recovery_policy=CameraRecoveryPolicy(max_attempts=3, initial_backoff=0.01),
+    )
+    delays: list[float] = []
+    failure = RuntimeError("backend unavailable")
+
+    def create_backend() -> RecordingBackend:
+        """Fail every attempt before acquiring a capture resource."""
+        raise failure
+
+    monkeypatch.setattr(camera, "_create_backend", create_backend)
+    monkeypatch.setattr("time.sleep", delays.append)
+    camera._running.set()
+
+    try:
+        assert not camera._recover_backend()
+        assert camera.recovery_attempts == 3
+        assert camera.recoveries == 0
+        assert camera.last_recovery_error is failure
+        assert delays == expected_delays
 
     finally:
         camera.stop()
