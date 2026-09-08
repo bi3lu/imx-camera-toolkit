@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -138,7 +139,7 @@ def create_production_preview_app(
     application = FastAPI(
         title="IMX Production Preview",
         description="Shared video encoding with WebRTC or HLS delivery",
-        version="0.7.2",
+        version=version("imx-camera-toolkit"),
         lifespan=lifespan,
         docs_url="/docs" if resolved_security.docs_enabled else None,
         redoc_url="/redoc" if resolved_security.docs_enabled else None,

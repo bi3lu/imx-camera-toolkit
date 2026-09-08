@@ -131,11 +131,13 @@ jobs:
           INI
           "$consumer_dir/venv/bin/python" -I - <<'PY'
           import sys
+          from importlib.metadata import version
           from pathlib import Path
           import imx_camera_toolkit
 
           package = Path(imx_camera_toolkit.__file__).resolve()
           assert package.is_relative_to(Path(sys.prefix).resolve()), package
+          assert imx_camera_toolkit.__version__ == version("imx-camera-toolkit")
           PY
           "$consumer_dir/venv/bin/python" -I -m mypy \
             --strict --config-file mypy.ini consumer_test.py
