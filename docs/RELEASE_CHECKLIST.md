@@ -27,6 +27,7 @@ provide a local ONNX model path. The weekly trusted-branch run reads
 `JETSON_SENSOR`, `JETSON_SENSOR_ID`, `JETSON_ONNX_MODEL_PATH`, and
 `JETSON_BENCHMARK_SECONDS` repository variables. The workflow must verify:
 
+- JetPack 6.2.3 / Jetson Linux 36.5.2 is installed on the runner;
 - NVMM capture at 1280x720 and 1920x1080 at 30 FPS;
 - simultaneous TensorRT and H.264 production preview using the resolved
   NVENC/x264 backend, with engine preparation on the main thread, inference on

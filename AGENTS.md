@@ -7,7 +7,7 @@ source, and coding agents. They apply to the whole repository. A more specific
 ## Project contract
 
 IMX Camera Toolkit targets CSI-connected IMX sensors on NVIDIA Jetson, with
-Jetson Orin Nano and JetPack 6.2.2 as the documented baseline. It provides
+Jetson Orin Nano and JetPack 6.2.3 as the documented baseline. It provides
 camera capture, controls, latest-frame consumers, optional TensorRT interop,
 and browser delivery. It is not a model zoo, tracker, ROS/DeepStream wrapper,
 or general video analytics framework.

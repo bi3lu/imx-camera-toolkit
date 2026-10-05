@@ -21,7 +21,7 @@ supplied by the application. It does not define boxes, classes, masks, NMS, or
 YOLO-specific fields. The monotonic timestamp lets a preview or UI calculate
 the age of the result without guessing which frame was evaluated.
 
-## JetPack 6.2.2 interoperability
+## JetPack 6.2.3 interoperability
 
 The selected interop path is:
 

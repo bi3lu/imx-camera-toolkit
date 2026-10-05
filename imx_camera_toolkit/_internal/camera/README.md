@@ -42,10 +42,19 @@ failed reads consumes exactly `max_attempts` recovery opens before capture
 stops with `CameraRecoveryError`. A valid source frame renews the budget;
 `recovery_attempts` and `recoveries` remain cumulative diagnostics, with
 `recoveries` counting successful backend reopenings.
-The GPU backend also requires its first NVMM frame before `open()` succeeds;
-an Argus `AlreadyAllocated` error fails fast as `CameraOpenError`. Recovery
-statistics are available through `recovery_attempts`, `recoveries`, and
-`last_recovery_error`; the FastAPI health endpoint exposes the same values.
+The GPU backend also requires its first NVMM frame before `open()` succeeds.
+`GpuCamera(startup_timeout_s=..., first_frame_timeout_s=...)` controls the
+pipeline-state and first-frame waits independently; both default to 10 seconds
+and do not change normal frame polling. Argus `AlreadyAllocated` and permanent
+sensor I2C failures such as `-121` fail fast instead of consuming the retry
+budget. The library never restarts `nvargus-daemon`, because the service may be
+shared by other camera processes.
+
+Recovery statistics include the lifecycle `state`, retained
+`last_failure_reason`, `failure_kind`, `last_frame_age_ns`, and
+`consecutive_recovery_failures`, in addition to cumulative
+`recovery_attempts`, `recoveries`, and `last_recovery_error`. The FastAPI health
+endpoint exposes the same values.
 
 Applications can supply a stricter or more tolerant policy:
 
@@ -237,10 +246,13 @@ camera = GpuCamera(
 )
 ```
 
-`AUTO` prefers `nvv4l2h264enc`/`nvv4l2h265enc` and falls back to `x264enc` for
-H.264 when NVENC is absent. Jetson Orin Nano therefore uses x264. Capture,
-inference, and overlay remain NVMM; only its encoder branch converts to I420
-system memory. `HardwareVideoConfig` remains a compatibility alias.
+`AUTO` prefers `nvv4l2h264enc`/`nvv4l2h265enc` only when both the hardware and
+GStreamer support NVENC, and falls back to `x264enc` for H.264. Jetson Orin
+Nano is detected from its Device Tree model and always uses x264 even if an
+NVENC element remains registered. For custom carrier-board identification,
+pass explicit `PlatformCapabilities` to `GpuCamera`. Capture, inference, and
+overlay remain NVMM; only its encoder branch converts to I420 system memory.
+`HardwareVideoConfig` remains a compatibility alias.
 `subscribe_video(name)` gives a transport one latest compressed access-unit
 slot. `video_stats` exposes recent encoder FPS and encoded bitrate without
 retaining a per-frame history.
@@ -271,10 +283,10 @@ frames from branch A, and verifies hardware JPEG output from branch B. The
 unit suite also constructs all four sensor/resolution scenarios without camera
 hardware, but that structural test is not a physical compatibility claim.
 
-The IMX219 matrix has been run successfully for both resolutions on JetPack
-6.2.2 and Jetson Orin Nano. IMX477 remains pending until that physical module
-is connected and the same test completes; pipeline-construction coverage alone
-does not mark it as verified.
+The IMX219 matrix is part of the JetPack 6.2.3 compatibility target on Jetson
+Orin Nano and must pass the hardware release gate for both resolutions. IMX477
+remains pending until that physical module is connected and the same test
+completes; pipeline-construction coverage alone does not mark it as verified.
 
 ## Pipeline observability
 
@@ -315,6 +327,11 @@ with Camera(CameraConfig()) as camera:
 | `recovery_count` | Successful backend recovery operations. |
 | `consecutive_failures` | Current uninterrupted source-read failure count. |
 | `running` | Whether the capture worker is active. |
+| `state` | `stopped`, `starting`, `running`, `recovering`, or `failed`. |
+| `last_failure_reason` | Retained text of the latest startup/capture/restart failure. |
+| `failure_kind` | Stable category such as `capture`, `busy`, `sensor-missing`, or `i2c`. |
+| `last_frame_age_ns` | Monotonic time elapsed since the latest valid frame. |
+| `consecutive_recovery_failures` | Restarts that have not yet produced a valid frame. |
 
 Statistics do not introduce Prometheus, OpenTelemetry, or other telemetry
 dependencies into the core package. Those integrations remain the
@@ -504,6 +521,11 @@ output:
   width: 1280
   height: 720
 ```
+
+The profile's `sensor_id` is a portable default, not a discovery result. Bind
+the same verified operating mode to an explicitly identified Argus sensor with
+`profile.config_for_sensor(sensor_id)`. Never derive that ID from a
+`/dev/videoN` node; V4L2 and Argus numbering are independent.
 
 Default settings live in [config.yml](config.yml) and are loaded only when
 `Camera()` is created without an explicit `CameraConfig`.
