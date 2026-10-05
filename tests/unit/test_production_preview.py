@@ -16,10 +16,12 @@ from starlette.requests import Request
 
 from imx_camera_toolkit import (
     CameraConfigurationError,
+    CameraDependencyError,
     EncodedStreamDescription,
     EncodedVideoFrame,
     GpuCamera,
     HardwareVideoConfig,
+    PlatformCapabilities,
     VideoCodec,
     VideoEncoderBackend,
     VideoEncoderConfig,
@@ -37,6 +39,9 @@ from imx_camera_toolkit._internal.camera.backends.gpu_gstreamer import (
     _h264_parameter_sets,
 )
 from imx_camera_toolkit._internal.camera.models import MemoryType
+from imx_camera_toolkit._internal.camera.platform_capabilities import (
+    detect_platform_capabilities,
+)
 from imx_camera_toolkit._internal.camera.publishing.video import EncodedVideoPublisher
 from imx_camera_toolkit._internal.production_preview.api import _serialize_health
 from imx_camera_toolkit._internal.production_preview.metrics import (
@@ -111,17 +116,105 @@ def test_x264_fallback_moves_only_encoder_branch_to_i420_cpu() -> None:
 def test_auto_backend_selects_x264_when_orin_nano_has_no_nvenc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Registry-based AUTO selection must reflect the installed elements."""
+    """Orin Nano must ignore registered NVENC elements that cannot run."""
+    monkeypatch.setattr(
+        "imx_camera_toolkit._internal.camera.gpu_camera."
+        "detect_platform_capabilities",
+        lambda: PlatformCapabilities(
+            model="NVIDIA Jetson Orin Nano Developer Kit",
+            supports_nvenc=False,
+        ),
+    )
     monkeypatch.setattr(
         GpuGStreamerCaptureBackend,
         "element_available",
-        classmethod(lambda cls, name: name == "x264enc"),
+        classmethod(lambda cls, name: name in {"nvv4l2h264enc", "x264enc"}),
     )
     camera = GpuCamera(
         video_config=VideoEncoderConfig(backend=VideoEncoderBackend.AUTO),
     )
 
     assert camera._resolve_encoder_backend() is VideoEncoderBackend.X264
+
+
+def test_orin_nano_rejects_explicit_nvenc_even_when_plugin_is_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit NVENC must fail before a non-functional pipeline is opened."""
+    monkeypatch.setattr(
+        GpuGStreamerCaptureBackend,
+        "element_available",
+        classmethod(lambda cls, name: True),
+    )
+    camera = GpuCamera(
+        video_config=VideoEncoderConfig(backend=VideoEncoderBackend.NVENC),
+        platform_capabilities=PlatformCapabilities(
+            model="NVIDIA Jetson Orin Nano Developer Kit",
+            supports_nvenc=False,
+        ),
+    )
+
+    with pytest.raises(CameraDependencyError, match="does not support NVENC"):
+        camera._resolve_encoder_backend()
+
+
+def test_orin_nano_rejects_h265_because_software_fallback_is_h264_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Built-in H.265 must fail when the platform has no NVENC block."""
+    monkeypatch.setattr(
+        GpuGStreamerCaptureBackend,
+        "element_available",
+        classmethod(lambda cls, name: True),
+    )
+    camera = GpuCamera(
+        video_config=VideoEncoderConfig(codec=VideoCodec.H265),
+        platform_capabilities=PlatformCapabilities(supports_nvenc=False),
+    )
+
+    with pytest.raises(CameraDependencyError, match="H.265 encoding requires NVENC"):
+        camera._resolve_encoder_backend()
+
+
+def test_orin_nano_requires_x264_plugin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hardware fallback must report an actionable missing dependency."""
+    monkeypatch.setattr(
+        GpuGStreamerCaptureBackend,
+        "element_available",
+        classmethod(lambda cls, name: name == "nvv4l2h264enc"),
+    )
+    camera = GpuCamera(
+        video_config=VideoEncoderConfig(),
+        platform_capabilities=PlatformCapabilities(supports_nvenc=False),
+    )
+
+    with pytest.raises(CameraDependencyError, match="install x264enc"):
+        camera._resolve_encoder_backend()
+
+
+def test_platform_capabilities_detect_orin_nano_from_device_tree(
+    tmp_path: Path,
+) -> None:
+    """Device Tree discovery must tolerate its NUL-terminated model value."""
+    model_path = tmp_path / "model"
+    model_path.write_bytes(b"NVIDIA Jetson Orin Nano Engineering Reference\x00")
+
+    capabilities = detect_platform_capabilities(model_path)
+
+    assert capabilities.model == "NVIDIA Jetson Orin Nano Engineering Reference"
+    assert capabilities.supports_nvenc is False
+
+
+def test_platform_capabilities_leave_unknown_device_unspecified(
+    tmp_path: Path,
+) -> None:
+    """Failed discovery must retain registry fallback for other platforms."""
+    capabilities = detect_platform_capabilities(tmp_path / "missing-model")
+
+    assert capabilities.model is None
+    assert capabilities.supports_nvenc is None
 
 
 def test_runtime_rebuild_preserves_the_resolved_orin_nano_x264_backend() -> None:

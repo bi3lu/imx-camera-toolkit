@@ -53,7 +53,7 @@ from .models import (
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
-from .recovery import RecoveryController
+from .recovery import RecoveryController, is_non_retryable_camera_failure
 
 logger = logging.getLogger(__name__)
 
@@ -337,6 +337,21 @@ class Camera:
                 pipeline=self._metrics.snapshot(),
                 consumer_dropped_frames=self._metrics.consumer_drops(),
                 last_capture_timestamp_ns=self._last_capture_timestamp_ns,
+                state=(
+                    "running"
+                    if running and self._recovery.state == "stopped"
+                    else self._recovery.state
+                ),
+                last_failure_reason=self._recovery.last_failure_reason,
+                failure_kind=self._recovery.failure_kind,
+                last_frame_age_ns=(
+                    None
+                    if self._last_frame_timestamp_ns is None
+                    else max(now_ns - self._last_frame_timestamp_ns, 0)
+                ),
+                consecutive_recovery_failures=(
+                    self._recovery.consecutive_failed_restarts
+                ),
             )
 
     @property
@@ -597,41 +612,70 @@ class Camera:
                 configured camera cannot be opened.
         """
         if not GStreamerCaptureBackend.available() and not opencv_available():
-            raise CameraDependencyError(
+            error = CameraDependencyError(
                 "System OpenCV with GStreamer support is required."
             )
+            self._recovery.record_failure(error)
+            self._recovery.set_state("failed")
+            raise error
 
         if self._enable_preview and not opencv_available():
-            raise CameraDependencyError(
+            error = CameraDependencyError(
                 "System OpenCV with GStreamer support is required for JPEG "
                 "preview. Disable preview with Camera(enable_preview=False) "
                 "for raw-frame-only capture."
             )
+            self._recovery.record_failure(error)
+            self._recovery.set_state("failed")
+            raise error
 
         with self._lifecycle_lock:
             if self.running:
                 return
 
-            self._release_finished_capture()
-            self._backend = self._create_backend()
+            self._recovery.set_state("starting")
 
             try:
+                self._release_finished_capture()
+                self._backend = self._create_backend()
                 self._backend.open()
 
-            except CameraError:
+            except CameraError as error:
+                self._release_backend()
+                self._recovery.record_failure(error)
+                self._recovery.set_state("failed")
                 raise
 
             except Exception as error:
-                raise CameraOpenError(
+                self._release_backend()
+                wrapped_error = CameraOpenError(
                     f"Could not open the IMX camera backend: {error}"
-                ) from error
+                )
+                self._recovery.record_failure(wrapped_error)
+                self._recovery.set_state("failed")
+                raise wrapped_error from error
 
-            with self._software_hdr_lock:
-                if self._software_hdr_settings.enabled:
-                    self._software_hdr_processor = self._create_software_hdr_processor()
-                    self._software_hdr_processor.start(self._v4l2_controls.set_exposure)
+            try:
+                with self._software_hdr_lock:
+                    if self._software_hdr_settings.enabled:
+                        self._software_hdr_processor = (
+                            self._create_software_hdr_processor()
+                        )
+                        self._software_hdr_processor.start(
+                            self._v4l2_controls.set_exposure
+                        )
+
+            except Exception as error:
+                self._release_backend()
+                wrapped_error = CameraOpenError(
+                    f"Could not start camera processing: {error}"
+                )
+                self._recovery.record_failure(wrapped_error)
+                self._recovery.set_state("failed")
+                raise wrapped_error from error
 
             self.last_error = None
+            self._recovery.set_state("running")
             self._running.set()
             self._thread = threading.Thread(
                 target=self._capture_loop,
@@ -719,7 +763,14 @@ class Camera:
 
             except Exception as error:
                 self.last_error = error
+                self._recovery.record_failure(error)
                 logger.exception("IMX camera capture failed")
+
+                if is_non_retryable_camera_failure(error):
+                    self.last_recovery_error = error
+                    self._recovery.set_state("failed")
+                    self._running.clear()
+                    continue
 
                 if not self._recover_backend():
                     if self.running:
@@ -727,6 +778,7 @@ class Camera:
                             "camera recovery attempts were exhausted"
                         )
 
+                    self._recovery.set_state("failed")
                     self._running.clear()
 
         self._publisher.notify_waiters()
@@ -742,12 +794,17 @@ class Camera:
         Returns:
             ``True`` when a new backend is opened and capture may continue.
         """
+        if self.running:
+            self._recovery.set_state("recovering")
+
         while self.running:
             with self._stats_lock:
                 admitted_attempt = self._recovery.begin_attempt(
                     self._recovery_policy.max_attempts
                 )
+
                 if admitted_attempt is None:
+                    self._recovery.set_state("failed")
                     return False
 
                 attempt = admitted_attempt - 1
@@ -767,17 +824,23 @@ class Camera:
                     self._backend = backend
 
                 except Exception as error:
-                    self.last_recovery_error = error
+                    self._recovery.record_restart_failure(error)
                     logger.warning(
                         "Camera recovery attempt %s/%s failed: %s",
                         attempt + 1,
                         self._recovery_policy.max_attempts,
                         error,
                     )
+
+                    if is_non_retryable_camera_failure(error):
+                        self._recovery.set_state("failed")
+                        return False
+
                     continue
 
             with self._stats_lock:
                 self.recoveries += 1
+                self._recovery.record_restart_opened()
 
             self._reset_consecutive_failures()
             self.last_recovery_error = None
@@ -1157,6 +1220,7 @@ class Camera:
         """Stop capture, release its backend, and discard the latest JPEG."""
         with self._lifecycle_lock:
             self._running.clear()
+            self._recovery.set_state("stopped")
             self._publisher.notify_waiters()
             self._raw_publisher.notify_waiters()
             self._frame_hub.close()

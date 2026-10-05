@@ -64,6 +64,9 @@ dev = [
     "ruff>=0.9,<1.0",
 ]
 
+[tool.uv]
+constraint-dependencies = ["virtualenv>=21.7.13"]
+
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"
 testpaths = ["tests"]

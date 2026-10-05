@@ -43,6 +43,55 @@ def test_cli_info_and_hardware_test_use_structured_results(
     assert '"camera_profiles"' in captured.out
 
 
+def test_cli_hardware_sensor_probe_forwards_explicit_argus_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The diagnostic CLI must keep Argus IDs explicit and repeatable."""
+    calls: list[dict[str, object]] = []
+
+    def collect(include_hardware: bool, **kwargs: object) -> list[dict[str, object]]:
+        calls.append({"include_hardware": include_hardware, **kwargs})
+        return [{"name": "argus_sensor_1", "status": "ok", "detail": "frame"}]
+
+    monkeypatch.setattr(cli, "diagnostics_as_dict", collect)
+
+    assert (
+        main(
+            (
+                "diagnose",
+                "--hardware",
+                "--probe-sensors",
+                "--sensor-id",
+                "1",
+                "--sensor-id",
+                "3",
+                "--probe-timeout",
+                "0.5",
+                "--json",
+            )
+        )
+        == 0
+    )
+    assert calls == [
+        {
+            "include_hardware": True,
+            "probe_sensors": True,
+            "sensor_ids": (1, 3),
+            "probe_timeout": 0.5,
+        }
+    ]
+    assert '"argus_sensor_1"' in capsys.readouterr().out
+
+
+def test_cli_sensor_probe_requires_explicit_hardware_opt_in() -> None:
+    """Opening sensors must require both diagnostic hardware flags."""
+    with pytest.raises(SystemExit) as error:
+        main(("diagnose", "--probe-sensors"))
+
+    assert error.value.code == 2
+
+
 def test_cli_camera_benchmark_can_load_an_application_cpu_model(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

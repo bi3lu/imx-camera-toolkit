@@ -45,8 +45,13 @@ def test_health_and_snapshot_with_mock_camera() -> None:
         assert health["camera_running"] is True
         assert health["dropped_frames"] == 0
         assert health["capture_fps"] == 0.0
+        assert health["camera_state"] == "running"
         assert health["last_frame_timestamp_ns"] is None
+        assert health["last_frame_age_ns"] is None
         assert health["consecutive_failures"] == 0
+        assert health["consecutive_recovery_failures"] == 0
+        assert health["last_failure_reason"] is None
+        assert health["failure_kind"] is None
         assert health["active_backend"] == "mock"
         assert health["frame_format"] == "BGR_CPU"
         assert health["frame_memory_type"] == "CPU"

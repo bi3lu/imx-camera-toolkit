@@ -118,6 +118,88 @@ def test_gpu_camera_is_a_stable_api_without_an_opt_in_flag() -> None:
     assert camera.api_stability == "stable"
 
 
+def test_gpu_camera_forwards_distinct_startup_and_first_frame_timeouts() -> None:
+    """Argus startup waits must remain separate from normal frame polling."""
+    camera = GpuCamera(startup_timeout_s=12.5, first_frame_timeout_s=8.0)
+
+    backend = camera._create_backend()
+
+    assert isinstance(backend, GpuGStreamerCaptureBackend)
+    assert backend._startup_timeout_s == 12.5
+    assert backend._first_frame_timeout_s == 8.0
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"startup_timeout_s": 0},
+        {"startup_timeout_s": float("inf")},
+        {"first_frame_timeout_s": -1},
+        {"first_frame_timeout_s": True},
+    ],
+)
+def test_gpu_camera_rejects_invalid_startup_timeouts(
+    kwargs: dict[str, object],
+) -> None:
+    """Invalid timeout policy must fail before any Argus resource is opened."""
+    with pytest.raises(CameraConfigurationError, match="finite positive"):
+        GpuCamera(**kwargs)  # type: ignore[arg-type]
+
+
+def test_gpu_backend_uses_configured_playing_state_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pipeline state waiting must use the startup timeout only."""
+
+    class _State:
+        NULL = "NULL"
+        PLAYING = "PLAYING"
+
+    class _StateChangeReturn:
+        FAILURE = "FAILURE"
+
+    class _Pipeline:
+        state_timeout: int | None = None
+
+        def get_by_name(self, name: str) -> object | None:
+            return object() if name in {"argus_source", "gpu_sink"} else None
+
+        def set_state(self, _state: object) -> str:
+            return "SUCCESS"
+
+        def get_state(self, timeout: int) -> tuple[None, str, None]:
+            self.state_timeout = timeout
+            return None, _State.PLAYING, None
+
+    pipeline = _Pipeline()
+
+    class _Gst:
+        SECOND = 1_000
+        State = _State
+        StateChangeReturn = _StateChangeReturn
+
+        @staticmethod
+        def parse_launch(_description: str) -> _Pipeline:
+            return pipeline
+
+    backend = GpuGStreamerCaptureBackend(
+        "unused",
+        1280,
+        720,
+        enable_preview=False,
+        startup_timeout_s=2.5,
+    )
+    frame = mock_gpu_frame(object())
+    monkeypatch.setattr(gpu_gstreamer_backend, "Gst", _Gst())
+    monkeypatch.setattr(backend, "_pull_first_sample", lambda *_: object())
+    monkeypatch.setattr(backend, "_frame_from_sample", lambda _: frame)
+
+    backend.open()
+
+    assert pipeline.state_timeout == 2_500
+    backend.close()
+
+
 def test_gpu_camera_can_enable_hardware_preview_before_start() -> None:
     """Stable preview composition must add the isolated JPEG branch."""
     camera = GpuCamera(enable_preview=False)
@@ -359,6 +441,80 @@ def test_gpu_backend_surfaces_open_error_while_waiting_for_first_frame(
         backend._pull_first_sample(sink, object())
 
     assert sink.calls == 1
+
+
+def test_gpu_backend_classifies_argus_i2c_minus_121_as_permanent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Argus bus errors must preserve permanent sensor-failure diagnostics."""
+
+    class _MessageType:
+        ERROR = 1
+        EOS = 2
+
+    class _Message:
+        type = _MessageType.ERROR
+
+        def parse_error(self) -> tuple[RuntimeError, str]:
+            return RuntimeError("Argus failed"), "i2c read probe (-121)"
+
+    class _Bus:
+        def pop_filtered(self, _types: int) -> _Message:
+            return _Message()
+
+    class _Pipeline:
+        def get_bus(self) -> _Bus:
+            return _Bus()
+
+    class _Gst:
+        MessageType = _MessageType
+
+    backend = GpuGStreamerCaptureBackend(
+        "unused",
+        1280,
+        720,
+        enable_preview=False,
+    )
+    monkeypatch.setattr(gpu_gstreamer_backend, "Gst", _Gst())
+
+    with pytest.raises(CameraOpenError, match="permanent I2C failure"):
+        backend._raise_pipeline_error(pipeline=_Pipeline(), opening=True)
+
+
+def test_gpu_backend_bounds_first_frame_wait_independently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First-frame timeout must bound preroll without changing read polling."""
+
+    class _Gst:
+        SECOND = 1_000
+
+    class _Sink:
+        waits: list[int] = []
+
+        def emit(self, _signal: str, timeout: int) -> None:
+            self.waits.append(timeout)
+            return None
+
+    backend = GpuGStreamerCaptureBackend(
+        "unused",
+        1280,
+        720,
+        enable_preview=False,
+        first_frame_timeout_s=0.05,
+    )
+    sink = _Sink()
+    timestamps = iter((10.0, 10.0, 10.06))
+    monkeypatch.setattr(gpu_gstreamer_backend, "Gst", _Gst())
+    monkeypatch.setattr(
+        "imx_camera_toolkit._internal.camera.backends.gpu_gstreamer." "time.monotonic",
+        lambda: next(timestamps),
+    )
+    monkeypatch.setattr(backend, "_raise_pipeline_error", lambda **_: None)
+
+    assert backend._pull_first_sample(sink, object()) is None
+    assert len(sink.waits) == 1
+    assert 0 < sink.waits[0] <= 50
 
 
 @pytest.mark.parametrize(

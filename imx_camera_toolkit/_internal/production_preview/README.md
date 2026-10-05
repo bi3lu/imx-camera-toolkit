@@ -101,9 +101,11 @@ native HLS `video.src` requests then authenticate without exposing the token to
 JavaScript storage or an HLS URL. Deploy the service behind HTTPS (preferably a
 TLS/mTLS reverse proxy); the cookie is marked `Secure` when `require_https=True`.
 
-`AUTO` selects `nvv4l2h264enc` where NVENC exists and otherwise selects
-`x264enc`. Explicit `NVENC` and `X264` policies fail preflight with the complete
-missing-element list instead of surfacing an opaque `parse_launch()` error.
+`AUTO` selects `nvv4l2h264enc` where the hardware supports NVENC and otherwise
+selects `x264enc`. Orin Nano is detected independently of the GStreamer plugin
+registry. Explicit `NVENC` and `X264` policies fail preflight with an actionable
+capability or missing-element error instead of surfacing an opaque
+`parse_launch()` error.
 `HardwareVideoConfig` remains a compatibility alias for
 `VideoEncoderConfig`.
 
