@@ -45,6 +45,7 @@ from imx_camera_toolkit import (
     OverlayRenderer,
     PipelineMetrics,
     PipelineStage,
+    PlatformCapabilities,
     PreviewBackend,
     PreviewOverlayContext,
     PreviewServer,
@@ -138,6 +139,9 @@ from imx_camera_toolkit._internal.camera.models import (
 )
 from imx_camera_toolkit._internal.camera.pipeline import (
     build_gpu_gstreamer_pipeline as internal_build_gpu_gstreamer_pipeline,
+)
+from imx_camera_toolkit._internal.camera.platform_capabilities import (
+    PlatformCapabilities as InternalPlatformCapabilities,
 )
 from imx_camera_toolkit._internal.camera.profiles import (
     CameraProfile as InternalCameraProfile,
@@ -266,6 +270,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert MetricsRecorder is InternalMetricsRecorder
     assert PipelineMetrics is InternalPipelineMetrics
     assert PipelineStage is InternalPipelineStage
+    assert PlatformCapabilities is InternalPlatformCapabilities
     assert OverlayRenderer is InternalOverlayRenderer
     assert PreviewOverlayContext is InternalPreviewOverlayContext
     assert StageMetrics is InternalStageMetrics
