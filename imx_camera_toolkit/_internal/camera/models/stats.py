@@ -26,6 +26,13 @@ class CameraStats:
         consumer_dropped_frames: Named latest-frame consumer drop counters.
         last_capture_timestamp_ns: Optional source timestamp of the latest
             successful frame in its native clock domain.
+        state: Current lifecycle state: stopped, starting, running, recovering,
+            or failed.
+        last_failure_reason: Most recent capture/startup failure text.
+        failure_kind: Stable category for the most recent failure.
+        last_frame_age_ns: Monotonic time since the latest valid frame.
+        consecutive_recovery_failures: Restarts that have not yet resulted in
+            a valid frame.
     """
 
     captured_frames: int
@@ -38,6 +45,11 @@ class CameraStats:
     pipeline: PipelineMetrics = field(default_factory=PipelineMetrics)
     consumer_dropped_frames: tuple[tuple[str, int], ...] = ()
     last_capture_timestamp_ns: int | None = None
+    state: str = "stopped"
+    last_failure_reason: str | None = None
+    failure_kind: str | None = None
+    last_frame_age_ns: int | None = None
+    consecutive_recovery_failures: int = 0
 
     def __post_init__(self) -> None:
         """Validate scalar diagnostics without inspecting camera resources."""
@@ -46,6 +58,7 @@ class CameraStats:
             "dropped_frames",
             "recovery_count",
             "consecutive_failures",
+            "consecutive_recovery_failures",
         )
 
         for field_name in integer_fields:
@@ -82,6 +95,28 @@ class CameraStats:
 
         if not isinstance(self.running, bool):
             raise ValueError("running must be a boolean")
+
+        if self.state not in {
+            "stopped",
+            "starting",
+            "running",
+            "recovering",
+            "failed",
+        }:
+            raise ValueError("state must be a supported camera lifecycle state")
+
+        for field_name in ("last_failure_reason", "failure_kind"):
+            value = getattr(self, field_name)
+
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(f"{field_name} must be a non-empty string or None")
+
+        if self.last_frame_age_ns is not None and (
+            isinstance(self.last_frame_age_ns, bool)
+            or not isinstance(self.last_frame_age_ns, int)
+            or self.last_frame_age_ns < 0
+        ):
+            raise ValueError("last_frame_age_ns must be a non-negative integer or None")
 
         if not isinstance(self.pipeline, PipelineMetrics):
             raise ValueError("pipeline must be a PipelineMetrics snapshot")
