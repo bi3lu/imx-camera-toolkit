@@ -46,6 +46,9 @@ from imx_camera_toolkit._internal.camera.pipeline import (
     build_gpu_gstreamer_pipeline,
     build_video_encoder_pipeline,
 )
+from imx_camera_toolkit._internal.camera.platform_capabilities import (
+    PlatformCapabilities,
+)
 from imx_camera_toolkit._internal.camera.profiles import (
     CameraProfile,
     CameraProfileStatus,
@@ -79,6 +82,7 @@ __all__ = [
     "MetricsRecorder",
     "PipelineMetrics",
     "PipelineStage",
+    "PlatformCapabilities",
     "StageMetrics",
     "VideoCodec",
     "VideoEncoderBackend",
