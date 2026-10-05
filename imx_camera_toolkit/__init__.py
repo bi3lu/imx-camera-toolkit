@@ -6,6 +6,7 @@ the private ``imx_camera_toolkit._internal`` package.
 
 from __future__ import annotations
 
+from importlib.metadata import version as _distribution_version
 from typing import TYPE_CHECKING, Any
 
 from .camera import (
@@ -35,6 +36,7 @@ from .camera import (
     MetricsRecorder,
     PipelineMetrics,
     PipelineStage,
+    PlatformCapabilities,
     StageMetrics,
     VideoCodec,
     VideoEncoderBackend,
@@ -76,7 +78,7 @@ if TYPE_CHECKING:
     from .preview import preview as preview
     from .preview import serve as serve
 
-__version__ = "0.7.2"
+__version__ = _distribution_version("imx-camera-toolkit")
 
 __all__ = [
     "Camera",
@@ -114,6 +116,7 @@ __all__ = [
     "MetricsRecorder",
     "PipelineMetrics",
     "PipelineStage",
+    "PlatformCapabilities",
     "OverlayRenderer",
     "PreviewOverlayContext",
     "StageMetrics",

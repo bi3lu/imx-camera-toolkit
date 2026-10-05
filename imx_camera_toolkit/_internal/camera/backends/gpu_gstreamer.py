@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import time
+from math import isfinite
 from typing import Any
 
 from ..errors import (
@@ -21,6 +22,7 @@ from ..models import (
     MemoryType,
     VideoOverlayRenderer,
 )
+from ..recovery import classify_camera_failure
 
 Gst: Any | None
 
@@ -49,10 +51,25 @@ class GpuGStreamerCaptureBackend:
         stream_description: EncodedStreamDescription | None = None,
         video_encoder_backend: str | None = None,
         overlay_error_policy: str = "fail-open",
+        startup_timeout_s: float = 10.0,
+        first_frame_timeout_s: float = 10.0,
     ) -> None:
         """Initialize an unopened pipeline backend."""
         if overlay_error_policy not in {"fail-open", "fail-closed"}:
             raise ValueError("overlay_error_policy must be fail-open or fail-closed")
+
+        for name, value in (
+            ("startup_timeout_s", startup_timeout_s),
+            ("first_frame_timeout_s", first_frame_timeout_s),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or value <= 0
+            ):
+                raise ValueError(f"{name} must be a finite positive number")
+
         self._pipeline_description = pipeline
         self._output_width = output_width
         self._output_height = output_height
@@ -62,6 +79,8 @@ class GpuGStreamerCaptureBackend:
         self._stream_description = stream_description
         self._video_encoder_backend = video_encoder_backend
         self._overlay_error_policy = overlay_error_policy
+        self._startup_timeout_s = float(startup_timeout_s)
+        self._first_frame_timeout_s = float(first_frame_timeout_s)
         self._pipeline: Any | None = None
         self._source: Any | None = None
         self._gpu_sink: Any | None = None
@@ -178,12 +197,13 @@ class GpuGStreamerCaptureBackend:
                 pipeline.set_state(Gst.State.NULL)
                 raise CameraOpenError("Could not start the NVMM camera pipeline")
 
-            _, state, _ = pipeline.get_state(5 * Gst.SECOND)
+            _, state, _ = pipeline.get_state(int(self._startup_timeout_s * Gst.SECOND))
 
             if state != Gst.State.PLAYING:
                 pipeline.set_state(Gst.State.NULL)
                 raise CameraOpenError(
-                    "NVMM camera pipeline did not enter the playing state"
+                    "NVMM camera pipeline did not enter the playing state "
+                    f"within {self._startup_timeout_s:.1f}s"
                 )
 
             first_sample = self._pull_first_sample(gpu_sink, pipeline)
@@ -192,7 +212,8 @@ class GpuGStreamerCaptureBackend:
                 self._raise_pipeline_error(pipeline=pipeline, opening=True)
                 pipeline.set_state(Gst.State.NULL)
                 raise CameraOpenError(
-                    "NVMM camera pipeline did not produce its first frame"
+                    "NVMM camera pipeline did not produce its first frame "
+                    f"within {self._first_frame_timeout_s:.1f}s"
                 )
             first_frame = self._frame_from_sample(first_sample)
 
@@ -219,15 +240,20 @@ class GpuGStreamerCaptureBackend:
         if Gst is None:
             raise CameraDependencyError("PyGObject GStreamer is unavailable")
 
-        deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline:
-            sample = gpu_sink.emit("try-pull-sample", Gst.SECOND // 10)
+        deadline = time.monotonic() + self._first_frame_timeout_s
+        while True:
+            remaining_s = deadline - time.monotonic()
+
+            if remaining_s <= 0:
+                return None
+
+            poll_ns = min(int(remaining_s * Gst.SECOND), Gst.SECOND // 10)
+            sample = gpu_sink.emit("try-pull-sample", poll_ns)
+
             if sample is not None:
                 return sample
 
             self._raise_pipeline_error(pipeline=pipeline, opening=True)
-
-        return None
 
     def read(self) -> tuple[bool, GpuFrame | None]:
         """Pull one NVMM sample and return its checked borrowed Gst buffer."""
@@ -236,10 +262,12 @@ class GpuGStreamerCaptureBackend:
 
         frame = self._pending_gpu_frame
         self._pending_gpu_frame = None
+
         if frame is not None:
             return True, frame
 
         sample = self._gpu_sink.emit("try-pull-sample", Gst.SECOND // 5)
+
         if sample is None:
             self._raise_pipeline_error()
             return False, None
@@ -461,6 +489,13 @@ class GpuGStreamerCaptureBackend:
                 )
 
             error_type = CameraOpenError if opening else CameraReadError
+
+            if classify_camera_failure(detail) == "i2c":
+                raise error_type(
+                    "Argus sensor reported a permanent I2C failure; check "
+                    f"hardware, Device Tree, and the sensor driver: {detail}"
+                )
+
             raise error_type(f"NVMM pipeline failed: {detail}")
 
         error_type = CameraOpenError if opening else CameraReadError

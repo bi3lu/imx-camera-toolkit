@@ -180,6 +180,21 @@ def test_camera_profile_alias_and_hardware_mapping() -> None:
     }
 
 
+def test_camera_profile_can_bind_an_explicit_argus_sensor_id() -> None:
+    """Profile defaults must not prevent probing another Argus identifier."""
+    profile = get_camera_profile("imx219-1080p")
+
+    rebound = profile.config_for_sensor(1)
+
+    assert profile.config.sensor_id == 0
+    assert rebound.sensor_id == 1
+    assert rebound.sensor_mode == profile.config.sensor_mode
+    assert rebound.capture_width == profile.config.capture_width
+
+    with pytest.raises(ValueError, match="greater than or equal to zero"):
+        profile.config_for_sensor(-1)
+
+
 def test_camera_profile_catalog_contains_only_documented_profiles() -> None:
     """The stable profile list must not imply unverified sensor support."""
     assert list_camera_profiles() == (get_camera_profile("imx219-1080p"),)

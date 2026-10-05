@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.metadata
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+import imx_camera_toolkit
 from imx_camera_toolkit import Camera as RootCamera
 from imx_camera_toolkit import (
     CameraConfig,
@@ -38,6 +45,7 @@ from imx_camera_toolkit import (
     OverlayRenderer,
     PipelineMetrics,
     PipelineStage,
+    PlatformCapabilities,
     PreviewBackend,
     PreviewOverlayContext,
     PreviewServer,
@@ -132,6 +140,9 @@ from imx_camera_toolkit._internal.camera.models import (
 from imx_camera_toolkit._internal.camera.pipeline import (
     build_gpu_gstreamer_pipeline as internal_build_gpu_gstreamer_pipeline,
 )
+from imx_camera_toolkit._internal.camera.platform_capabilities import (
+    PlatformCapabilities as InternalPlatformCapabilities,
+)
 from imx_camera_toolkit._internal.camera.profiles import (
     CameraProfile as InternalCameraProfile,
 )
@@ -198,7 +209,7 @@ from imx_camera_toolkit._internal.testing import MockCamera as InternalMockCamer
 from imx_camera_toolkit._internal.testing import (
     MockFrameSource as InternalMockFrameSource,
 )
-from imx_camera_toolkit.api import create_app
+from imx_camera_toolkit.api import APIConfig, create_app, load_api_config
 from imx_camera_toolkit.camera import Camera
 from imx_camera_toolkit.camera_control import CameraController
 from imx_camera_toolkit.controls import CameraControls, ExposureConfig
@@ -215,7 +226,8 @@ from imx_camera_toolkit.testing import MockCamera, MockFrameSource
 
 def test_public_namespace_reexports_stable_library_types() -> None:
     """External imports must resolve to the existing implementation classes."""
-    assert __version__ == "0.7.2"
+    assert __version__
+    assert __version__ == importlib.metadata.version("imx-camera-toolkit")
     assert CameraPreview.__module__ == "imx_camera_toolkit.preview"
     assert PreviewBackend is ModulePreviewBackend
     assert PreviewServer.__module__ == "imx_camera_toolkit._internal.preview.server"
@@ -258,6 +270,7 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert MetricsRecorder is InternalMetricsRecorder
     assert PipelineMetrics is InternalPipelineMetrics
     assert PipelineStage is InternalPipelineStage
+    assert PlatformCapabilities is InternalPlatformCapabilities
     assert OverlayRenderer is InternalOverlayRenderer
     assert PreviewOverlayContext is InternalPreviewOverlayContext
     assert StageMetrics is InternalStageMetrics
@@ -280,3 +293,33 @@ def test_public_namespace_reexports_stable_library_types() -> None:
     assert ExposureConfig is InternalCameraSettings
     assert MockCamera is InternalMockCamera
     assert MockFrameSource is InternalMockFrameSource
+
+
+def test_public_version_uses_distribution_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runtime version must follow metadata rather than a duplicated literal."""
+
+    def version(distribution_name: str) -> str:
+        """Return a distinct version for the expected distribution only."""
+        assert distribution_name == "imx-camera-toolkit"
+        return "1.2.3.dev4"
+
+    monkeypatch.setattr(importlib.metadata, "version", version)
+    spec = importlib.util.spec_from_file_location(
+        "imx_camera_toolkit", imx_camera_toolkit.__file__
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.__version__ == "1.2.3.dev4"
+
+
+def test_api_version_defaults_to_metadata_and_allows_override(tmp_path: Path) -> None:
+    """Default API metadata follows the package; explicit versions still work."""
+    assert APIConfig().version == __version__
+    assert load_api_config().version == __version__
+    config_path = tmp_path / "api.yml"
+    config_path.write_text('api_config:\n  version: "custom-api-version"\n')
+    assert load_api_config(config_path, strict=True).version == "custom-api-version"

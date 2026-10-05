@@ -1,6 +1,6 @@
 # GPU Camera and YOLO deployment guide
 
-This guide brings an NVIDIA Jetson Orin Nano running JetPack 6.2.2 from a fresh
+This guide brings an NVIDIA Jetson Orin Nano running JetPack 6.2.3 from a fresh
 repository checkout to GPU-first YOLO inference with a low-latency WebRTC
 preview. It also describes a fail-closed field deployment with scoped
 authentication and TLS.
@@ -34,14 +34,17 @@ memory instead of accumulating stale frames.
 
 Jetson Orin Nano has no hardware NVENC block. The toolkit therefore keeps
 capture, inference, and overlay in NVMM, then uses one shared x264 fallback
-branch for H.264 preview. This affects preview CPU usage; it does not move the
-YOLO input path to the CPU.
+branch for H.264 preview. Encoder selection checks the Device Tree model as
+well as the GStreamer registry, so a registered `nvv4l2h264enc` element is not
+treated as proof of working NVENC hardware. A deployment with a custom
+carrier-board model can pass explicit `PlatformCapabilities` to `GpuCamera`.
+This affects preview CPU usage; it does not move the YOLO input path to the CPU.
 
 ## 1. Confirm the target
 
-The tested baseline is Jetson Orin Nano, JetPack 6.2.2 / Jetson Linux 36.5,
-CUDA 12.6, TensorRT 10.3, and Python 3.10. Run these commands on the Jetson over
-SSH:
+The compatibility baseline is Jetson Orin Nano, JetPack 6.2.3 / Jetson Linux
+36.5.2, CUDA 12.6, TensorRT 10.3, and Python 3.10. Run these commands on the
+Jetson over SSH:
 
 ```bash
 cat /etc/nv_tegra_release
@@ -126,11 +129,19 @@ Do not debug the model and sensor at the same time. First run diagnostics and a
 bounded GPU capture test:
 
 ```bash
-uv run imx-camera diagnose --hardware
+uv run imx-camera diagnose --hardware --probe-sensors \
+  --sensor-id 0 --sensor-id 1 --probe-timeout 5
 uv run imx-camera info --hardware
 uv run imx-camera test --backend gpu --sensor-id 0 \
   --width 1280 --height 720 --fps 30 --frames 60
 ```
+
+The probe treats V4L2 nodes, Device Tree sensor nodes, and Argus `sensor-id`
+values as separate evidence. It never assumes that `/dev/video0` is Argus
+sensor 0. A reported `i2c-error`, including kernel error `-121`, points to the
+sensor hardware, CSI connection, Device Tree overlay, or driver; it cannot be
+repaired by changing Python selection logic. Stop competing camera processes
+before interpreting a `busy` or `no-frame` result.
 
 Then measure the target configuration:
 
@@ -396,6 +407,7 @@ under the actual enclosure and ambient temperature.
 | Symptom | Check | Corrective action |
 | --- | --- | --- |
 | `nvarguscamerasrc` cannot open | Another process, ribbon orientation, sensor overlay, `nvargus-daemon` logs | Stop competing clients, verify hardware configuration, restart Argus, then rerun the bounded GStreamer test. |
+| Sensor probe reports `i2c-error` or kernel `-121` | CSI ribbon, connector/port, power, Device Tree overlay, sensor-driver logs | Power down before reseating hardware, correct the overlay/driver configuration, then reboot and rerun the probe; Python cannot repair an I2C probe failure. |
 | `No module named cv2`, `gi`, or `tensorrt` | `.venv/pyvenv.cfg` and the import command from step 3 | Recreate the environment with `--system-site-packages`; do not replace JetPack packages with PyPI wheels. |
 | CUDA interop build cannot find headers | `python-gi-dev`, GStreamer development packages, `/usr/src/jetson_multimedia_api/include/nvbufsurface.h` | Install the missing JetPack/development package and rebuild the extension. |
 | TensorRT rejects ONNX | TensorRT parser log, model opset, input count/type, raw versus end-to-end output | Re-export with a TensorRT-compatible opset and one float32 NCHW image input; keep YOLO decoding application-owned. |
@@ -431,6 +443,6 @@ under the actual enclosure and ambient temperature.
 - [GPU inference integration](../imx_camera_toolkit/_internal/inference/README.md)
 - [Production browser preview](../imx_camera_toolkit/_internal/production_preview/README.md)
 - [Camera capture architecture](../imx_camera_toolkit/_internal/camera/README.md)
-- [NVIDIA JetPack 6.2.2 release page](https://developer.nvidia.com/embedded/jetpack-sdk-622)
+- [NVIDIA JetPack 6.2.3 release page](https://developer.nvidia.com/embedded/jetpack-sdk-623)
 - [NVIDIA accelerated GStreamer guide](https://docs.nvidia.com/jetson/archives/r36.5/DeveloperGuide/SD/Multimedia/AcceleratedGstreamer.html)
 - [TensorRT engine compatibility](https://docs.nvidia.com/deeplearning/tensorrt/latest/inference-library/engine-compatibility.html)

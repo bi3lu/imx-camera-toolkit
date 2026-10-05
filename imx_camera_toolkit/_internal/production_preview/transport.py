@@ -693,6 +693,14 @@ class ProductionPreviewServer:
                 ("dropped_frames", "dropped_frames"),
                 ("capture_fps", "capture_fps"),
                 ("last_frame_timestamp_ns", "last_frame_timestamp_ns"),
+                ("state", "state"),
+                ("last_failure_reason", "last_failure_reason"),
+                ("failure_kind", "failure_kind"),
+                ("last_frame_age_ns", "last_frame_age_ns"),
+                (
+                    "consecutive_recovery_failures",
+                    "consecutive_recovery_failures",
+                ),
             ):
                 values[output_name] = getattr(snapshot, attribute, None)
         overlay_method = getattr(self._source, "overlay_diagnostics", None)

@@ -1,6 +1,6 @@
 [project]
 name = "imx-camera-toolkit"
-version = "0.7.2"
+version = "0.8.0"
 description = "CSI IMX camera capture, control, and streaming toolkit for NVIDIA Jetson"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -63,6 +63,9 @@ dev = [
     "pytest-cov>=6.0,<7.0",
     "ruff>=0.9,<1.0",
 ]
+
+[tool.uv]
+constraint-dependencies = ["virtualenv>=21.7.13"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"

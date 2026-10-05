@@ -53,6 +53,7 @@ from .models import (
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
+from .recovery import RecoveryController, is_non_retryable_camera_failure
 
 logger = logging.getLogger(__name__)
 
@@ -262,10 +263,20 @@ class Camera:
         self._last_frame_timestamp_ns: int | None = None
         self._last_capture_timestamp_ns: int | None = None
         self._consecutive_failures = 0
+        self._recovery = RecoveryController()
         self.last_error: Exception | None = None
         self.recovery_attempts = 0
         self.recoveries = 0
-        self.last_recovery_error: Exception | None = None
+
+    @property
+    def last_recovery_error(self) -> Exception | None:
+        """Last recovery error, retaining the public diagnostic contract."""
+        return self._recovery.last_error
+
+    @last_recovery_error.setter
+    def last_recovery_error(self, error: Exception | None) -> None:
+        """Update recovery diagnostics without renewing the retry budget."""
+        self._recovery.last_error = error
 
     def _build_pipeline(self, argus_properties: Sequence[str]) -> str:
         """Build a pipeline using this camera's resolved static configuration."""
@@ -326,6 +337,21 @@ class Camera:
                 pipeline=self._metrics.snapshot(),
                 consumer_dropped_frames=self._metrics.consumer_drops(),
                 last_capture_timestamp_ns=self._last_capture_timestamp_ns,
+                state=(
+                    "running"
+                    if running and self._recovery.state == "stopped"
+                    else self._recovery.state
+                ),
+                last_failure_reason=self._recovery.last_failure_reason,
+                failure_kind=self._recovery.failure_kind,
+                last_frame_age_ns=(
+                    None
+                    if self._last_frame_timestamp_ns is None
+                    else max(now_ns - self._last_frame_timestamp_ns, 0)
+                ),
+                consecutive_recovery_failures=(
+                    self._recovery.consecutive_failed_restarts
+                ),
             )
 
     @property
@@ -413,6 +439,7 @@ class Camera:
             self._last_frame_timestamp_ns = timestamp_ns
             self._last_capture_timestamp_ns = capture_timestamp_ns
             self._consecutive_failures = 0
+            self._recovery.record_frame_success()
             self._capture_timestamps_ns.append(timestamp_ns)
             self._prune_capture_timestamps(timestamp_ns)
 
@@ -585,41 +612,70 @@ class Camera:
                 configured camera cannot be opened.
         """
         if not GStreamerCaptureBackend.available() and not opencv_available():
-            raise CameraDependencyError(
+            error = CameraDependencyError(
                 "System OpenCV with GStreamer support is required."
             )
+            self._recovery.record_failure(error)
+            self._recovery.set_state("failed")
+            raise error
 
         if self._enable_preview and not opencv_available():
-            raise CameraDependencyError(
+            error = CameraDependencyError(
                 "System OpenCV with GStreamer support is required for JPEG "
                 "preview. Disable preview with Camera(enable_preview=False) "
                 "for raw-frame-only capture."
             )
+            self._recovery.record_failure(error)
+            self._recovery.set_state("failed")
+            raise error
 
         with self._lifecycle_lock:
             if self.running:
                 return
 
-            self._release_finished_capture()
-            self._backend = self._create_backend()
+            self._recovery.set_state("starting")
 
             try:
+                self._release_finished_capture()
+                self._backend = self._create_backend()
                 self._backend.open()
 
-            except CameraError:
+            except CameraError as error:
+                self._release_backend()
+                self._recovery.record_failure(error)
+                self._recovery.set_state("failed")
                 raise
 
             except Exception as error:
-                raise CameraOpenError(
+                self._release_backend()
+                wrapped_error = CameraOpenError(
                     f"Could not open the IMX camera backend: {error}"
-                ) from error
+                )
+                self._recovery.record_failure(wrapped_error)
+                self._recovery.set_state("failed")
+                raise wrapped_error from error
 
-            with self._software_hdr_lock:
-                if self._software_hdr_settings.enabled:
-                    self._software_hdr_processor = self._create_software_hdr_processor()
-                    self._software_hdr_processor.start(self._v4l2_controls.set_exposure)
+            try:
+                with self._software_hdr_lock:
+                    if self._software_hdr_settings.enabled:
+                        self._software_hdr_processor = (
+                            self._create_software_hdr_processor()
+                        )
+                        self._software_hdr_processor.start(
+                            self._v4l2_controls.set_exposure
+                        )
+
+            except Exception as error:
+                self._release_backend()
+                wrapped_error = CameraOpenError(
+                    f"Could not start camera processing: {error}"
+                )
+                self._recovery.record_failure(wrapped_error)
+                self._recovery.set_state("failed")
+                raise wrapped_error from error
 
             self.last_error = None
+            self._recovery.set_state("running")
             self._running.set()
             self._thread = threading.Thread(
                 target=self._capture_loop,
@@ -673,11 +729,13 @@ class Camera:
                     consecutive_read_failures = self._record_dropped_frame(
                         failed_read=True
                     )
+
                     if (
                         consecutive_read_failures
                         >= self._recovery_policy.max_consecutive_read_failures
                     ):
                         raise CameraReadError("camera backend stopped producing frames")
+
                     time.sleep(0.02)
                     continue
 
@@ -705,7 +763,14 @@ class Camera:
 
             except Exception as error:
                 self.last_error = error
+                self._recovery.record_failure(error)
                 logger.exception("IMX camera capture failed")
+
+                if is_non_retryable_camera_failure(error):
+                    self.last_recovery_error = error
+                    self._recovery.set_state("failed")
+                    self._running.clear()
+                    continue
 
                 if not self._recover_backend():
                     if self.running:
@@ -713,6 +778,7 @@ class Camera:
                             "camera recovery attempts were exhausted"
                         )
 
+                    self._recovery.set_state("failed")
                     self._running.clear()
 
         self._publisher.notify_waiters()
@@ -722,22 +788,35 @@ class Camera:
     def _recover_backend(self) -> bool:
         """Reopen the capture backend after a transient capture failure.
 
+        Attempts share one budget until a successful source read resets it.
+        Opening a backend alone does not renew that budget.
+
         Returns:
             ``True`` when a new backend is opened and capture may continue.
         """
-        for attempt in range(self._recovery_policy.max_attempts):
-            if not self.running:
-                return False
+        if self.running:
+            self._recovery.set_state("recovering")
+
+        while self.running:
+            with self._stats_lock:
+                admitted_attempt = self._recovery.begin_attempt(
+                    self._recovery_policy.max_attempts
+                )
+
+                if admitted_attempt is None:
+                    self._recovery.set_state("failed")
+                    return False
+
+                attempt = admitted_attempt - 1
+                self.recovery_attempts += 1
 
             if attempt:
                 time.sleep(self._recovery_policy.initial_backoff * (2**attempt))
 
-            with self._stats_lock:
-                self.recovery_attempts += 1
-
             with self._lifecycle_lock:
                 if not self.running:
                     return False
+
                 try:
                     self._release_backend()
                     backend = self._create_backend()
@@ -745,17 +824,24 @@ class Camera:
                     self._backend = backend
 
                 except Exception as error:
-                    self.last_recovery_error = error
+                    self._recovery.record_restart_failure(error)
                     logger.warning(
                         "Camera recovery attempt %s/%s failed: %s",
                         attempt + 1,
                         self._recovery_policy.max_attempts,
                         error,
                     )
+
+                    if is_non_retryable_camera_failure(error):
+                        self._recovery.set_state("failed")
+                        return False
+
                     continue
 
             with self._stats_lock:
                 self.recoveries += 1
+                self._recovery.record_restart_opened()
+
             self._reset_consecutive_failures()
             self.last_recovery_error = None
             self.last_error = None
@@ -791,6 +877,7 @@ class Camera:
             capture_timestamp_ns=capture_timestamp_ns,
         )
         published_frame = self._raw_publisher.latest_frame
+
         if published_frame is not None:
             self._frame_hub.publish(published_frame)
 
@@ -804,6 +891,7 @@ class Camera:
                     PipelineStage.ENCODER,
                     encoder_duration_ns,
                 )
+
             else:
                 self._metrics.record_consumer_drop("preview")
 
@@ -1132,6 +1220,7 @@ class Camera:
         """Stop capture, release its backend, and discard the latest JPEG."""
         with self._lifecycle_lock:
             self._running.clear()
+            self._recovery.set_state("stopped")
             self._publisher.notify_waiters()
             self._raw_publisher.notify_waiters()
             self._frame_hub.close()

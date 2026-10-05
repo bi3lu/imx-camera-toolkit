@@ -154,6 +154,20 @@ class MockCamera:
                 pipeline=self._metrics.snapshot(),
                 consumer_dropped_frames=self._metrics.consumer_drops(),
                 last_capture_timestamp_ns=self._last_capture_timestamp_ns,
+                state=(
+                    "running"
+                    if self._running
+                    else "failed" if self.last_error is not None else "stopped"
+                ),
+                last_failure_reason=(
+                    None if self.last_error is None else str(self.last_error)
+                ),
+                failure_kind=None if self.last_error is None else "capture",
+                last_frame_age_ns=(
+                    None
+                    if self._last_frame_timestamp_ns is None
+                    else max(time.monotonic_ns() - self._last_frame_timestamp_ns, 0)
+                ),
             )
 
     def start(self) -> None:

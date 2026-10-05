@@ -21,16 +21,16 @@ while that consumer processes it and must then be released.
 
 ## Supported baseline
 
-The release baseline is NVIDIA JetPack 6.2.2 on Jetson Orin. NVIDIA lists the
-following bundled versions:
+The release compatibility baseline is NVIDIA JetPack 6.2.3 on Jetson Orin.
+NVIDIA lists the following bundled versions:
 
-- Jetson Linux 36.5 on Ubuntu 22.04;
+- Jetson Linux 36.5.2 on Ubuntu 22.04;
 - CUDA Toolkit 12.6.10;
 - TensorRT 10.3.0;
 - cuDNN 9.3.0 and VPI 3.2;
 - DeepStream 7.1 support.
 
-See NVIDIA's [JetPack 6.2.2 release page](https://developer.nvidia.com/embedded/jetpack-sdk-622).
+See NVIDIA's [JetPack 6.2.3 release page](https://developer.nvidia.com/embedded/jetpack-sdk-623).
 The toolkit also requires Argus, PyGObject GStreamer bindings, NVMM-capable
 GStreamer elements, and the JetPack Multimedia API development headers when
 building the CUDA interop extension.
