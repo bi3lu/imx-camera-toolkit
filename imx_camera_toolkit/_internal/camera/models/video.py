@@ -30,8 +30,9 @@ class VideoEncoderBackend(str, Enum):
 class VideoEncoderConfig:
     """Validated settings for an NVMM-fed production video encoder.
 
-    ``AUTO`` prefers Jetson NVENC when its GStreamer element exists and falls
-    back to x264 for H.264.  Only the x264 encoder branch leaves NVMM.
+    ``AUTO`` prefers Jetson NVENC when the hardware supports it and its
+    GStreamer element exists, then falls back to x264 for H.264. Only the x264
+    encoder branch leaves NVMM.
     """
 
     codec: VideoCodec = VideoCodec.H264

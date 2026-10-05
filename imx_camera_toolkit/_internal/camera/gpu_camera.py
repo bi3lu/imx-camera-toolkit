@@ -57,12 +57,16 @@ from .pipeline import (
     build_video_encoder_pipeline,
     normalize_argus_properties,
 )
+from .platform_capabilities import (
+    PlatformCapabilities,
+    detect_platform_capabilities,
+)
 from .publishing import (
     EncodedJPEGPublisher,
     EncodedVideoPublisher,
     GpuFramePublisher,
 )
-from .recovery import RecoveryController
+from .recovery import RecoveryController, is_non_retryable_camera_failure
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +129,9 @@ class GpuCamera:
         overlay_error_policy: str = "fail-open",
         encoder_pipeline_factory: VideoEncoderPipelineFactory | None = None,
         argus_properties: tuple[str, ...] = (),
+        platform_capabilities: PlatformCapabilities | None = None,
+        startup_timeout_s: float = 10.0,
+        first_frame_timeout_s: float = 10.0,
     ) -> None:
         """Initialize an NVMM pipeline without opening the camera."""
         if config is not None and config_path is not None:
@@ -158,6 +165,27 @@ class GpuCamera:
             raise CameraConfigurationError(
                 "encoder_pipeline_factory requires video_config"
             )
+
+        if platform_capabilities is not None and not isinstance(
+            platform_capabilities, PlatformCapabilities
+        ):
+            raise CameraConfigurationError(
+                "platform_capabilities must be a PlatformCapabilities or None"
+            )
+
+        for name, value in (
+            ("startup_timeout_s", startup_timeout_s),
+            ("first_frame_timeout_s", first_frame_timeout_s),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not isfinite(value)
+                or value <= 0
+            ):
+                raise CameraConfigurationError(
+                    f"{name} must be a finite positive number"
+                )
 
         if video_overlay is not None:
             if video_config is None:
@@ -217,6 +245,13 @@ class GpuCamera:
         self._video_overlay = video_overlay
         self._overlay_error_policy = overlay_error_policy
         self._encoder_pipeline_factory = encoder_pipeline_factory
+        self._startup_timeout_s = float(startup_timeout_s)
+        self._first_frame_timeout_s = float(first_frame_timeout_s)
+        self._platform_capabilities = (
+            detect_platform_capabilities()
+            if platform_capabilities is None
+            else platform_capabilities
+        )
         self._v4l2_controls = V4L2Controls(self._config.sensor_id)
         self._resolved_video_encoder_backend: str | None = None
         self._encoded_stream_description: EncodedStreamDescription | None = None
@@ -650,40 +685,73 @@ class GpuCamera:
                 pipeline=self._metrics.snapshot(),
                 consumer_dropped_frames=self._metrics.consumer_drops(),
                 last_capture_timestamp_ns=self._last_capture_timestamp_ns,
+                state=(
+                    "running"
+                    if running and self._recovery.state == "stopped"
+                    else self._recovery.state
+                ),
+                last_failure_reason=self._recovery.last_failure_reason,
+                failure_kind=self._recovery.failure_kind,
+                last_frame_age_ns=(
+                    None
+                    if self._last_frame_timestamp_ns is None
+                    else max(now_ns - self._last_frame_timestamp_ns, 0)
+                ),
+                consecutive_recovery_failures=(
+                    self._recovery.consecutive_failed_restarts
+                ),
             )
 
     def start(self) -> None:
         """Open both pipeline branches and start the latest-frame worker."""
         if not self._backend_available():
-            raise CameraDependencyError(
+            error = CameraDependencyError(
                 "GpuCamera requires PyGObject GStreamer on NVIDIA Jetson"
             )
+            self._recovery.record_failure(error)
+            self._recovery.set_state("failed")
+            raise error
 
         with self._lifecycle_lock:
             if self.running:
                 return
 
-            self._release_finished_capture()
-            self._prepare_pipeline()
-            backend = self._create_backend()
+            self._recovery.set_state("starting")
+            backend: _GpuBackend | None = None
 
             try:
+                self._release_finished_capture()
+                self._prepare_pipeline()
+                backend = self._create_backend()
                 backend.open()
 
-            except CameraError:
-                backend.close()
+            except CameraError as error:
+                if backend is not None:
+                    backend.close()
+                self._recovery.record_failure(error)
+                self._recovery.set_state("failed")
                 raise
 
             except Exception as error:
-                backend.close()
-                raise CameraOpenError(
+                if backend is not None:
+                    backend.close()
+                wrapped_error = CameraOpenError(
                     f"Could not open the NVMM camera backend: {error}"
-                ) from error
+                )
+                self._recovery.record_failure(wrapped_error)
+                self._recovery.set_state("failed")
+                raise wrapped_error from error
 
+            if backend is None:
+                error = CameraOpenError("NVMM camera backend was not created")
+                self._recovery.record_failure(error)
+                self._recovery.set_state("failed")
+                raise error
             self._backend = backend
             self.last_error = None
             self.last_recovery_error = None
             self._recovery.record_frame_success()
+            self._recovery.set_state("running")
             self._running.set()
             self._thread = threading.Thread(
                 target=self._capture_loop,
@@ -708,6 +776,8 @@ class GpuCamera:
             stream_description=self._encoded_stream_description,
             video_encoder_backend=self._resolved_video_encoder_backend,
             overlay_error_policy=self._overlay_error_policy,
+            startup_timeout_s=self._startup_timeout_s,
+            first_frame_timeout_s=self._first_frame_timeout_s,
         )
 
     def _prepare_pipeline(self) -> None:
@@ -769,7 +839,7 @@ class GpuCamera:
         self._rebuild_pipeline(selected)
 
     def _resolve_encoder_backend(self) -> VideoEncoderBackend:
-        """Resolve the configured backend from actual GStreamer factories."""
+        """Resolve the backend from hardware and GStreamer capabilities."""
         if self._video_config is None:
             raise CameraConfigurationError("video encoder is disabled")
 
@@ -782,12 +852,44 @@ class GpuCamera:
         nvenc_available = GpuGStreamerCaptureBackend.element_available(nvenc_element)
         x264_available = GpuGStreamerCaptureBackend.element_available("x264enc")
 
+        if self._platform_capabilities.supports_nvenc is False:
+            model = self._platform_capabilities.model
+            platform_name = (
+                "Jetson Orin Nano"
+                if model is not None and "orin nano" in model.lower()
+                else model or "configured platform"
+            )
+
+            if requested is VideoEncoderBackend.NVENC:
+                raise CameraDependencyError(f"{platform_name} does not support NVENC")
+
+            if self._video_config.codec is VideoCodec.H265:
+                raise CameraDependencyError(
+                    "built-in H.265 encoding requires NVENC, which "
+                    f"{platform_name} does not support"
+                )
+
+            if not x264_available:
+                raise CameraDependencyError(
+                    f"encoder backend x264 unavailable on {platform_name}; "
+                    "install x264enc"
+                )
+
+            if requested is VideoEncoderBackend.AUTO:
+                logger.warning(
+                    "%s has no NVENC; production preview is using CPU x264",
+                    platform_name,
+                )
+
+            return VideoEncoderBackend.X264
+
         if requested is VideoEncoderBackend.NVENC:
             if not nvenc_available:
                 raise CameraDependencyError(
                     "encoder backend nvenc unavailable; use backend=x264 or "
                     f"install {nvenc_element}"
                 )
+
             return requested
 
         if requested is VideoEncoderBackend.X264:
@@ -883,10 +985,14 @@ class GpuCamera:
 
             except Exception as error:
                 self.last_error = error
+                self._recovery.record_failure(error)
                 self._log_capture_failure(error)
 
-                if _is_already_allocated_error(error):
+                if _is_already_allocated_error(
+                    error
+                ) or is_non_retryable_camera_failure(error):
                     self.last_recovery_error = error
+                    self._recovery.set_state("failed")
                     self._running.clear()
                     break
 
@@ -902,6 +1008,7 @@ class GpuCamera:
                             )
                         )
 
+                    self._recovery.set_state("failed")
                     self._running.clear()
 
         self._gpu_publisher.notify_waiters()
@@ -973,6 +1080,9 @@ class GpuCamera:
 
     def _recover_backend(self) -> bool:
         """Recreate the full tee pipeline after an error in either branch."""
+        if self.running:
+            self._recovery.set_state("recovering")
+
         while self.running:
             with self._stats_lock:
                 attempt = self._recovery.begin_attempt(
@@ -980,6 +1090,7 @@ class GpuCamera:
                 )
 
                 if attempt is None:
+                    self._recovery.set_state("failed")
                     return False
 
                 self.recovery_attempts += 1
@@ -1005,19 +1116,23 @@ class GpuCamera:
                 except Exception as error:
                     if backend is not None:
                         backend.close()
-                    self.last_recovery_error = error
+                    self._recovery.record_restart_failure(error)
                     logger.warning(
                         "NVMM recovery attempt %s/%s failed: %s",
                         attempt,
                         self._recovery_policy.max_attempts,
                         error,
                     )
-                    if _is_already_allocated_error(error):
+                    if _is_already_allocated_error(
+                        error
+                    ) or is_non_retryable_camera_failure(error):
+                        self._recovery.set_state("failed")
                         return False
                     continue
 
             with self._stats_lock:
                 self.recoveries += 1
+                self._recovery.record_restart_opened()
 
             return True
 
@@ -1221,6 +1336,7 @@ class GpuCamera:
         """Stop and close inference and preview branches together."""
         with self._lifecycle_lock:
             self._running.clear()
+            self._recovery.set_state("stopped")
             self._gpu_publisher.notify_waiters()
             self._preview_publisher.notify_waiters()
             self._frame_hub.close()
