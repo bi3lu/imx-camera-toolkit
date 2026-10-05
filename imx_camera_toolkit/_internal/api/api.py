@@ -310,11 +310,11 @@ def _camera_status(camera: Camera | GpuCamera) -> dict[str, object]:
     width, height = camera.frame_resolution
     last_error = str(camera.last_error) if camera.last_error is not None else None
 
-    if diagnostics.running:
-        status = "ok"
-
-    elif last_error is not None:
+    if diagnostics.state == "failed" or last_error is not None:
         status = "error"
+
+    elif diagnostics.running:
+        status = "ok"
 
     else:
         status = "unavailable"
@@ -327,7 +327,9 @@ def _camera_status(camera: Camera | GpuCamera) -> dict[str, object]:
         "frames_captured": diagnostics.captured_frames,
         "dropped_frames": diagnostics.dropped_frames,
         "capture_fps": diagnostics.capture_fps,
+        "camera_state": diagnostics.state,
         "last_frame_timestamp_ns": diagnostics.last_frame_timestamp_ns,
+        "last_frame_age_ns": diagnostics.last_frame_age_ns,
         "last_capture_timestamp_ns": diagnostics.last_capture_timestamp_ns,
         "active_backend": camera.active_backend,
         "frame_format": camera.frame_format.value,
@@ -354,6 +356,9 @@ def _camera_status(camera: Camera | GpuCamera) -> dict[str, object]:
         "recovery_attempts": camera.recovery_attempts,
         "recoveries": diagnostics.recovery_count,
         "consecutive_failures": diagnostics.consecutive_failures,
+        "consecutive_recovery_failures": (diagnostics.consecutive_recovery_failures),
+        "last_failure_reason": diagnostics.last_failure_reason,
+        "failure_kind": diagnostics.failure_kind,
         "last_recovery_error": (
             str(camera.last_recovery_error)
             if camera.last_recovery_error is not None
