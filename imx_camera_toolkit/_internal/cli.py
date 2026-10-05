@@ -19,7 +19,11 @@ from .benchmarks import (
 )
 from .camera.camera import Camera, CameraConfig, CameraTimeoutError
 from .camera.gpu_camera import GpuCamera
-from .diagnostics import diagnostics_as_dict, run_camera_smoke_test
+from .diagnostics import (
+    DEFAULT_SENSOR_PROBE_IDS,
+    diagnostics_as_dict,
+    run_camera_smoke_test,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -35,6 +39,24 @@ def _build_parser() -> argparse.ArgumentParser:
         "--hardware",
         action="store_true",
         help="inspect Argus and V4L2 tools",
+    )
+    diagnose.add_argument(
+        "--probe-sensors",
+        action="store_true",
+        help="open selected Argus sensor IDs and require one frame",
+    )
+    diagnose.add_argument(
+        "--sensor-id",
+        action="append",
+        type=int,
+        dest="probe_sensor_ids",
+        help="Argus sensor ID to probe; repeat (default: 0 and 1)",
+    )
+    diagnose.add_argument(
+        "--probe-timeout",
+        type=float,
+        default=5.0,
+        help="per-profile Argus probe timeout in seconds",
     )
     diagnose.add_argument("--json", action="store_true", help="emit JSON output")
 
@@ -242,7 +264,9 @@ def _load_cpu_model(specification: str) -> Callable[[object], object]:
 
 def _has_errors(results: Sequence[Mapping[str, object]]) -> bool:
     """Return whether a structured diagnostic result contains a failure."""
-    return any(result.get("status") in {"error", "unavailable"} for result in results)
+    return any(
+        result.get("status", "ok") not in {"ok", "warning"} for result in results
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -254,10 +278,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     Returns:
         Process exit status.
     """
-    arguments = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    arguments = parser.parse_args(argv)
 
     if arguments.command == "diagnose":
-        diagnostic_results = diagnostics_as_dict(arguments.hardware)
+        if arguments.probe_sensors and not arguments.hardware:
+            parser.error("--probe-sensors requires --hardware")
+
+        sensor_ids = tuple(arguments.probe_sensor_ids or DEFAULT_SENSOR_PROBE_IDS)
+
+        if any(sensor_id < 0 for sensor_id in sensor_ids):
+            parser.error("--sensor-id must be greater than or equal to zero")
+
+        if arguments.probe_timeout <= 0:
+            parser.error("--probe-timeout must be greater than zero")
+
+        diagnostic_results = diagnostics_as_dict(
+            arguments.hardware,
+            probe_sensors=arguments.probe_sensors,
+            sensor_ids=sensor_ids,
+            probe_timeout=arguments.probe_timeout,
+        )
         _print_results(diagnostic_results, arguments.json)
         return 1 if _has_errors(diagnostic_results) else 0
 
