@@ -1,10 +1,37 @@
 [project]
 name = "imx-camera-toolkit"
-version = "0.8.0"
+version = "0.8.1"
 description = "CSI IMX camera capture, control, and streaming toolkit for NVIDIA Jetson"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = [
+    "jetson",
+    "camera",
+    "gstreamer",
+    "cuda",
+    "tensorrt",
+    "csi",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+    "Intended Audience :: Developers",
+    "Topic :: Multimedia :: Video :: Capture",
+]
 requires-python = ">=3.10,<3.13"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/bi3lu/imx-camera-toolkit"
+Repository = "https://github.com/bi3lu/imx-camera-toolkit"
+Documentation = "https://github.com/bi3lu/imx-camera-toolkit/tree/main/docs"
+Issues = "https://github.com/bi3lu/imx-camera-toolkit/issues"
+Changelog = "https://github.com/bi3lu/imx-camera-toolkit/releases"
 
 [project.optional-dependencies]
 preview = [

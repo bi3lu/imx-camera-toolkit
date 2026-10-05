@@ -1,9 +1,10 @@
 # IMX Camera Toolkit
 
+[![PyPI](https://img.shields.io/pypi/v/imx-camera-toolkit?logo=pypi&logoColor=white)](https://pypi.org/project/imx-camera-toolkit/)
 ![NVIDIA Jetson Orin](https://img.shields.io/badge/NVIDIA-Jetson%20Orin-76B900?logo=nvidia&logoColor=white)
 [![JetPack 6.2.3](https://img.shields.io/badge/JetPack-6.2.3-76B900)](https://developer.nvidia.com/embedded/jetpack-sdk-623)
 ![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10--3.12-3776AB?logo=python&logoColor=white)
-[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/bi3lu/imx-camera-toolkit/blob/main/LICENSE)
 
 IMX Camera Toolkit is a Python library for working with CSI-connected IMX cameras on NVIDIA Jetson. It uses Argus and GStreamer for capture, and can deliver frames to your own processing code or stream them to a browser.
 
@@ -26,24 +27,30 @@ You'll need:
 
 **Keep the system OpenCV build.** Installing OpenCV from PyPI in its place can break Jetson camera capture. The virtual environment must have access to system packages.
 
-See [camera support and sensor modes](imx_camera_toolkit/_internal/camera/README.md) for the full compatibility details and hardware validation procedure.
+See [camera support and sensor modes](https://github.com/bi3lu/imx-camera-toolkit/blob/main/imx_camera_toolkit/_internal/camera/README.md) for the full compatibility details and hardware validation procedure.
 
 ## Installation
 
-The package isn't on PyPI yet. In your Jetson project, create an environment that can use the system OpenCV build, then install the pinned release:
+The package is available on [PyPI](https://pypi.org/project/imx-camera-toolkit/). In your Jetson project, create an environment that can use the system OpenCV build, then install the toolkit:
 
 ```bash
 uv venv --system-site-packages
-uv add "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.8.0"
+uv add imx-camera-toolkit
 ```
 
-For the browser preview, install the `preview` extra instead:
+For a local MJPEG browser preview, install the `preview` extra:
 
 ```bash
-uv add "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.8.0"
+uv add "imx-camera-toolkit[preview]"
 ```
 
-WebRTC and HLS use the separate `production-preview` extra. On Orin Nano, H.264 encoding uses the system GStreamer x264 plugin because NVENC isn't available; H.265 requires a Jetson with NVENC support. The [preview documentation](imx_camera_toolkit/_internal/production_preview/README.md) covers that setup.
+For WebRTC and HLS, use `production-preview` instead:
+
+```bash
+uv add "imx-camera-toolkit[production-preview]"
+```
+
+On Orin Nano, H.264 encoding requires the system GStreamer x264 plugin because NVENC isn't available. H.265 requires a Jetson with NVENC support. See the [production preview documentation](https://github.com/bi3lu/imx-camera-toolkit/blob/main/imx_camera_toolkit/_internal/production_preview/README.md) for setup details.
 
 ## Reading frames
 
@@ -77,7 +84,7 @@ with GpuCamera() as camera:
         buffer = frame.payload()  # Use before the next read
 ```
 
-These buffers are borrowed from the capture pipeline, so don't keep one after a newer frame arrives. For work on another thread, use `subscribe_latest()` and release each subscribed GPU frame after processing. Buffer ownership is explained in the [CPU/GPU guide](docs/GPU_PATH_GUIDE.md).
+These buffers are borrowed from the capture pipeline, so don't keep one after a newer frame arrives. For work on another thread, use `subscribe_latest()` and release each subscribed GPU frame after processing. Buffer ownership is explained in the [CPU/GPU guide](https://github.com/bi3lu/imx-camera-toolkit/blob/main/docs/GPU_PATH_GUIDE.md).
 
 ## Preview and diagnostics
 
@@ -91,7 +98,7 @@ uv run imx-camera preview --backend gpu --port 8000
 
 Then open [http://localhost:8000/](http://localhost:8000/) on the Jetson. The development server binds to `127.0.0.1` by default.
 
-The preview is intended for local use. For remote or production access, use field mode with authentication and TLS; see the [deployment guide](docs/GPU_CAMERA_YOLO_GUIDE.md). Don't expose the unauthenticated development server to the internet.
+The preview is intended for local use. For remote or production access, use field mode with authentication and TLS; see the [deployment guide](https://github.com/bi3lu/imx-camera-toolkit/blob/main/docs/GPU_CAMERA_YOLO_GUIDE.md). Don't expose the unauthenticated development server to the internet.
 
 ## How it works
 
@@ -101,13 +108,13 @@ The library handles capture, camera settings, and transport. Your application re
 
 ## Documentation
 
-- [Documentation index](docs/README.md) — architecture and component references
-- [CPU, GPU, and browser modes](docs/GPU_PATH_GUIDE.md) — choosing an API, buffer lifetimes, and streaming options
-- [Camera hardware](imx_camera_toolkit/_internal/camera/README.md) — supported profiles, sensor modes, and validation
-- [Inference integration](imx_camera_toolkit/_internal/inference/README.md) — TensorRT runner and GPU interop
-- [GPU camera + YOLO deployment](docs/GPU_CAMERA_YOLO_GUIDE.md) — setup, WebRTC, TLS, and systemd
+- [Documentation index](https://github.com/bi3lu/imx-camera-toolkit/blob/main/docs/README.md) — architecture and component references
+- [CPU, GPU, and browser modes](https://github.com/bi3lu/imx-camera-toolkit/blob/main/docs/GPU_PATH_GUIDE.md) — choosing an API, buffer lifetimes, and streaming options
+- [Camera hardware](https://github.com/bi3lu/imx-camera-toolkit/blob/main/imx_camera_toolkit/_internal/camera/README.md) — supported profiles, sensor modes, and validation
+- [Inference integration](https://github.com/bi3lu/imx-camera-toolkit/blob/main/imx_camera_toolkit/_internal/inference/README.md) — TensorRT runner and GPU interop
+- [GPU camera + YOLO deployment](https://github.com/bi3lu/imx-camera-toolkit/blob/main/docs/GPU_CAMERA_YOLO_GUIDE.md) — setup, WebRTC, TLS, and systemd
 
-Small usage examples are in [`examples/`](examples/).
+Small usage examples are in [`examples/`](https://github.com/bi3lu/imx-camera-toolkit/tree/main/examples).
 
 ## Development
 
@@ -133,4 +140,4 @@ Hardware tests and benchmarks are separate from the regular test suite.
 
 ## License
 
-[MIT](LICENSE) © 2026 Jakub Bielecki.
+[MIT](https://github.com/bi3lu/imx-camera-toolkit/blob/main/LICENSE) © 2026 Jakub Bielecki.
