@@ -8,7 +8,7 @@ selection remains available in the dependency-free core package.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
 from ..config.loader import CameraConfig
@@ -60,6 +60,32 @@ class CameraProfile:
                 "height": self.config.output_height,
             },
         }
+
+    def config_for_sensor(self, sensor_id: int) -> CameraConfig:
+        """Bind this operating mode to an explicit Argus sensor identifier.
+
+        Profile ``sensor_id`` values are portable defaults, not hardware
+        discovery results. In particular, they must never be inferred from a
+        ``/dev/videoN`` node. Diagnostics use this method to probe each
+        caller-selected Argus identifier independently.
+
+        Args:
+            sensor_id: Non-negative Argus ``sensor-id`` to bind.
+
+        Returns:
+            A copy of the profile configuration for that Argus identifier.
+
+        Raises:
+            TypeError: If ``sensor_id`` is a boolean or is not an integer.
+            ValueError: If ``sensor_id`` is negative.
+        """
+        if isinstance(sensor_id, bool) or not isinstance(sensor_id, int):
+            raise TypeError("sensor_id must be an integer")
+
+        if sensor_id < 0:
+            raise ValueError("sensor_id must be greater than or equal to zero")
+
+        return replace(self.config, sensor_id=sensor_id)
 
 
 PROFILES = (
