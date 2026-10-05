@@ -34,13 +34,13 @@ The package isn't on PyPI yet. In your Jetson project, create an environment tha
 
 ```bash
 uv venv --system-site-packages
-uv add "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.7.2"
+uv add "imx-camera-toolkit @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.8.0"
 ```
 
 For the browser preview, install the `preview` extra instead:
 
 ```bash
-uv add "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.7.2"
+uv add "imx-camera-toolkit[preview] @ git+https://github.com/bi3lu/imx-camera-toolkit.git@v0.8.0"
 ```
 
 WebRTC and HLS use the separate `production-preview` extra. On Orin Nano, H.264 encoding uses the system GStreamer x264 plugin because NVENC isn't available; H.265 requires a Jetson with NVENC support. The [preview documentation](imx_camera_toolkit/_internal/production_preview/README.md) covers that setup.
