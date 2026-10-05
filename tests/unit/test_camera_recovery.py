@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from imx_camera_toolkit import CameraRecoveryError, GpuCamera
+from imx_camera_toolkit import CameraOpenError, CameraRecoveryError, GpuCamera
 from imx_camera_toolkit._internal.camera.backends.base import CaptureBackend
 from imx_camera_toolkit._internal.camera.camera import Camera, CameraRecoveryPolicy
 from imx_camera_toolkit.testing import mock_gpu_frame
@@ -195,6 +195,8 @@ def test_shared_recovery_contract_preserves_diagnostics_and_frame_reset(
         assert camera._recover_backend()
         assert camera.recovery_attempts == 2
         assert camera.recoveries == 1
+        assert camera.stats().state == "recovering"
+        assert camera.stats().consecutive_recovery_failures == 1
         assert camera.last_recovery_error is (
             failure if isinstance(camera, GpuCamera) else None
         )
@@ -203,6 +205,8 @@ def test_shared_recovery_contract_preserves_diagnostics_and_frame_reset(
         assert opens == 3
         assert camera.recovery_attempts == 3
         assert camera.recoveries == 2
+        assert camera.stats().state == "failed"
+        assert camera.stats().consecutive_recovery_failures == 3
 
         if isinstance(camera, GpuCamera):
             frame = mock_gpu_frame(object())
@@ -217,12 +221,45 @@ def test_shared_recovery_contract_preserves_diagnostics_and_frame_reset(
             camera._record_capture(123)
 
         assert camera.last_recovery_error is None
+        assert camera.stats().state == "running"
+        assert camera.stats().consecutive_recovery_failures == 0
         assert camera._recover_backend()
         assert camera.recovery_attempts == 4
         assert camera.recoveries == 3
         camera._running.clear()
         assert not camera._recover_backend()
         assert camera.recovery_attempts == 4
+
+    finally:
+        camera.stop()
+
+
+@pytest.mark.parametrize("camera_type", [Camera, GpuCamera])
+def test_i2c_failure_is_reported_as_permanent_without_retry_loop(
+    monkeypatch: pytest.MonkeyPatch,
+    camera_type: type[Camera] | type[GpuCamera],
+) -> None:
+    """I2C -121 must fail fast and remain visible in recovery diagnostics."""
+    camera = camera_type(
+        enable_preview=False,
+        recovery_policy=CameraRecoveryPolicy(max_attempts=3, initial_backoff=0),
+    )
+    failure = CameraOpenError("imx219: i2c read probe (-121)")
+
+    def create_backend() -> RecordingBackend:
+        raise failure
+
+    monkeypatch.setattr(camera, "_create_backend", create_backend)
+    camera._running.set()
+
+    try:
+        assert not camera._recover_backend()
+        stats = camera.stats()
+        assert camera.recovery_attempts == 1
+        assert stats.state == "failed"
+        assert stats.failure_kind == "i2c"
+        assert stats.last_failure_reason == str(failure)
+        assert stats.consecutive_recovery_failures == 1
 
     finally:
         camera.stop()

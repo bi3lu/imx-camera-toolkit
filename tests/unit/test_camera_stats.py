@@ -32,7 +32,11 @@ def test_camera_stats_reports_a_consistent_capture_snapshot() -> None:
         recovery_count=1,
         consecutive_failures=2,
         running=True,
+        state="running",
+        last_frame_age_ns=stats.last_frame_age_ns,
     )
+    assert stats.last_frame_age_ns is not None
+    assert stats.last_frame_age_ns >= 0
 
 
 def test_camera_stats_resets_failure_streak_and_rate_after_shutdown() -> None:
