@@ -15,19 +15,23 @@ from fastapi.security.utils import get_authorization_scheme_param
 
 from imx_camera_toolkit._internal.api.security import (
     BROWSER_SESSION_COOKIE,
+    BrowserSessionStore,
     SecurityConfig,
     apply_security_middleware,
     build_authorizer,
+    resolve_bearer_scopes,
 )
 
 from .config import PreviewTransport
 from .transport import ProductionPreviewServer
 
 VIEW_PATH = Path(__file__).parents[3] / "view" / "production.html"
+
 NO_CACHE_HEADERS = {
     "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
     "Pragma": "no-cache",
 }
+
 MAX_FEEDBACK_COUNTER = (1 << 63) - 1
 MAX_FEEDBACK_MILLISECONDS = 60_000.0
 
@@ -121,7 +125,11 @@ def create_production_preview_app(
     if not isinstance(resolved_security, SecurityConfig):
         raise TypeError("security_config must be a SecurityConfig")
 
-    authorize = build_authorizer(resolved_security)
+    browser_sessions = BrowserSessionStore(
+        ttl_seconds=resolved_security.browser_session_ttl_seconds,
+        max_entries=resolved_security.browser_session_max_entries,
+    )
+    authorize = build_authorizer(resolved_security, browser_sessions)
 
     @asynccontextmanager
     async def lifespan(_: Any) -> AsyncIterator[None]:
@@ -133,6 +141,8 @@ def create_production_preview_app(
             yield
 
         finally:
+            browser_sessions.clear()
+
             if manage_server:
                 server.stop()
 
@@ -145,10 +155,11 @@ def create_production_preview_app(
         redoc_url="/redoc" if resolved_security.docs_enabled else None,
         openapi_url="/openapi.json" if resolved_security.docs_enabled else None,
     )
-    apply_security_middleware(application, resolved_security)
+    apply_security_middleware(application, resolved_security, browser_sessions)
     application.state.production_preview = server
     application.state.manage_server = manage_server
     application.state.security_config = resolved_security
+    application.state.browser_sessions = browser_sessions
 
     if resolved_security.authentication_required:
 
@@ -164,18 +175,25 @@ def create_production_preview_app(
                 request.headers.get("Authorization")
             )
 
-            token = (
-                header_token
-                if scheme.lower() == "bearer" and header_token
-                else request.cookies.get(BROWSER_SESSION_COOKIE)
-            )
-
-            if not token:
+            if scheme.lower() != "bearer" or not header_token:
                 raise HTTPException(status_code=401, detail="bearer token required")
+
+            granted = resolve_bearer_scopes(resolved_security, header_token)
+
+            if granted is None:
+                raise HTTPException(status_code=401, detail="invalid bearer token")
+
+            if "admin" not in granted and "stream:read" not in granted:
+                raise HTTPException(
+                    status_code=403,
+                    detail="token has insufficient scope",
+                )
+
+            session_id = browser_sessions.create(granted)
             response = Response(status_code=204)
             response.set_cookie(
                 BROWSER_SESSION_COOKIE,
-                token,
+                session_id,
                 httponly=True,
                 secure=resolved_security.require_https,
                 samesite="strict",
@@ -188,8 +206,13 @@ def create_production_preview_app(
             status_code=204,
             include_in_schema=False,
         )
-        def delete_browser_session() -> Response:
+        def delete_browser_session(request: Request) -> Response:
             """Clear the browser-only authentication session."""
+            session_id = request.cookies.get(BROWSER_SESSION_COOKIE)
+
+            if session_id:
+                browser_sessions.revoke(session_id)
+
             response = Response(status_code=204)
             response.delete_cookie(
                 BROWSER_SESSION_COOKIE,

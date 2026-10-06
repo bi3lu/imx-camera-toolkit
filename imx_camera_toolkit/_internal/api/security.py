@@ -17,6 +17,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import OAuth2PasswordBearer, SecurityScopes
+from fastapi.security.utils import get_authorization_scheme_param
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
@@ -31,6 +32,19 @@ SCOPE_DESCRIPTIONS: dict[str, str] = {
 }
 ALL_SCOPES = frozenset(SCOPE_DESCRIPTIONS)
 BROWSER_SESSION_COOKIE = "imx_camera_session"
+DEFAULT_BROWSER_SESSION_TTL_SECONDS = 8 * 60 * 60
+DEFAULT_BROWSER_SESSION_MAX_ENTRIES = 4096
+
+
+class PresentedCredential(str):
+    """Mark whether an OAuth credential came from a header or cookie."""
+
+    def __new__(cls, value: str, *, source: str) -> PresentedCredential:
+        instance = super().__new__(cls, value)
+        instance.source = source
+        return instance
+
+    source: str
 
 
 class BrowserSessionOAuth2PasswordBearer(OAuth2PasswordBearer):
@@ -38,8 +52,25 @@ class BrowserSessionOAuth2PasswordBearer(OAuth2PasswordBearer):
 
     async def __call__(self, request: Request) -> str | None:
         """Return the regular OAuth2 token or the HttpOnly session cookie."""
-        token = await super().__call__(request)
-        return token or request.cookies.get(BROWSER_SESSION_COOKIE)
+        scheme, token = get_authorization_scheme_param(
+            request.headers.get("Authorization")
+        )
+
+        if scheme.lower() == "bearer" and token:
+            return PresentedCredential(token, source="bearer")
+
+        session_id = request.cookies.get(BROWSER_SESSION_COOKIE)
+
+        if session_id:
+            return PresentedCredential(session_id, source="session")
+
+        if self.auto_error:
+            raise HTTPException(
+                status_code=401,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return None
 
 
 def token_sha256(token: str) -> str:
@@ -92,6 +123,8 @@ class SecurityConfig:
     rate_limit_per_second: float = 20.0
     rate_limit_burst: int = 40
     max_request_body_bytes: int = 128 * 1024
+    browser_session_ttl_seconds: int = DEFAULT_BROWSER_SESSION_TTL_SECONDS
+    browser_session_max_entries: int = DEFAULT_BROWSER_SESSION_MAX_ENTRIES
 
     def __post_init__(self) -> None:
         """Reject incomplete field deployments and invalid limits."""
@@ -117,7 +150,12 @@ class SecurityConfig:
                 "rate_limit_per_second must be finite and between 0 and 100000"
             )
 
-        for name in ("rate_limit_burst", "max_request_body_bytes"):
+        for name in (
+            "rate_limit_burst",
+            "max_request_body_bytes",
+            "browser_session_ttl_seconds",
+            "browser_session_max_entries",
+        ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
@@ -161,6 +199,8 @@ class SecurityConfig:
         rate_limit_per_second: float = 20.0,
         rate_limit_burst: int = 40,
         max_request_body_bytes: int = 128 * 1024,
+        browser_session_ttl_seconds: int = DEFAULT_BROWSER_SESSION_TTL_SECONDS,
+        browser_session_max_entries: int = DEFAULT_BROWSER_SESSION_MAX_ENTRIES,
     ) -> SecurityConfig:
         """Load hashed per-device tokens from a protected JSON file."""
         path = Path(token_file)
@@ -208,7 +248,119 @@ class SecurityConfig:
             rate_limit_per_second=rate_limit_per_second,
             rate_limit_burst=rate_limit_burst,
             max_request_body_bytes=max_request_body_bytes,
+            browser_session_ttl_seconds=browser_session_ttl_seconds,
+            browser_session_max_entries=browser_session_max_entries,
         )
+
+
+def resolve_bearer_scopes(config: SecurityConfig, token: str) -> frozenset[str] | None:
+    """Return scopes for a valid Bearer token without retaining the secret."""
+    presented = token_sha256(token)
+    granted: frozenset[str] | None = None
+
+    for digest, scopes in config.token_grants:
+        if secrets.compare_digest(presented, digest):
+            granted = scopes
+
+    return granted
+
+
+@dataclass(frozen=True, slots=True)
+class BrowserSession:
+    """Server-side browser authentication state keyed by a secret digest."""
+
+    scopes: frozenset[str]
+    expires_at: float
+
+
+class BrowserSessionStore:
+    """Keep bounded, expiring browser sessions without storing raw identifiers."""
+
+    def __init__(
+        self,
+        ttl_seconds: int = DEFAULT_BROWSER_SESSION_TTL_SECONDS,
+        max_entries: int = DEFAULT_BROWSER_SESSION_MAX_ENTRIES,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Initialize a thread-safe in-memory session store."""
+        if ttl_seconds <= 0 or max_entries <= 0:
+            raise ValueError("session TTL and capacity must be positive")
+
+        self._ttl_seconds = ttl_seconds
+        self._max_entries = max_entries
+        self._clock = clock
+        self._sessions: dict[str, BrowserSession] = {}
+        self._lock = threading.Lock()
+
+    def create(self, scopes: frozenset[str]) -> str:
+        """Create a random session and retain only its SHA-256 digest."""
+        now = self._clock()
+        session_id = secrets.token_urlsafe(32)
+        identity = token_sha256(session_id)
+
+        with self._lock:
+            self._remove_expired(now)
+
+            if len(self._sessions) >= self._max_entries:
+                oldest = min(
+                    self._sessions,
+                    key=lambda key: self._sessions[key].expires_at,
+                )
+                del self._sessions[oldest]
+
+            self._sessions[identity] = BrowserSession(
+                scopes=scopes,
+                expires_at=now + self._ttl_seconds,
+            )
+
+        return session_id
+
+    def resolve(self, session_id: str) -> tuple[str, frozenset[str]] | None:
+        """Resolve an unexpired identifier to its digest identity and scopes."""
+        if not session_id:
+            return None
+
+        identity = token_sha256(session_id)
+        now = self._clock()
+
+        with self._lock:
+            session = self._sessions.get(identity)
+
+            if session is None:
+                return None
+
+            if session.expires_at <= now:
+                del self._sessions[identity]
+                return None
+
+            return identity, session.scopes
+
+    def revoke(self, session_id: str) -> None:
+        """Invalidate one browser session immediately."""
+        if not session_id:
+            return
+
+        identity = token_sha256(session_id)
+
+        with self._lock:
+            self._sessions.pop(identity, None)
+
+    def clear(self) -> None:
+        """Invalidate every browser session owned by the application."""
+        with self._lock:
+            self._sessions.clear()
+
+    def _remove_expired(self, now: float) -> None:
+        """Remove expired entries while the store lock is held."""
+        expired = [
+            identity
+            for identity, session in self._sessions.items()
+            if session.expires_at <= now
+        ]
+
+        for identity in expired:
+            del self._sessions[identity]
 
 
 class _TokenBucket:
@@ -330,10 +482,19 @@ class RequestSizeLimitMiddleware:
 class RateLimitMiddleware:
     """Apply independent per-IP and per-token request buckets."""
 
-    def __init__(self, app: ASGIApp, rate: float, burst: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        rate: float,
+        burst: int,
+        security_config: SecurityConfig | None = None,
+        browser_sessions: BrowserSessionStore | None = None,
+    ) -> None:
         """Initialize independent request buckets for the ASGI app."""
         self.app = app
         self._limiter = _TokenBucket(rate, burst)
+        self._security_config = security_config
+        self._browser_sessions = browser_sessions
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Rate-limit HTTP requests by client address and credential."""
@@ -343,12 +504,10 @@ class RateLimitMiddleware:
 
         client = scope.get("client")
         address = str(client[0]) if client else "unknown"
-        headers = {name.lower(): value for name, value in scope.get("headers", ())}
-        authorization = headers.get(b"authorization", b"")
-        token_identity = hashlib.sha256(authorization).hexdigest()
+        credential_identity = self._credential_identity(scope, address)
 
         if not self._limiter.allow(f"ip:{address}") or not self._limiter.allow(
-            f"token:{token_identity}"
+            credential_identity
         ):
             await _plain_response(
                 send,
@@ -359,6 +518,34 @@ class RateLimitMiddleware:
             return
 
         await self.app(scope, receive, send)
+
+    def _credential_identity(self, scope: Scope, address: str) -> str:
+        """Return only a verified Bearer or browser-session bucket identity."""
+        if self._security_config is None:
+            return f"anonymous:{address}"
+
+        request = Request(scope)
+        scheme, token = get_authorization_scheme_param(
+            request.headers.get("Authorization")
+        )
+
+        if scheme.lower() == "bearer" and token:
+            scopes = resolve_bearer_scopes(self._security_config, token)
+
+            if scopes is not None:
+                return f"bearer:{token_sha256(token)}"
+
+        if self._browser_sessions is not None:
+            session_id = request.cookies.get(BROWSER_SESSION_COOKIE)
+            resolved = (
+                self._browser_sessions.resolve(session_id) if session_id else None
+            )
+
+            if resolved is not None:
+                identity, _ = resolved
+                return f"session:{identity}"
+
+        return f"anonymous:{address}"
 
 
 class SecurityHeadersMiddleware:
@@ -400,7 +587,10 @@ class SecurityHeadersMiddleware:
 Authorizer = Callable[..., Coroutine[Any, Any, None]]
 
 
-def build_authorizer(config: SecurityConfig) -> Authorizer:
+def build_authorizer(
+    config: SecurityConfig,
+    browser_sessions: BrowserSessionStore | None = None,
+) -> Authorizer:
     """Build a FastAPI OAuth2-scope dependency for one application."""
     oauth2 = BrowserSessionOAuth2PasswordBearer(
         tokenUrl="/auth/token",
@@ -426,12 +616,12 @@ def build_authorizer(config: SecurityConfig) -> Authorizer:
                 headers={"WWW-Authenticate": authenticate},
             )
 
-        presented = token_sha256(token)
-        granted: frozenset[str] | None = None
+        if isinstance(token, PresentedCredential) and token.source == "session":
+            resolved = browser_sessions.resolve(token) if browser_sessions else None
+            granted = resolved[1] if resolved is not None else None
 
-        for digest, scopes in config.token_grants:
-            if secrets.compare_digest(presented, digest):
-                granted = scopes
+        else:
+            granted = resolve_bearer_scopes(config, token)
 
         if granted is None:
             raise HTTPException(
@@ -451,7 +641,11 @@ def build_authorizer(config: SecurityConfig) -> Authorizer:
     return authorize
 
 
-def apply_security_middleware(application: FastAPI, config: SecurityConfig) -> None:
+def apply_security_middleware(
+    application: FastAPI,
+    config: SecurityConfig,
+    browser_sessions: BrowserSessionStore | None = None,
+) -> None:
     """Apply field-mode middleware in a streaming-safe order."""
     application.add_middleware(
         RequestSizeLimitMiddleware,
@@ -470,6 +664,8 @@ def apply_security_middleware(application: FastAPI, config: SecurityConfig) -> N
         RateLimitMiddleware,
         rate=config.rate_limit_per_second,
         burst=config.rate_limit_burst,
+        security_config=config,
+        browser_sessions=browser_sessions,
     )
     application.add_middleware(
         SecurityHeadersMiddleware,
@@ -479,6 +675,7 @@ def apply_security_middleware(application: FastAPI, config: SecurityConfig) -> N
 
 __all__ = [
     "ALL_SCOPES",
+    "BrowserSessionStore",
     "SCOPE_DESCRIPTIONS",
     "SecurityConfig",
     "apply_security_middleware",

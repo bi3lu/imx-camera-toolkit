@@ -160,8 +160,9 @@ view path as `app.state.view_path`. The selected bundled mode is available as
 Pass `SecurityConfig.from_token_file(...)` to `create_app()` to activate scoped
 Bearer authentication. Field mode requires at least one hashed token grant,
 disables `/docs`, `/redoc`, and `/openapi.json`, protects diagnostics with
-`admin`, enables per-IP/per-token rate limits and security headers, restricts
-Host headers, and optionally redirects HTTP to HTTPS. Token files must be
+`admin`, enables per-IP and verified Bearer/browser-session rate limits and
+security headers, restricts Host headers, and optionally redirects HTTP to
+HTTPS. Token files must be
 regular, non-symlink `0600`/`0640` files owned by root or the service user.
 
 Routes use `stream:read`, `camera:read`, `camera:control`, `profiles:write`, and
