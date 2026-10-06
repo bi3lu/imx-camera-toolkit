@@ -62,7 +62,7 @@ jobs:
           -m "not hardware and not benchmark"
           --cov=imx_camera_toolkit/_internal
           --cov-report=term-missing
-          --cov-fail-under=65.5
+          --cov-fail-under=70
 
   package:
     name: Build distribution
