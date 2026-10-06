@@ -13,10 +13,14 @@ from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import SecurityScopes
 from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import Request
 from starlette.types import Message, Receive, Scope, Send
 
 from imx_camera_toolkit._internal.api.api import create_app
 from imx_camera_toolkit._internal.api.security import (
+    BROWSER_SESSION_COOKIE,
+    BrowserSessionOAuth2PasswordBearer,
+    BrowserSessionStore,
     RateLimitMiddleware,
     RequestSizeLimitMiddleware,
     SecurityConfig,
@@ -46,6 +50,7 @@ def _endpoint(application: Any, path: str) -> Callable[..., Any]:
     for route in application.routes:
         if getattr(route, "path", None) == path:
             return cast(Callable[..., Any], route.endpoint)
+
     raise LookupError(path)
 
 
@@ -53,6 +58,7 @@ def _scope(
     *,
     path: str = "/protected",
     headers: list[tuple[bytes, bytes]] | None = None,
+    client: tuple[str, int] = ("192.0.2.20", 1234),
 ) -> Scope:
     """Build the minimal HTTP ASGI scope required by pure middleware tests."""
     return {
@@ -66,7 +72,7 @@ def _scope(
         "query_string": b"",
         "root_path": "",
         "headers": headers or [],
-        "client": ("192.0.2.20", 1234),
+        "client": client,
         "server": ("camera.example", 443),
     }
 
@@ -91,12 +97,15 @@ def test_field_mode_enforces_scopes_and_hides_diagnostics_and_docs() -> None:
     assert HTTPSRedirectMiddleware in middleware
 
     authorize = build_authorizer(_security_config())
+
     with pytest.raises(HTTPException) as missing:
         asyncio.run(authorize(SecurityScopes(["admin"]), None))
+
     assert missing.value.status_code == 401
 
     with pytest.raises(HTTPException) as insufficient:
         asyncio.run(authorize(SecurityScopes(["admin"]), "stream-token"))
+
     assert insufficient.value.status_code == 403
 
     asyncio.run(authorize(SecurityScopes(["stream:read"]), "stream-token"))
@@ -163,7 +172,12 @@ def test_field_mode_applies_per_identity_rate_limits() -> None:
     async def receive() -> Message:
         return {"type": "http.request", "body": b"", "more_body": False}
 
-    limiter = RateLimitMiddleware(inner, rate=0.01, burst=2)
+    limiter = RateLimitMiddleware(
+        inner,
+        rate=0.01,
+        burst=2,
+        security_config=_security_config(),
+    )
     scope = _scope(headers=[(b"authorization", b"Bearer admin-token")])
 
     async def request() -> list[Message]:
@@ -180,6 +194,111 @@ def test_field_mode_applies_per_identity_rate_limits() -> None:
     limited = asyncio.run(request())
     assert limited[0]["status"] == 429
     assert dict(limited[0]["headers"])[b"retry-after"] == b"1"
+
+
+def test_browser_sessions_expire_and_can_be_revoked() -> None:
+    """Only digests remain server-side and TTL/revocation invalidate sessions."""
+    now = [100.0]
+    store = BrowserSessionStore(
+        ttl_seconds=10,
+        max_entries=4,
+        clock=lambda: now[0],
+    )
+    session_id = store.create(frozenset({"stream:read"}))
+
+    assert session_id not in repr(store._sessions)
+    assert store.resolve(session_id) is not None
+
+    store.revoke(session_id)
+    assert store.resolve(session_id) is None
+
+    expiring_id = store.create(frozenset({"stream:read"}))
+    now[0] += 10
+    assert store.resolve(expiring_id) is None
+
+
+def test_authorizer_accepts_issued_session_but_not_bearer_value_in_cookie() -> None:
+    """Cookie credentials must resolve through server-side session state only."""
+    security = _security_config()
+    sessions = BrowserSessionStore()
+    authorize = build_authorizer(security, sessions)
+    extractor = BrowserSessionOAuth2PasswordBearer(
+        tokenUrl="/auth/session",
+        auto_error=False,
+    )
+    session_id = sessions.create(frozenset({"stream:read"}))
+
+    async def extract(cookie_value: str) -> str | None:
+        request = Request(
+            {
+                "type": "http",
+                "headers": [
+                    (
+                        b"cookie",
+                        f"{BROWSER_SESSION_COOKIE}={cookie_value}".encode("ascii"),
+                    )
+                ],
+            }
+        )
+        return await extractor(request)
+
+    issued = asyncio.run(extract(session_id))
+    assert issued is not None
+    asyncio.run(authorize(SecurityScopes(["stream:read"]), issued))
+
+    raw_bearer_cookie = asyncio.run(extract("stream-token"))
+    assert raw_bearer_cookie is not None
+
+    with pytest.raises(HTTPException) as invalid:
+        asyncio.run(authorize(SecurityScopes(["stream:read"]), raw_bearer_cookie))
+
+    assert invalid.value.status_code == 401
+
+
+def test_rate_limit_uses_independent_verified_browser_session_buckets() -> None:
+    """One browser session must not consume another session's credential bucket."""
+
+    async def inner(_: Scope, __: Receive, send: Send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    async def receive() -> Message:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    security = _security_config()
+    sessions = BrowserSessionStore()
+    first_id = sessions.create(frozenset({"stream:read"}))
+    second_id = sessions.create(frozenset({"stream:read"}))
+    limiter = RateLimitMiddleware(
+        inner,
+        rate=0.01,
+        burst=2,
+        security_config=security,
+        browser_sessions=sessions,
+    )
+
+    async def request(scope: Scope) -> int:
+        messages: list[Message] = []
+
+        async def send(message: Message) -> None:
+            messages.append(message)
+
+        await limiter(scope, receive, send)
+        return cast(int, messages[0]["status"])
+
+    first_scope = _scope(
+        headers=[(b"cookie", f"{BROWSER_SESSION_COOKIE}={first_id}".encode("ascii"))],
+        client=("192.0.2.20", 1234),
+    )
+    second_scope = _scope(
+        headers=[(b"cookie", f"{BROWSER_SESSION_COOKIE}={second_id}".encode("ascii"))],
+        client=("192.0.2.21", 1234),
+    )
+
+    assert asyncio.run(request(first_scope)) == 200
+    assert asyncio.run(request(first_scope)) == 200
+    assert asyncio.run(request(first_scope)) == 429
+    assert asyncio.run(request(second_scope)) == 200
 
 
 def test_token_file_requires_hashed_tokens_and_restrictive_permissions(
@@ -203,6 +322,7 @@ def test_token_file_requires_hashed_tokens_and_restrictive_permissions(
     )
 
     token_file.chmod(0o644)
+
     with pytest.raises(PermissionError, match="0600 or 0640"):
         SecurityConfig.from_token_file(token_file)
 

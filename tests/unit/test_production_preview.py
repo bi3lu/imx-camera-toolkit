@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
+from http.cookies import SimpleCookie
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, cast
@@ -630,10 +631,15 @@ def test_field_browser_exchanges_bearer_for_hls_capable_session_cookie() -> None
         }
     )
     login = _api_endpoint(application, "/auth/session")(login_request)
+    cookie = SimpleCookie()
+    cookie.load(login.headers["set-cookie"])
+    session_id = cookie["imx_camera_session"].value
     cookie_request = Request(
         {
             "type": "http",
-            "headers": [(b"cookie", b"imx_camera_session=stream-token")],
+            "headers": [
+                (b"cookie", f"imx_camera_session={session_id}".encode("ascii"))
+            ],
         }
     )
     extractor = BrowserSessionOAuth2PasswordBearer(
@@ -646,7 +652,21 @@ def test_field_browser_exchanges_bearer_for_hls_capable_session_cookie() -> None
     assert "HttpOnly" in login.headers["set-cookie"]
     assert "SameSite=strict" in login.headers["set-cookie"]
     assert "Secure" in login.headers["set-cookie"]
-    assert asyncio.run(extractor(cookie_request)) == "stream-token"
+    assert "stream-token" not in login.headers["set-cookie"]
+    assert asyncio.run(extractor(cookie_request)) == session_id
+    assert application.state.browser_sessions.resolve(session_id) is not None
+
+    delete_route = next(
+        route
+        for route in application.routes
+        if getattr(route, "path", None) == "/auth/session"
+        and "DELETE" in getattr(route, "methods", set())
+    )
+
+    logout = cast(Callable[..., Any], cast(Any, delete_route).endpoint)
+    response = logout(cookie_request)
+    assert response.status_code == 204
+    assert application.state.browser_sessions.resolve(session_id) is None
 
 
 def test_hls_api_serves_safe_assets_and_reports_client_segment_drops(
