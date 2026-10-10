@@ -284,9 +284,10 @@ uv run python examples/yolo_detection.py \
 ```
 
 Open `https://camera.example.com:8000/`, enter the `stream:read` token in the
-public login shell, and let the application exchange it for a session-only,
-HttpOnly, SameSite cookie. Do not embed a token in JavaScript, a URL, or a
-repository file.
+public login shell, and let the application exchange it for a random,
+server-side, expiring session represented by an HttpOnly, SameSite cookie. The
+Bearer token itself is not stored in the cookie. Do not embed a token in
+JavaScript, a URL, or a repository file.
 
 ### TLS reverse proxy
 

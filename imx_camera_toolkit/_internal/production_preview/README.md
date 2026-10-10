@@ -96,10 +96,14 @@ full client diagnostics require `admin`, and `/healthz` remains minimal.
 
 In field mode `/` is a public, data-free login shell because normal browser
 navigation cannot add a Bearer header. The bundled page exchanges the entered
-Bearer token for a session-only, HttpOnly, SameSite cookie. WebRTC requests and
-native HLS `video.src` requests then authenticate without exposing the token to
-JavaScript storage or an HLS URL. Deploy the service behind HTTPS (preferably a
-TLS/mTLS reverse proxy); the cookie is marked `Secure` when `require_https=True`.
+Bearer token for a random, revocable session identifier in an HttpOnly,
+SameSite cookie. Only the identifier's SHA-256 digest and granted scopes are
+retained server-side, and the session expires after eight hours by default.
+Configure the lifetime with `SecurityConfig.browser_session_ttl_seconds`.
+WebRTC requests and native HLS `video.src` requests then authenticate without
+exposing the token to JavaScript storage or an HLS URL. Deploy the service
+behind HTTPS (preferably a TLS/mTLS reverse proxy); the cookie is marked
+`Secure` when `require_https=True`.
 
 `AUTO` selects `nvv4l2h264enc` where the hardware supports NVENC and otherwise
 selects `x264enc`. Orin Nano is detected independently of the GStreamer plugin
