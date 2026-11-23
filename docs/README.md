@@ -12,6 +12,7 @@ guide when choosing between CPU, GPU, MJPEG, WebRTC, and HLS paths.
 | [MCP Python SDK runtime ADR](adr/ADR-MCP-001-python-sdk-runtime.md) | Maintainers | Reproduce the SDK comparison and validate the proposed runtime on Jetson. |
 | [MCP tool contracts](mcp/README.md) | Adapter and transport developers | Implement the camera tools against shared schemas and fixtures. |
 | [MCP threat model and access policy](adr/ADR-MCP-003-threat-model-and-access-policy.md) | Maintainers and integrators | Review local and remote trust boundaries, tool scopes, and security acceptance tests. |
+| [Local MCP SDK and transport ADR](adr/ADR-MCP-004-local-sdk-and-transport.md) | Maintainers and client integrators | Reproduce the versioned stdio profile, protocol errors, snapshot exchange and shutdown behavior. |
 
 Component-specific details remain next to their implementations:
 

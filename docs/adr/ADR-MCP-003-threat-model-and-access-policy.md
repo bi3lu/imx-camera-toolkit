@@ -6,22 +6,23 @@
 
 The current MCP spike exchanges synthetic responses over client-launched
 stdio. The existing camera API has its own FastAPI lifespan and HTTP field-mode
-policy. The boundaries below describe the planned MCP profiles. MCP-004 owns
-the choice of local transport and updates this diagram when hosting is decided.
-MCP-007 owns camera lifecycle and any sidecar boundary. The camera owner
-keeps one capture pipeline and owns the optional JPEG and inference sources.
+policy. The boundaries below show the selected local stdio profile and the
+planned remote profile. MCP-007 owns the camera lifecycle contract. The
+camera owner keeps one capture pipeline and owns the optional JPEG and
+inference sources.
 [SDK spike](../../examples/mcp_runtime_spike/server.py) ·
 [FastAPI app and lifespan](../../imx_camera_toolkit/_internal/api/api.py#L370-L442) ·
-[Runtime ADR](ADR-MCP-001-python-sdk-runtime.md)
+[Runtime ADR](ADR-MCP-001-python-sdk-runtime.md) ·
+[Local SDK and transport ADR](ADR-MCP-004-local-sdk-and-transport.md)
 
 ```mermaid
 flowchart LR
-    L[Local client] -->|Private stdio or authenticated loopback| M[MCP transport and tool policy]
+    L[Local client] -->|Private stdio| M[MCP transport and tool policy]
     R[Remote client] -->|TLS and MCP bearer| P[Trusted reverse proxy]
     P -->|Restricted upstream| M
     R <-->|OAuth flow| I[OAuth issuer]
     M -->|Configured issuer metadata and token validation| I
-    M <-->|Injected adapters, or restricted IPC for sidecar| C[Camera owner and latest-result sources]
+    M <-->|Injected adapters| C[Camera owner and latest-result sources]
     C -->|Shared source| V[Preview service]
     B[Browser viewer] -->|Independent field-mode authorization| V
 ```
@@ -88,8 +89,8 @@ A valid HTTP field-mode credential remains scoped to that service.
 Resolve remote identity on every protected request. A connection, session ID,
 request ID, cached list or tool annotation conveys no authority. Use the same
 allowlist and scope table for discovery and dispatch. Keep results and
-principal-specific discovery out of shared caches. MCP-004 and MCP-021 verify
-the wire behavior against their selected revisions.
+principal-specific discovery out of shared caches. MCP-013 and MCP-021 verify
+tool policy on their respective transports.
 [MCP tools and authorized discovery](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) ·
 [Tool result and error contracts](../mcp/README.md#errors-and-mcp-representation)
 
@@ -102,20 +103,14 @@ the demo client's grants. The MCP-015 guide will document the actual launch
 configuration. Inference and write tools are unavailable in v0.9.0. The v0.9.1
 inference example enables its source and adds `mcp:inference:read` explicitly.
 
-For stdio, launch the intended executable with fixed arguments and a minimal
-environment, use private pipes, and reserve stdout for protocol messages. For
-loopback HTTP, bind only to the chosen loopback address, require a per-launch
-credential distinct from field-mode credentials, and validate the exact
-`Host`/port and any supplied `Origin` against deployment allowlists. Accept an
-absent `Origin` for an authenticated native client. Deny unexpected origins,
-including `null`, before MCP dispatch. Use nonbrowser clients by default and
-require explicit configuration to allow a browser origin. Refuse wildcard
-binds and public proxy exposure in the local profile. If MCP-004 selects a
+Launch the intended executable with fixed arguments and a minimal environment,
+use private pipes, and reserve stdout for protocol messages. The local MCP
+profile has no network listener. If a future runtime decision requires a
 sidecar, use OS-restricted IPC with verified peer identity and a fixed camera
 operation allowlist. Require bounded messages and deadlines, and keep caller
 credentials out of IPC. The broker authorizes each call before forwarding it,
 while the camera owner authorizes the sidecar peer and permitted operations.
-[MCP Streamable HTTP security requirements](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#security-endpoint)
+[Local launch and lifecycle](ADR-MCP-004-local-sdk-and-transport.md#hosting-and-lifecycle)
 
 ## Remote profile
 
@@ -160,7 +155,7 @@ evidence and the release maintainer checks it against the release gate.
 | Threat | Required safeguard | Planned verification and owner |
 | --- | --- | --- |
 | Observer, unprivileged process or client with stale discovery invokes a sensitive tool | Default deny on both list and direct call. Apply the same rules for role combinations and feature flags. Authenticate peers at the local transport or IPC boundary. | Exercise every matrix cell in list and direct calls, including empty grants, each scope in isolation, combinations, preview-only, unrelated scopes and `admin`. Repeat with enabled/disabled tools and different credentials on the same HTTP connection. Assert denied calls make zero camera reads, worker reservations or controller calls. MCP-010/011/013, MCP-016/019, MCP-021/025/026 for later tools. |
-| Browser or another process reaches the local listener, or a client bypasses the remote proxy | Private stdio or authenticated loopback, exact Host/Origin checks, and restricted upstream access. | Test allowed local access, missing credentials, cross-origin and disallowed Host rejection, refusal to bind externally, and spoofed forwarding headers. Verify local IPC rejects an unauthorized peer if used. MCP-011/013, MCP-007 for IPC, MCP-024 for the proxy. |
+| Another process inherits the local channel, or a client bypasses the remote proxy | Private stdio, minimal child environment, strict remote Host/Origin checks and restricted upstream access. | Verify the local subprocess opens no MCP listener and keeps protocol output on stdout. Test remote missing credentials, cross-origin and disallowed Host rejection, restrictions on upstream access and spoofed forwarding headers. Verify local IPC rejects an unauthorized peer if used. MCP-011/013, MCP-007 for IPC, MCP-024 for the proxy. |
 | Remote token replay across services or invalid credential use | Resource-specific validation, separate preview auth and per-request grants. | Verify the metadata/challenge flow with a real client. Test missing, malformed, expired, wrong-issuer, wrong-audience and insufficient-scope credentials and key rotation. Confirm HTTP field-mode grants and admin still behave as before. MCP-021/024. |
 | Caller or proxy exhausts memory, CPU or worker capacity | Bound ingress before decoding, then enforce rate/burst, per-tool and global concurrency, deadlines and response size. Release work slots when work actually completes. | Test oversize, burst, disconnect, slow requests and recovery with two principals. Use MCP-002 snapshot ceilings and measure capture/inference under matched load before release. MCP-006/010/013 locally, MCP-022 remotely, MCP-014/020 for Jetson. |
 | Request attempts to redirect network or filesystem access | No tool accepts a fetch URL, callback, filesystem path or model path. Preview discovery may return only a configured allowlisted HTTPS URL without embedded credentials. The MCP service never fetches that preview URL. | Reject unexpected arguments and invalid configured URL origins or schemes. Verify a returned preview URL alone grants no media or signaling access. Check issuer egress against configured trust. MCP-008/013, MCP-021/024/026. |
@@ -169,6 +164,6 @@ evidence and the release maintainer checks it against the release gate.
 | Authorized control abuse disrupts other consumers | Explicitly enable writes, then require the control grant, allowlisted fields, validated ranges, bounded update rate and audit. Check restart requirements inside the controller transition. Initial policy rejects restart-requiring changes. | Cover disabled tool, missing scope, invalid values, cooldown, concurrent updates and apply failure. Confirm the prior settings and revision survive failed writes and permitted changes preserve other consumers on Jetson. MCP-025 with MCP-023. |
 
 MCP-027 owns final remote security review before any remote release. Record
-the selected hosting boundary in MCP-004 and the actual issuer, proxy, accepted
-client revisions and operator retention setting in the remote deployment work.
+the actual issuer, proxy, accepted client revisions and operator retention
+setting in the remote deployment work.
 [Release checklist](../RELEASE_CHECKLIST.md#mcp-release-gates)

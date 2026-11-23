@@ -15,8 +15,10 @@ Test MCP SDK `2.3.0` in the toolkit process using the JetPack system interpreter
 first. The published SDK and its `mcp-types` companion both declare Python
 `>=3.10`, so this candidate can use the existing Python 3.10 JetPack bindings if
 the hardware smoke passes. Keep SDK `1.30.0` as the maintenance-line comparison.
-Both pins belong to the experiment. The toolkit currently has zero required
+Both pins are available in the experiment. ADR-MCP-004 selects v2.3.0 for
+the optional local profile. The toolkit currently has zero required
 dependencies and supports Python 3.10–3.12.
+[Local SDK and transport ADR](ADR-MCP-004-local-sdk-and-transport.md) ·
 [MCP SDK 2.3.0](https://pypi.org/project/mcp/2.3.0/) ·
 [mcp-types 2.3.0](https://pypi.org/project/mcp-types/2.3.0/) ·
 [MCP SDK 1.30.0](https://pypi.org/project/mcp/1.30.0/)
@@ -30,8 +32,8 @@ dependencies and supports Python 3.10–3.12.
 The minimum-Python assumption in the RFC predates these released packages.
 Python 3.11 and 3.12 host installs establish Python package compatibility.
 Any proposed Jetson interpreter must separately pass the binding checks on
-the target image. MCP-004 can use the two releases above as protocol candidates
-while this decision is pending.
+the target image. The workstation protocol evidence supports implementation
+while the physical runtime decision is pending.
 [Upstream releases](https://github.com/modelcontextprotocol/python-sdk/releases) ·
 [SDK protocol versions](https://py.sdk.modelcontextprotocol.io/protocol-versions/) ·
 [Upstream support policy](https://github.com/modelcontextprotocol/python-sdk/security)
