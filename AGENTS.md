@@ -49,10 +49,16 @@ uv run --frozen pytest tests/unit tests/integration \
   -m "not hardware and not benchmark" --no-cov
 ```
 
-The Black hook in `pre-commit run --all-files` formats in place. Host tests use
-deterministic doubles or local runtimes, synchronize with events or conditions,
-use bounded waits, and clean up resources on failure. Use the markers in
-`pyproject.toml` and keep test listeners on loopback.
+Local Git hooks use the optional `hooks` group and require Python 3.11 or 3.12.
+Run them on a workstation. The Black hook formats in place.
+
+```bash
+UV_PYTHON=3.11 uv run --frozen --extra preview --group hooks pre-commit run --all-files
+```
+
+Host tests use deterministic doubles or local runtimes, synchronize with
+events or conditions, use bounded waits, and clean up resources on failure.
+Use the markers in `pyproject.toml` and keep test listeners on loopback.
 
 Hardware and benchmark gates are opt-in. See the
 [release checklist](docs/RELEASE_CHECKLIST.md) and
