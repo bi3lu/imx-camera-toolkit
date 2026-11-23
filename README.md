@@ -1,5 +1,7 @@
 # IMX Camera Toolkit
 
+<img src="https://raw.githubusercontent.com/bi3lu/imx-camera-toolkit/main/assets/imx-camera-toolkit-logo.png" alt="IMX Camera Toolkit logo" width="192" height="192">
+
 [![PyPI](https://img.shields.io/pypi/v/imx-camera-toolkit?logo=pypi&logoColor=white)](https://pypi.org/project/imx-camera-toolkit/)
 ![NVIDIA Jetson Orin](https://img.shields.io/badge/NVIDIA-Jetson%20Orin-76B900?logo=nvidia&logoColor=white)
 [![JetPack 6.2.3](https://img.shields.io/badge/JetPack-6.2.3-76B900)](https://developer.nvidia.com/embedded/jetpack-sdk-623)
