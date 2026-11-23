@@ -86,6 +86,10 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   behavior in [ADR-MCP-003](adr/ADR-MCP-003-threat-model-and-access-policy.md).
   Record protocol tests for observer defaults, explicit snapshot opt-in,
   direct-call denials, disabled tools and the selected local transport boundary.
+- On the physical Jetson before v0.9.0, confirm that `camera_status` reports
+  the configured CPU or GPU path and reaches `ready` after that run's first
+  raw frame, including with JPEG preview disabled. Check the stopped state
+  and confirm a restart requires a new publication.
 - Before releasing inference tools, verify separate inference grants and the
   response, provenance and payload tests from ADR-MCP-003.
 - Before enabling the remote profile, record MCP-027 review and passing
