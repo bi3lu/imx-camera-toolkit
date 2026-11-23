@@ -1,0 +1,18 @@
+[project]
+name = "imx-mcp-runtime-spike"
+version = "0.0.0"
+requires-python = ">=3.10,<3.13"
+dependencies = ["imx-camera-toolkit[preview]"]
+
+[dependency-groups]
+sdk-v1 = ["mcp==1.30.0"]
+sdk-v2 = ["mcp==2.3.0"]
+
+[tool.uv]
+package = false
+conflicts = [
+    [{ group = "sdk-v1" }, { group = "sdk-v2" }],
+]
+
+[tool.uv.sources]
+imx-camera-toolkit = { path = "../..", editable = true }
