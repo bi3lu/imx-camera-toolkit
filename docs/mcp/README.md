@@ -167,7 +167,8 @@ text block containing the error JSON. Clients read the error block before
 applying a success schema. Reserve JSON-RPC errors for malformed protocol
 requests, method or tool lookup, and protocol-level server failures. An HTTP
 auth or transport rejection before tool execution uses the applicable
-transport response. MCP-003 defines the scope and discovery policy.
+transport response. The scope and discovery policy is in
+[ADR-MCP-003](../adr/ADR-MCP-003-threat-model-and-access-policy.md).
 [MCP 2026-07-28 tool specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) ·
 [MCP 2025-11-25 tool specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
 
