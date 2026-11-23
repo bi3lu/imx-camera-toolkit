@@ -261,6 +261,7 @@ class Camera:
         self.frames_captured = 0
         self.dropped_frames = 0
         self._last_frame_timestamp_ns: int | None = None
+        self._run_start_frame_number = 0
         self._last_capture_timestamp_ns: int | None = None
         self._consecutive_failures = 0
         self._recovery = RecoveryController()
@@ -320,10 +321,10 @@ class Camera:
             Immutable capture diagnostics suitable for health checks,
             watchdogs, metrics adapters, dashboards, or alerting systems.
         """
-        running = self.running
         now_ns = time.monotonic_ns()
 
         with self._stats_lock:
+            running = self.running
             self._prune_capture_timestamps(now_ns)
             capture_fps = self._capture_fps() if running else 0.0
             return CameraStats(
@@ -351,6 +352,10 @@ class Camera:
                 ),
                 consecutive_recovery_failures=(
                     self._recovery.consecutive_failed_restarts
+                ),
+                has_published_frame=(
+                    running
+                    and self._raw_publisher.frame_number > self._run_start_frame_number
                 ),
             )
 
@@ -675,8 +680,12 @@ class Camera:
                 raise wrapped_error from error
 
             self.last_error = None
-            self._recovery.set_state("running")
-            self._running.set()
+
+            with self._stats_lock:
+                self._run_start_frame_number = self._raw_publisher.frame_number
+                self._recovery.set_state("running")
+                self._running.set()
+
             self._thread = threading.Thread(
                 target=self._capture_loop,
                 name="imx-camera-capture",

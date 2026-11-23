@@ -303,10 +303,10 @@ to retain frame sequence, timestamps, dimensions, and format.
 
 ## Diagnostics
 
-`Camera.stats()` returns an immutable `CameraStats` snapshot without requiring
-log parsing or a telemetry library. It is suitable as the direct input for a
-health endpoint, Prometheus adapter, watchdog, dashboard, telemetry process,
-or alerting policy.
+`Camera.stats()` and `GpuCamera.stats()` return an immutable `CameraStats`
+snapshot without requiring log parsing or a telemetry library. The snapshot
+can feed a health endpoint, Prometheus adapter, watchdog, dashboard, telemetry
+process, or alerting policy.
 
 ```python
 from imx_camera_toolkit import Camera, CameraConfig
@@ -324,6 +324,7 @@ with Camera(CameraConfig()) as camera:
 | `dropped_frames` | Failed source reads and frames intentionally not published as raw frames. |
 | `capture_fps` | Recent successful source-read rate over a one-second window. |
 | `last_frame_timestamp_ns` | Monotonic timestamp of the most recent successful source read. |
+| `has_published_frame` | Whether the active capture run has published a raw BGR or NVMM frame. |
 | `recovery_count` | Successful backend recovery operations. |
 | `consecutive_failures` | Current uninterrupted source-read failure count. |
 | `running` | Whether the capture worker is active. |

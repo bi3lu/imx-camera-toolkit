@@ -60,6 +60,14 @@ the current camera instance. Subscriber counts apply to the current
 subscription instance. Counters can reset when the corresponding instance
 changes. An unregistered camera has null metrics.
 
+The SDK-independent read adapter uses one `CameraStats` sample for lifecycle,
+publication readiness, FPS, and capture drops. It reads subscriber drops from
+the specific subscriptions bound by the application. Bind the replacement
+subscription when its instance changes. Use an empty object when the
+application has bound no public aliases. If a count exceeds the schema's
+integer range, report null for the capture count or omit the affected
+subscriber entry.
+
 ## Camera capabilities
 
 Project only information from the registered source, using existing
@@ -77,6 +85,14 @@ whether one is configured for MCP. These describe the source, while discovery
 and calling permissions are evaluated for each caller. A supported source may
 be disabled. Successful capabilities responses can represent an unregistered
 camera using null source data.
+
+The read adapter accepts a provider of cached capability values. An absent
+provider or an unknown result yields null capability fields. The provider
+can supply known fields individually from previously discovered information.
+Camera dependency or capture errors raised during a read return
+`camera_unavailable`, and a camera timeout returns `request_timeout`.
+Unexpected read failures return `internal_error`. The adapter keeps the
+original exception as an internal cause.
 
 The advertised snapshot limits are the effective server limits and can be
 lower than the schema ceilings. They describe the contract accepted by the

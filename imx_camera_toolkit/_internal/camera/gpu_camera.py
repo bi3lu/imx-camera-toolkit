@@ -278,6 +278,7 @@ class GpuCamera:
         self.frames_captured = 0
         self.dropped_frames = 0
         self._last_frame_timestamp_ns: int | None = None
+        self._run_start_frame_number = 0
         self._last_capture_timestamp_ns: int | None = None
         self._consecutive_failures = 0
         self.last_error: Exception | None = None
@@ -669,9 +670,10 @@ class GpuCamera:
 
     def stats(self) -> CameraStats:
         """Return an immutable NVMM capture diagnostics snapshot."""
-        running = self.running
         now_ns = time.monotonic_ns()
+
         with self._stats_lock:
+            running = self.running
             self._prune_capture_timestamps(now_ns)
             capture_fps = self._capture_fps() if running else 0.0
             return CameraStats(
@@ -699,6 +701,10 @@ class GpuCamera:
                 ),
                 consecutive_recovery_failures=(
                     self._recovery.consecutive_failed_restarts
+                ),
+                has_published_frame=(
+                    running
+                    and self._gpu_publisher.frame_number > self._run_start_frame_number
                 ),
             )
 
@@ -750,9 +756,10 @@ class GpuCamera:
             self._backend = backend
             self.last_error = None
             self.last_recovery_error = None
-            self._recovery.record_frame_success()
-            self._recovery.set_state("running")
-            self._running.set()
+            with self._stats_lock:
+                self._run_start_frame_number = self._gpu_publisher.frame_number
+                self._recovery.record_frame_success()
+                self._running.set()
             self._thread = threading.Thread(
                 target=self._capture_loop,
                 name="imx-gpu-camera-capture",
