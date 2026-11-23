@@ -33,6 +33,8 @@ class CameraStats:
         last_frame_age_ns: Monotonic time since the latest valid frame.
         consecutive_recovery_failures: Restarts that have not yet resulted in
             a valid frame.
+        has_published_frame: Whether the active capture run has published a
+            frame. Sources without publication tracking report ``False``.
     """
 
     captured_frames: int
@@ -50,6 +52,7 @@ class CameraStats:
     failure_kind: str | None = None
     last_frame_age_ns: int | None = None
     consecutive_recovery_failures: int = 0
+    has_published_frame: bool = False
 
     def __post_init__(self) -> None:
         """Validate scalar diagnostics without inspecting camera resources."""
@@ -95,6 +98,9 @@ class CameraStats:
 
         if not isinstance(self.running, bool):
             raise ValueError("running must be a boolean")
+
+        if not isinstance(self.has_published_frame, bool):
+            raise ValueError("has_published_frame must be a boolean")
 
         if self.state not in {
             "stopped",

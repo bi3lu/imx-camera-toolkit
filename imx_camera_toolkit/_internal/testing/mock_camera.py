@@ -52,6 +52,7 @@ class MockCamera:
     _running: bool = field(default=False, init=False, repr=False)
     _jpeg: bytes | None = field(default=None, init=False, repr=False)
     _frame_number: int = field(default=0, init=False, repr=False)
+    _run_start_frame_number: int = field(default=0, init=False, repr=False)
     _last_frame_timestamp_ns: int | None = field(default=None, init=False, repr=False)
     _last_capture_timestamp_ns: int | None = field(
         default=None,
@@ -168,6 +169,9 @@ class MockCamera:
                     if self._last_frame_timestamp_ns is None
                     else max(time.monotonic_ns() - self._last_frame_timestamp_ns, 0)
                 ),
+                has_published_frame=(
+                    self._running and self._frame_number > self._run_start_frame_number
+                ),
             )
 
     def start(self) -> None:
@@ -177,6 +181,8 @@ class MockCamera:
             raise self.start_error
 
         with self._condition:
+            if not self._running:
+                self._run_start_frame_number = self._frame_number
             self._running = True
             self.last_error = None
             self._condition.notify_all()
