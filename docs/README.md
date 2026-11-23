@@ -10,6 +10,7 @@ guide when choosing between CPU, GPU, MJPEG, WebRTC, and HLS paths.
 | [CPU, GPU, and browser mode guide](GPU_PATH_GUIDE.md) | Developers and architects | Select the correct memory path and understand TensorRT cache, browser transport, and benchmark contracts. |
 | [CPU/GPU release checklist](RELEASE_CHECKLIST.md) | Maintainers | Run host, Jetson, packaging, security, and release gates. |
 | [MCP Python SDK runtime ADR](adr/ADR-MCP-001-python-sdk-runtime.md) | Maintainers | Reproduce the SDK comparison and validate the proposed runtime on Jetson. |
+| [MCP tool contracts](mcp/README.md) | Adapter and transport developers | Implement the camera tools against shared schemas and fixtures. |
 
 Component-specific details remain next to their implementations:
 

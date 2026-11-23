@@ -1,0 +1,484 @@
+{
+  "tools": {
+    "camera_status": {
+      "input": "CameraInput",
+      "success": "CameraStatus"
+    },
+    "camera_capabilities": {
+      "input": "CameraInput",
+      "success": "CameraCapabilities"
+    },
+    "camera_snapshot": {
+      "input": "SnapshotInput",
+      "success": "SnapshotMetadata"
+    }
+  },
+  "domain_error": "DomainError",
+  "cases": [
+    {
+      "name": "status_ready",
+      "tool": "camera_status",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "success",
+        "value": {
+          "schema_version": 1,
+          "camera_id": "primary",
+          "state": "ready",
+          "backend": "gpu",
+          "observed_at_utc": "2026-11-23T12:00:00Z",
+          "toolkit_version": "0.9.0",
+          "capture_fps": 29.8,
+          "capture_dropped_frames": 12,
+          "subscriber_dropped_frames": {
+            "preview": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "status_unregistered",
+      "tool": "camera_status",
+      "arguments": {
+        "camera_id": "primary"
+      },
+      "input_valid": true,
+      "expected": {
+        "kind": "success",
+        "value": {
+          "schema_version": 1,
+          "camera_id": "primary",
+          "state": "unavailable",
+          "backend": null,
+          "observed_at_utc": "2026-11-23T12:00:00Z",
+          "toolkit_version": "0.9.0",
+          "capture_fps": null,
+          "capture_dropped_frames": null,
+          "subscriber_dropped_frames": null
+        }
+      }
+    },
+    {
+      "name": "status_invalid_camera",
+      "tool": "camera_status",
+      "arguments": {
+        "camera_id": "PRIMARY"
+      },
+      "input_valid": false,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "invalid_argument",
+          "message": "Invalid tool arguments.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "status_denied",
+      "tool": "camera_status",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "permission_denied",
+          "message": "Permission denied.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "capabilities_known",
+      "tool": "camera_capabilities",
+      "arguments": {
+        "camera_id": "primary"
+      },
+      "input_valid": true,
+      "expected": {
+        "kind": "success",
+        "value": {
+          "schema_version": 1,
+          "camera_id": "primary",
+          "sensor_model": "IMX219",
+          "sensor_modes": [
+            {
+              "index": 0,
+              "width": 1920,
+              "height": 1080,
+              "max_fps": 30,
+              "hdr": null
+            }
+          ],
+          "frame_format": "BGR_CPU",
+          "controls": {
+            "exposure_us": {
+              "min": null,
+              "max": null
+            },
+            "gain": null
+          },
+          "snapshot": {
+            "source_supported": true,
+            "configured": true,
+            "limits": {
+              "max_width": 1920,
+              "max_height": 1080,
+              "max_jpeg_quality": 95,
+              "max_age_ms": 10000,
+              "max_wait_ms": 1000,
+              "max_jpeg_bytes": 524288,
+              "max_response_bytes": 786432
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "capabilities_unregistered",
+      "tool": "camera_capabilities",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "success",
+        "value": {
+          "schema_version": 1,
+          "camera_id": "primary",
+          "sensor_model": null,
+          "sensor_modes": null,
+          "frame_format": null,
+          "controls": null,
+          "snapshot": null
+        }
+      }
+    },
+    {
+      "name": "capabilities_unknown_key",
+      "tool": "camera_capabilities",
+      "arguments": {
+        "probe": true
+      },
+      "input_valid": false,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "invalid_argument",
+          "message": "Invalid tool arguments.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "capabilities_denied",
+      "tool": "camera_capabilities",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "permission_denied",
+          "message": "Permission denied.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "snapshot_fresh",
+      "tool": "camera_snapshot",
+      "arguments": {
+        "max_width": 1280,
+        "max_height": 720,
+        "max_age_ms": 2000
+      },
+      "input_valid": true,
+      "expected": {
+        "kind": "success",
+        "value": {
+          "schema_version": 1,
+          "camera_id": "primary",
+          "mime_type": "image/jpeg",
+          "width": 1,
+          "height": 1,
+          "jpeg_quality": null,
+          "jpeg_bytes": 619,
+          "frame_sequence": 42,
+          "sequence_domain": "jpeg_publication",
+          "age_ms": 25.5,
+          "age_clock": "server_monotonic"
+        },
+        "jpeg": "../../examples/mcp_runtime_spike/synthetic.jpg"
+      }
+    },
+    {
+      "name": "snapshot_at_age_boundary",
+      "tool": "camera_snapshot",
+      "arguments": {
+        "max_age_ms": 25
+      },
+      "input_valid": true,
+      "expected": {
+        "kind": "success",
+        "value": {
+          "schema_version": 1,
+          "camera_id": "primary",
+          "mime_type": "image/jpeg",
+          "width": 1,
+          "height": 1,
+          "jpeg_quality": null,
+          "jpeg_bytes": 619,
+          "frame_sequence": 42,
+          "sequence_domain": "jpeg_publication",
+          "age_ms": 25,
+          "age_clock": "server_monotonic"
+        },
+        "jpeg": "../../examples/mcp_runtime_spike/synthetic.jpg"
+      }
+    },
+    {
+      "name": "snapshot_absent",
+      "tool": "camera_snapshot",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "snapshot_unavailable",
+          "message": "The JPEG source cannot satisfy this request.",
+          "retryable": true,
+          "details": {
+            "reason": "no_frame"
+          }
+        }
+      }
+    },
+    {
+      "name": "snapshot_disabled",
+      "tool": "camera_snapshot",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "snapshot_unavailable",
+          "message": "The JPEG source cannot satisfy this request.",
+          "retryable": false,
+          "details": {
+            "reason": "no_source"
+          }
+        }
+      }
+    },
+    {
+      "name": "snapshot_stale",
+      "tool": "camera_snapshot",
+      "arguments": {
+        "max_age_ms": 50
+      },
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "snapshot_stale",
+          "message": "The latest JPEG exceeds the maximum age.",
+          "retryable": true,
+          "details": {
+            "age_ms": 500,
+            "max_age_ms": 50
+          }
+        }
+      }
+    },
+    {
+      "name": "snapshot_timeout",
+      "tool": "camera_snapshot",
+      "arguments": {
+        "wait_ms": 150
+      },
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "request_timeout",
+          "message": "The snapshot wait expired.",
+          "retryable": true
+        }
+      }
+    },
+    {
+      "name": "snapshot_invalid_quality",
+      "tool": "camera_snapshot",
+      "arguments": {
+        "jpeg_quality": true
+      },
+      "input_valid": false,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "invalid_argument",
+          "message": "Invalid tool arguments.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "snapshot_width_over_ceiling",
+      "tool": "camera_snapshot",
+      "arguments": {
+        "max_width": 1921
+      },
+      "input_valid": false,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "invalid_argument",
+          "message": "Invalid tool arguments.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "snapshot_unsupported_quality",
+      "tool": "camera_snapshot",
+      "arguments": {
+        "jpeg_quality": 75
+      },
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "snapshot_unavailable",
+          "message": "The JPEG source cannot satisfy this request.",
+          "retryable": false,
+          "details": {
+            "reason": "constraints_unsupported"
+          }
+        }
+      }
+    },
+    {
+      "name": "snapshot_timing_unavailable",
+      "tool": "camera_snapshot",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "snapshot_unavailable",
+          "message": "The JPEG source cannot satisfy this request.",
+          "retryable": false,
+          "details": {
+            "reason": "timing_unavailable"
+          }
+        }
+      }
+    },
+    {
+      "name": "snapshot_malformed_source_jpeg",
+      "tool": "camera_snapshot",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "internal_error",
+          "message": "The tool could not complete the request.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "snapshot_oversized_jpeg",
+      "tool": "camera_snapshot",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "payload_too_large",
+          "message": "The response exceeds the size limit.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "snapshot_denied",
+      "tool": "camera_snapshot",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "permission_denied",
+          "message": "Permission denied.",
+          "retryable": false
+        }
+      }
+    }
+  ],
+  "protocol_examples": [
+    {
+      "name": "malformed_tools_call",
+      "kind": "json_rpc_error",
+      "protocol_revision": "2025-11-25",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+          "name": "camera_status",
+          "arguments": []
+        }
+      },
+      "expects_tool_result": false
+    },
+    {
+      "name": "transport_rejects_unauthenticated_http_request",
+      "kind": "transport_rejection",
+      "http_status": 401
+    }
+  ],
+  "future_inference_example": {
+    "schema": "InferenceLatest",
+    "value": {
+      "schema_version": 1,
+      "source_id": "primary-inference",
+      "model_id": "my-detector-v1",
+      "frame_sequence": 1024,
+      "sequence_domain": "raw_capture",
+      "age_ms": 120,
+      "age_clock": "server_monotonic",
+      "inference_time_ms": 18.4,
+      "payload_schema": "application/vnd.example.detector.v1+json",
+      "payload": {
+        "objects": [
+          {
+            "label": "cup",
+            "confidence": 0.91,
+            "bbox_xyxy": [
+              120,
+              80,
+              230,
+              220
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

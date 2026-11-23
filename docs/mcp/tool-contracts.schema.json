@@ -1,0 +1,476 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IMX Camera Toolkit MCP tool contracts, version 1",
+  "$defs": {
+    "CameraInput": {
+      "type": "object",
+      "properties": {
+        "camera_id": { "const": "primary", "default": "primary" }
+      },
+      "additionalProperties": false
+    },
+    "SnapshotInput": {
+      "type": "object",
+      "properties": {
+        "camera_id": { "const": "primary", "default": "primary" },
+        "max_width": { "type": "integer", "minimum": 1, "maximum": 1920 },
+        "max_height": { "type": "integer", "minimum": 1, "maximum": 1080 },
+        "jpeg_quality": { "type": "integer", "minimum": 1, "maximum": 95 },
+        "max_age_ms": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "wait_ms": { "type": "integer", "minimum": 0, "maximum": 1000, "default": 0 }
+      },
+      "additionalProperties": false
+    },
+    "CameraStatus": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": 1 },
+        "camera_id": { "const": "primary" },
+        "state": {
+          "enum": ["unavailable", "starting", "ready", "recovering", "error"]
+        },
+        "backend": {
+          "enum": ["cpu", "gpu", null]
+        },
+        "observed_at_utc": { "type": "string", "format": "date-time", "pattern": "Z$" },
+        "toolkit_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "capture_fps": {
+          "anyOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "capture_dropped_frames": {
+          "anyOf": [
+            { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            { "type": "null" }
+          ]
+        },
+        "subscriber_dropped_frames": {
+          "anyOf": [
+            {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$",
+                "not": { "pattern": "[\\r\\n]" }
+              },
+              "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "camera_id",
+        "state",
+        "backend",
+        "observed_at_utc",
+        "toolkit_version",
+        "capture_fps",
+        "capture_dropped_frames",
+        "subscriber_dropped_frames"
+      ]
+    },
+    "CameraCapabilities": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": 1 },
+        "camera_id": { "const": "primary" },
+        "sensor_model": {
+          "anyOf": [
+            { "type": "string", "minLength": 1, "maxLength": 64 },
+            { "type": "null" }
+          ]
+        },
+        "sensor_modes": {
+          "anyOf": [
+            {
+              "type": "array",
+              "maxItems": 256,
+              "items": { "$ref": "#/$defs/SensorMode" }
+            },
+            { "type": "null" }
+          ]
+        },
+        "frame_format": {
+          "enum": ["BGR_CPU", "NV12_NVMM", null]
+        },
+        "controls": {
+          "anyOf": [
+            { "$ref": "#/$defs/ControlCapabilities" },
+            { "type": "null" }
+          ]
+        },
+        "snapshot": {
+          "anyOf": [
+            { "$ref": "#/$defs/SnapshotCapabilities" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "required": ["schema_version", "camera_id", "sensor_model", "sensor_modes", "frame_format", "controls", "snapshot"]
+    },
+    "ControlCapabilities": {
+      "type": "object",
+      "properties": {
+        "exposure_us": {
+          "anyOf": [
+            { "$ref": "#/$defs/ExposureBounds" },
+            { "const": false },
+            { "type": "null" }
+          ]
+        },
+        "gain": {
+          "anyOf": [
+            { "$ref": "#/$defs/GainBounds" },
+            { "const": false },
+            { "type": "null" }
+          ]
+        }
+      },
+      "required": ["exposure_us", "gain"]
+    },
+    "ExposureBounds": {
+      "type": "object",
+      "properties": {
+        "min": { "type": ["integer", "null"], "minimum": 1 },
+        "max": { "type": ["integer", "null"], "minimum": 1 }
+      },
+      "required": ["min", "max"]
+    },
+    "GainBounds": {
+      "type": "object",
+      "properties": {
+        "min": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+        "max": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+      },
+      "required": ["min", "max"]
+    },
+    "SensorMode": {
+      "type": "object",
+      "properties": {
+        "index": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "width": {
+          "anyOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "height": {
+          "anyOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "null" }
+          ]
+        },
+        "max_fps": {
+          "anyOf": [
+            { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 },
+            { "type": "null" }
+          ]
+        },
+        "hdr": {
+          "anyOf": [
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "required": ["index", "width", "height", "max_fps", "hdr"]
+    },
+    "SnapshotCapabilities": {
+      "type": "object",
+      "properties": {
+        "source_supported": {
+          "anyOf": [
+            { "type": "boolean" },
+            { "type": "null" }
+          ]
+        },
+        "configured": { "type": "boolean" },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "max_width": { "type": "integer", "minimum": 1, "maximum": 1920 },
+            "max_height": { "type": "integer", "minimum": 1, "maximum": 1080 },
+            "max_jpeg_quality": { "type": "integer", "minimum": 1, "maximum": 95 },
+            "max_age_ms": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "max_wait_ms": { "type": "integer", "minimum": 0, "maximum": 1000 },
+            "max_jpeg_bytes": { "type": "integer", "minimum": 1, "maximum": 524288 },
+            "max_response_bytes": { "type": "integer", "minimum": 1, "maximum": 786432 }
+          },
+          "required": [
+            "max_width",
+            "max_height",
+            "max_jpeg_quality",
+            "max_age_ms",
+            "max_wait_ms",
+            "max_jpeg_bytes",
+            "max_response_bytes"
+          ]
+        }
+      },
+      "required": ["source_supported", "configured", "limits"]
+    },
+    "SnapshotMetadata": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": 1 },
+        "camera_id": { "const": "primary" },
+        "mime_type": { "const": "image/jpeg" },
+        "width": { "type": "integer", "minimum": 1, "maximum": 1920 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 1080 },
+        "jpeg_quality": {
+          "anyOf": [
+            { "type": "integer", "minimum": 1, "maximum": 95 },
+            { "type": "null" }
+          ]
+        },
+        "jpeg_bytes": { "type": "integer", "minimum": 1, "maximum": 524288 },
+        "frame_sequence": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "sequence_domain": { "const": "jpeg_publication" },
+        "age_ms": { "type": "number", "minimum": 0, "maximum": 10000 },
+        "age_clock": { "const": "server_monotonic" }
+      },
+      "required": [
+        "schema_version",
+        "camera_id",
+        "mime_type",
+        "width",
+        "height",
+        "jpeg_quality",
+        "jpeg_bytes",
+        "frame_sequence",
+        "sequence_domain",
+        "age_ms",
+        "age_clock"
+      ]
+    },
+    "DomainError": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": 1 },
+        "code": {
+          "enum": [
+            "camera_unavailable",
+            "camera_starting",
+            "snapshot_unavailable",
+            "snapshot_stale",
+            "invalid_argument",
+            "permission_denied",
+            "rate_limited",
+            "request_timeout",
+            "payload_too_large",
+            "internal_error",
+            "inference_not_configured",
+            "no_inference_result",
+            "stale_inference_result"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object" }
+      },
+      "required": ["schema_version", "code", "message", "retryable"],
+      "oneOf": [
+        {
+          "properties": {
+            "code": { "const": "camera_unavailable" },
+            "retryable": { "const": false },
+            "details": false
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "camera_starting" },
+            "retryable": { "const": true },
+            "details": false
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "snapshot_unavailable" },
+            "retryable": { "const": false },
+            "details": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "enum": ["no_source", "constraints_unsupported", "timing_unavailable"]
+                }
+              },
+              "required": ["reason"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["details"]
+        },
+        {
+          "properties": {
+            "code": { "const": "snapshot_unavailable" },
+            "retryable": { "const": true },
+            "details": {
+              "type": "object",
+              "properties": {
+                "reason": {
+                  "enum": ["no_frame"]
+                }
+              },
+              "required": ["reason"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["details"]
+        },
+        {
+          "properties": {
+            "code": { "const": "snapshot_stale" },
+            "retryable": { "const": true },
+            "details": {
+              "type": "object",
+              "properties": {
+                "age_ms": { "type": "number", "minimum": 0 },
+                "max_age_ms": { "type": "integer", "minimum": 1, "maximum": 10000 }
+              },
+              "required": ["age_ms", "max_age_ms"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["details"]
+        },
+        {
+          "properties": {
+            "code": { "const": "invalid_argument" },
+            "retryable": { "const": false },
+            "details": false
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "permission_denied" },
+            "retryable": { "const": false },
+            "details": false
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "rate_limited" },
+            "retryable": { "const": true },
+            "details": {
+              "type": "object",
+              "properties": {
+                "retry_after_ms": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "request_timeout" },
+            "retryable": { "const": true },
+            "details": false
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "payload_too_large" },
+            "retryable": { "const": false },
+            "details": false
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "internal_error" },
+            "retryable": { "const": false },
+            "details": false
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "inference_not_configured" },
+            "retryable": { "const": false },
+            "details": false
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "no_inference_result" },
+            "retryable": { "const": true },
+            "details": false
+          }
+        },
+        {
+          "properties": {
+            "code": { "const": "stale_inference_result" },
+            "retryable": { "const": true },
+            "details": {
+              "type": "object",
+              "properties": {
+                "age_ms": { "type": "number", "minimum": 0 },
+                "max_age_ms": { "type": "integer", "minimum": 1, "maximum": 10000 }
+              },
+              "required": ["age_ms", "max_age_ms"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["details"]
+        }
+      ]
+    },
+    "InferenceLatest": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": 1 },
+        "source_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "model_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "frame_sequence": {
+          "anyOf": [
+            { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+            { "type": "null" }
+          ]
+        },
+        "sequence_domain": {
+          "enum": ["raw_capture", null]
+        },
+        "age_ms": { "type": "number", "minimum": 0 },
+        "age_clock": { "const": "server_monotonic" },
+        "inference_time_ms": {
+          "anyOf": [
+            { "type": "number", "minimum": 0 },
+            { "type": "null" }
+          ]
+        },
+        "payload_schema": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "payload": { "type": "object" }
+      },
+      "required": [
+        "schema_version",
+        "source_id",
+        "model_id",
+        "frame_sequence",
+        "sequence_domain",
+        "age_ms",
+        "age_clock",
+        "inference_time_ms",
+        "payload_schema",
+        "payload"
+      ],
+      "if": {
+        "properties": {
+          "frame_sequence": { "const": null }
+        }
+      },
+      "then": {
+        "properties": {
+          "sequence_domain": { "const": null }
+        }
+      },
+      "else": {
+        "properties": {
+          "sequence_domain": { "const": "raw_capture" }
+        }
+      }
+    }
+  }
+}
