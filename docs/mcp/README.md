@@ -156,11 +156,11 @@ exceptions, private configuration and image bytes out of error messages.
 For successful tools, return the logical object in `structuredContent` and
 its serialized JSON in a text block for consumers that only read `content`.
 Snapshot success adds one MCP image block with MIME type `image/jpeg` and
-base64 JPEG data. Metadata carries no image data. If the selected SDK
-convenience layer cannot compose this result, use the SDK's explicit tool
-result type. A transport profile that can only send the image and text
-blocks must omit `outputSchema` at discovery and supply the same JSON
-metadata text. MCP-004 establishes the supported profile.
+base64 JPEG data. Metadata carries no image data. The selected local
+profile uses the SDK's explicit tool result type and advertises
+`outputSchema`. Clients that only read `content` can still read the same
+metadata from the JSON text block.
+[Local SDK and transport ADR](../adr/ADR-MCP-004-local-sdk-and-transport.md)
 
 Return tool failures as completed MCP results with `isError: true` and one
 text block containing the error JSON. Clients read the error block before
@@ -177,8 +177,9 @@ the published output schemas. A Python SDK 2.3.0 client received the three
 success results and a typed stale error from an SDK 1.30.0 server on
 `2025-11-25` and an SDK 2.3.0 server on both `2025-11-25` and `2026-07-28`.
 On all three runs the JPEG bytes matched the fixture and the structured
-metadata matched the JSON text. Client rendering and the supported local
-profile are part of MCP-004. The probe used synthetic data.
+metadata matched the JSON text. The supported local profile uses the
+`2026-07-28` revision. Independent client UI verification is tracked
+separately. The probes used synthetic data.
 
 ## Future inference and controls
 
