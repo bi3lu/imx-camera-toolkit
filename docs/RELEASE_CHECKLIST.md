@@ -49,6 +49,10 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 
 ## Release gate
 
+- Before tagging v0.9.0, copy the release candidate checkout to a physical
+  Jetson Orin Nano Super with JetPack 6.2.3 and IMX219-77. Run the MCP smoke
+  and native interop checks, record the results, and accept the runtime
+  decision in [ADR-MCP-001](adr/ADR-MCP-001-python-sdk-runtime.md#validate-on-jetson-orin-nano-super).
 - Confirm `GpuCamera()` remains usable without a feature flag and reports the
   stable NV12/NVMM contract.
 - Confirm `preview`, `snapshot`, and `test` accept both `--backend cpu` and
