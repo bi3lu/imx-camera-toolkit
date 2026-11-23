@@ -81,7 +81,7 @@ packages = ["imx_camera_toolkit"]
 
 [dependency-groups]
 dev = [
-    "black>=25.1,<27.0",
+    "black>=26.10.1,<27.0",
     "cryptography>=50.0,<51",
     "httpx>=0.28,<1.0",
     "mypy>=1.15,<3.0",
@@ -92,7 +92,7 @@ dev = [
 ]
 
 [tool.uv]
-constraint-dependencies = ["virtualenv>=21.7.13"]
+constraint-dependencies = ["certifi>=2026.10.18", "virtualenv>=21.7.13"]
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-markers"
