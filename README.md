@@ -1,12 +1,36 @@
-# IMX Camera Toolkit
 
-<img src="https://raw.githubusercontent.com/bi3lu/imx-camera-toolkit/main/assets/imx-camera-toolkit-logo.png" alt="IMX Camera Toolkit logo" width="192" height="192">
+<div align="center">
 
-[![PyPI](https://img.shields.io/pypi/v/imx-camera-toolkit?logo=pypi&logoColor=white)](https://pypi.org/project/imx-camera-toolkit/)
-![NVIDIA Jetson Orin](https://img.shields.io/badge/NVIDIA-Jetson%20Orin-76B900?logo=nvidia&logoColor=white)
-[![JetPack 6.2.3](https://img.shields.io/badge/JetPack-6.2.3-76B900)](https://developer.nvidia.com/embedded/jetpack-sdk-623)
-![Python 3.10–3.12](https://img.shields.io/badge/Python-3.10--3.12-3776AB?logo=python&logoColor=white)
-[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/bi3lu/imx-camera-toolkit/blob/main/LICENSE)
+<img
+  src="https://raw.githubusercontent.com/bi3lu/imx-camera-toolkit/main/assets/imx-camera-toolkit-logo.png"
+  alt="IMX Camera Toolkit logo"
+  width="160"
+  height="160"
+/>
+
+<h1>IMX Camera Toolkit</h1>
+
+<p>
+  Python camera capture toolkit for NVIDIA Jetson
+</p>
+
+<p>
+  <a href="https://pypi.org/project/imx-camera-toolkit/">
+    <img src="https://img.shields.io/pypi/v/imx-camera-toolkit?logo=pypi&logoColor=white" alt="PyPI">
+  </a>
+  <img src="https://img.shields.io/badge/NVIDIA-Jetson%20Orin-76B900?logo=nvidia&logoColor=white" alt="NVIDIA Jetson Orin">
+  <a href="https://developer.nvidia.com/embedded/jetpack-sdk-623">
+    <img src="https://img.shields.io/badge/JetPack-6.2.3-76B900" alt="JetPack 6.2.3">
+  </a>
+  <img src="https://img.shields.io/badge/Python-3.10--3.12-3776AB?logo=python&logoColor=white" alt="Python 3.10–3.12">
+  <a href="https://github.com/bi3lu/imx-camera-toolkit/blob/main/LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License">
+  </a>
+</p>
+
+</div>
+
+---
 
 IMX Camera Toolkit is a Python library for working with CSI-connected IMX cameras on NVIDIA Jetson. It uses Argus and GStreamer for capture, and can deliver frames to your own processing code or stream them to a browser.
 
