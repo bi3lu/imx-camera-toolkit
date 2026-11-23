@@ -74,3 +74,16 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   `BIND_NOW`, and a non-executable stack; exercise the opt-in ASan/UBSan build.
 - Create a signed tag only after both CI workflows pass.
 - Never publish or share cached TensorRT `.engine` files as portable assets.
+
+## MCP release gates
+
+- Before v0.9.0, verify tool registration against the scope names and admin
+  behavior in [ADR-MCP-003](adr/ADR-MCP-003-threat-model-and-access-policy.md).
+  Record protocol tests for observer defaults, explicit snapshot opt-in,
+  direct-call denials, disabled tools and the selected local transport boundary.
+- Before releasing inference tools, verify separate inference grants and the
+  response, provenance and payload tests from ADR-MCP-003.
+- Before enabling the remote profile, record MCP-027 review and passing
+  evidence for issuer and audience validation, scope enforcement, trusted
+  proxy and origin policy, request limits, redaction and audit retention.
+  Include control and preview authorization tests for any such tools shipped.
