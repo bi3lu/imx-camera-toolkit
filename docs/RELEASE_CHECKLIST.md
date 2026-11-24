@@ -77,6 +77,12 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 
 ## MCP release gates
 
+- On the physical Jetson before v0.9.0, compare `camera_capabilities` with
+  the installed sensor, driver mode descriptors, and read-only Argus
+  inspection. Verify the active CPU and GPU frame formats after publication,
+  then check preview disabled and enabled. Record the sensor, JetPack/L4T,
+  operating resolution and FPS, and observed control and JPEG timing support.
+  [MCP capability contract](mcp/README.md#camera-capabilities)
 - Before v0.9.0, run the selected SDK and stdio profile checks in
   [ADR-MCP-004](adr/ADR-MCP-004-local-sdk-and-transport.md#workstation-interoperability-evidence)
   against the packaged host. Record supported client and protocol versions,
