@@ -34,6 +34,12 @@ Advertise versioned tool names when serving incompatible versions together.
 When publishing a tool schema, inline the named object definition and include
 the referenced local `$defs` so a client can validate it offline.
 
+All calls in one host share the application's `primary` binding. Capture
+normally belongs to the application, and a standalone launch can explicitly
+transfer its camera to the host. Host startup enables dispatch, while
+capture readiness follows the status contract below.
+[Camera ownership and host lifecycle](../adr/ADR-MCP-002-camera-ownership.md)
+
 ## Camera status
 
 The observation time is RFC 3339 UTC with a `Z` suffix. It is sampled on the
