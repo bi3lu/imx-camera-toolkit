@@ -13,6 +13,7 @@ from .contracts import (
     HARD_SNAPSHOT_LIMITS,
     MAX_SAFE_INTEGER,
     CameraSnapshot,
+    SnapshotCapabilities,
     SnapshotLimits,
     SnapshotMetadata,
 )
@@ -118,6 +119,27 @@ class CameraSnapshotAdapter:
         validate_snapshot_limits(limits)
         self._source = source
         self.limits = limits
+
+    def capabilities(self) -> SnapshotCapabilities:
+        """Describe the bound preview from one sample without waiting or encoding."""
+        if self._source is None:
+            return SnapshotCapabilities(None, False, self.limits)
+
+        preview = self._source._jpeg_preview()
+        supported = None
+
+        if not preview.acquisition_timing:
+            supported = False
+
+        elif (
+            preview.enabled
+            and preview.state == "running"
+            and preview.publication is not None
+            and preview.publication.acquired_at_ns is not None
+        ):
+            supported = True
+
+        return SnapshotCapabilities(supported, preview.enabled, self.limits)
 
     async def snapshot(
         self,

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 CameraBackend = Literal["cpu", "gpu"]
+CameraFrameFormat = Literal["BGR_CPU", "NV12_NVMM"]
 CameraState = Literal["unavailable", "starting", "ready", "recovering", "error"]
 MAX_SAFE_INTEGER = (1 << 53) - 1
 
@@ -91,7 +92,7 @@ class CameraCapabilities:
 
     sensor_model: str | None = None
     sensor_modes: tuple[SensorMode, ...] | None = None
-    frame_format: Literal["BGR_CPU", "NV12_NVMM"] | None = None
+    frame_format: CameraFrameFormat | None = None
     controls: ControlCapabilities | None = None
     snapshot: SnapshotCapabilities | None = None
     schema_version: Literal[1] = field(default=1, init=False)
