@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock
 
 import pytest
@@ -19,11 +20,9 @@ from imx_camera_toolkit._internal.camera.publishing.jpeg_slot import (
     JPEGPublication,
 )
 from imx_camera_toolkit._internal.mcp import snapshot_adapter
+from imx_camera_toolkit._internal.mcp.contracts import HARD_SNAPSHOT_LIMITS
 from imx_camera_toolkit._internal.mcp.errors import MCPError
-from imx_camera_toolkit._internal.mcp.snapshot_adapter import (
-    HARD_SNAPSHOT_LIMITS,
-    CameraSnapshotAdapter,
-)
+from imx_camera_toolkit._internal.mcp.snapshot_adapter import CameraSnapshotAdapter
 
 _NOW = 30_000_000_000
 
@@ -70,8 +69,13 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> Mock:
 @pytest.mark.parametrize(
     "arguments",
     [
+        None,
+        [],
+        "primary",
         {"unknown": 1},
+        {1: "primary"},
         {"camera_id": "secondary"},
+        {"camera_id": None},
         {"max_width": 1921},
         {"max_height": 0},
         {"jpeg_quality": 96},
@@ -79,15 +83,71 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> Mock:
         {"max_age_ms": 1.0},
         {"max_age_ms": True},
         {"max_age_ms": float("nan")},
+        {"max_age_ms": float("inf")},
+        {"wait_ms": "1"},
         {"wait_ms": -1},
         {"wait_ms": 1001},
     ],
 )
-def test_validates_before_access(source: Preview, arguments: dict[str, object]) -> None:
+def test_validates_before_access(source: Preview, arguments: object) -> None:
     """Reject invalid inputs before accessing the camera."""
     with pytest.raises(MCPError) as caught:
         asyncio.run(CameraSnapshotAdapter(source).snapshot(arguments))
     assert caught.value.code == "invalid_argument"
+    assert source.reads == 0
+
+
+def test_effective_limits_before_source_access(source: Preview) -> None:
+    """Reject caller limits above tightened settings before sampling the source."""
+    limits = replace(
+        HARD_SNAPSHOT_LIMITS, max_width=640, max_jpeg_quality=65, max_wait_ms=0
+    )
+    adapter = CameraSnapshotAdapter(source, limits=limits)
+    for arguments in ({"max_width": 641}, {"jpeg_quality": 66}, {"wait_ms": 1}):
+        with pytest.raises(MCPError) as caught:
+            asyncio.run(adapter.snapshot(arguments))
+        assert caught.value.code == "invalid_argument"
+    assert source.reads == 0
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"max_width": True},
+        {"max_jpeg_quality": 95.0},
+        {"max_age_ms": float("inf")},
+        {"max_wait_ms": -1},
+        {"max_jpeg_bytes": 0},
+        {"max_response_bytes": 786_433},
+    ],
+)
+def test_validates_server_configuration(
+    source: Preview, changes: dict[str, int]
+) -> None:
+    """Reject unsafe settings at construction before touching the source."""
+    with pytest.raises(ValueError, match="invalid server snapshot limits"):
+        CameraSnapshotAdapter(source, limits=replace(HARD_SNAPSHOT_LIMITS, **changes))
+    assert source.reads == 0
+
+
+@pytest.mark.parametrize(
+    ("deadline", "code"),
+    [
+        (0, "request_timeout"),
+        (-1, "internal_error"),
+        (True, "internal_error"),
+        (float("nan"), "internal_error"),
+    ],
+)
+def test_rejects_expired_or_invalid_deadlines(
+    source: Preview, clock: Mock, deadline: object, code: str
+) -> None:
+    """Enforce the server deadline before the first source read."""
+    with pytest.raises(MCPError) as caught:
+        asyncio.run(
+            CameraSnapshotAdapter(source).snapshot(deadline_ns=cast(int, deadline))
+        )
+    assert caught.value.code == code
     assert source.reads == 0
 
 

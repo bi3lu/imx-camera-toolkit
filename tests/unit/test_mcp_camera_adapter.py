@@ -192,11 +192,44 @@ def test_capabilities_rejects_untyped_provider_data() -> None:
 
 @pytest.mark.parametrize("operation", ["status", "capabilities"])
 @pytest.mark.parametrize(
+    "arguments",
+    [
+        None,
+        [],
+        {"camera_id": "Primary"},
+        {"camera_id": True},
+        {"camera_id": None},
+        {"camera_id": ["primary"]},
+        {"max_width": 1},
+    ],
+)
+def test_invalid_read_arguments_do_not_access_sources(
+    operation: str, arguments: object
+) -> None:
+    """Reject undeclared keys, invalid camera IDs and non-object arguments."""
+    source = Mock(spec=Camera)
+    provider = Mock()
+    clock = Mock()
+    adapter = CameraReadAdapter(source, capability_source=provider, clock=clock)
+    read = adapter.status if operation == "status" else adapter.capabilities
+
+    with pytest.raises(MCPError) as raised:
+        read(arguments)
+
+    assert raised.value.code == "invalid_argument"
+    assert source.mock_calls == []
+    provider.assert_not_called()
+    clock.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["status", "capabilities"])
+@pytest.mark.parametrize(
     ("exception_type", "code", "retryable"),
     [
         (CameraOpenError, "camera_unavailable", False),
         (CameraTimeoutError, "request_timeout", True),
         (RuntimeError, "internal_error", False),
+        (TimeoutError, "internal_error", False),
     ],
 )
 def test_read_errors_are_typed_and_sanitized(

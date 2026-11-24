@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 from pathlib import Path
 from time import monotonic_ns
+from unittest.mock import Mock
 
 import pytest
 
@@ -80,6 +80,31 @@ def photo() -> bytes:
     return (
         Path(__file__).resolve().parents[2] / "examples/mcp_runtime_spike/synthetic.jpg"
     ).read_bytes()
+
+
+def test_host_validates_decoded_arguments_before_reading() -> None:
+    """Forward explicit null to validation and accept the registered ID."""
+
+    async def scenario() -> None:
+        """Exercise tool calls on a running borrowed host."""
+        camera = FakeCamera()
+        provider = Mock(return_value=CameraCapabilities())
+        async with MCPHost(
+            CameraReadAdapter(camera, capability_source=provider),
+            CameraSnapshotAdapter(camera),
+        ) as host:
+            with pytest.raises(MCPError, match="Invalid tool arguments"):
+                host.status(None)
+            with pytest.raises(MCPError, match="Invalid tool arguments"):
+                host.capabilities({"camera_id": "other"})
+            with pytest.raises(MCPError, match="Invalid tool arguments"):
+                await host.snapshot(None)
+            provider.assert_not_called()
+            assert camera.preview_reads == 0
+            assert host.status({"camera_id": "primary"}).state == "unavailable"
+            assert host.capabilities({"camera_id": "primary"}) == CameraCapabilities()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("standalone", [False, True])
@@ -250,7 +275,7 @@ def test_cancelled_close_still_drains_read_before_stopping_camera() -> None:
 
             async def snapshot(
                 self,
-                arguments: Mapping[str, object] | None = None,
+                arguments: object = None,
                 *,
                 deadline_ns: int | None = None,
             ) -> CameraSnapshot:
