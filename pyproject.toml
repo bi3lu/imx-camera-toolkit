@@ -44,6 +44,10 @@ production-preview = [
     "pyyaml>=6.0,<7.0",
     "uvicorn>=0.35,<1.0",
 ]
+mcp = [
+    "anyio>=4.9,<5.0",
+    "mcp==2.3.0",
+]
 tensorrt = [
     "pybind11>=2.11,<3.0",
 ]

@@ -24,6 +24,7 @@ from .diagnostics import (
     diagnostics_as_dict,
     run_camera_smoke_test,
 )
+from .mcp import launcher as mcp_launcher
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -159,6 +160,9 @@ def _build_parser() -> argparse.ArgumentParser:
     camera_test.add_argument("--json", action="store_true", help="emit JSON output")
     _add_camera_arguments(camera_test)
     _add_capture_backend_argument(camera_test)
+
+    mcp = subcommands.add_parser("mcp", help="serve local MCP camera tools over stdio")
+    mcp_launcher.add_arguments(mcp)
     return parser
 
 
@@ -280,6 +284,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     parser = _build_parser()
     arguments = parser.parse_args(argv)
+
+    if arguments.command == "mcp":
+        return mcp_launcher.run(
+            sensor_id=arguments.sensor_id, enable_snapshot=arguments.enable_snapshot
+        )
 
     if arguments.command == "diagnose":
         if arguments.probe_sensors and not arguments.hardware:
