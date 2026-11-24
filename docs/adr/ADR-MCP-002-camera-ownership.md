@@ -49,12 +49,11 @@ close calls share the same cleanup. Cancelling one caller releases its
 response while the host tracks the underlying task until it exits.
 Cancelling a close caller defers that cancellation until cleanup completes.
 
-Today's diagnostics are cached and nonblocking. Snapshot reads use the
-adapter's cooperative wait with its existing deadline and have no executor
-job to drain. When MCP-010 adds blocking work, its bounded execution path
-must track completion and retain capacity until the underlying worker
-finishes, including after client cancellation. MCP-011 owns the transport
-shutdown budget and invokes host cleanup after stopping dispatch.
+Diagnostics are cached and nonblocking. Snapshot reads use the adapter's
+cooperative wait with a one-second deadline and have no executor job to drain.
+The stdio transport stops SDK dispatch on disconnect and bounds a blocked
+response write to one second. It exits before the host drains its waits and
+releases owned capture. [Local transport](ADR-MCP-004-local-sdk-and-transport.md#hosting-and-lifecycle)
 
 ## Verification
 
