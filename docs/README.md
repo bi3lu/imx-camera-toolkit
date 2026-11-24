@@ -13,6 +13,7 @@ guide when choosing between CPU, GPU, MJPEG, WebRTC, and HLS paths.
 | [MCP tool contracts](mcp/README.md) | Adapter and transport developers | Implement the camera tools against shared schemas and fixtures. |
 | [MCP threat model and access policy](adr/ADR-MCP-003-threat-model-and-access-policy.md) | Maintainers and integrators | Review local and remote trust boundaries, tool scopes, and security acceptance tests. |
 | [Local MCP SDK and transport ADR](adr/ADR-MCP-004-local-sdk-and-transport.md) | Maintainers and client integrators | Reproduce the versioned stdio profile, protocol errors, snapshot exchange and shutdown behavior. |
+| [Bounded MCP JPEG snapshots](adr/ADR-MCP-006-bounded-jpeg-snapshots.md) | Maintainers and integrators | Review fixed preview sources, acquisition timing, and snapshot verification. |
 
 Component-specific details remain next to their implementations:
 

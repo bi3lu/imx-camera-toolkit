@@ -90,6 +90,11 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   the configured CPU or GPU path and reaches `ready` after that run's first
   raw frame, including with JPEG preview disabled. Check the stopped state
   and confirm a restart requires a new publication.
+- On the physical Jetson before v0.9.0, decode a CPU MCP snapshot and confirm
+  the acquisition age, fixed-source constraints and matching metadata. Verify
+  that GPU HTTP preview still delivers JPEGs and built-in GPU MCP snapshots
+  return `timing_unavailable` until correlation is established.
+  [ADR-MCP-006](adr/ADR-MCP-006-bounded-jpeg-snapshots.md#verification)
 - Before releasing inference tools, verify separate inference grants and the
   response, provenance and payload tests from ADR-MCP-003.
 - Before enabling the remote profile, record MCP-027 review and passing

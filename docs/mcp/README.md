@@ -117,7 +117,7 @@ An explicit input above an effective limit fails with `invalid_argument`.
 Width and height are upper bounds. An explicit quality requests the exact
 setting on the encoder's 1–95 scale. If a fixed source cannot satisfy the
 request, including when its quality is unknown and an exact quality was
-requested, return `snapshot_unavailable` with reason
+requested or its known encoder setting lies outside the effective bounds, return `snapshot_unavailable` with reason
 `constraints_unsupported`. Use a configured bounded preview transform if
 available. Keep processing outside capture, reuse detached JPEG bytes, and
 keep the response in memory. The image must have no EXIF metadata. An image
@@ -129,9 +129,11 @@ raw capture and inference sequences. The age is sampled after any wait and
 transform, just before returning the result. It is elapsed time from the
 frame's acquisition in the same server monotonic clock domain. Accept age
 equal to the limit. Preserve or correlate the acquisition timestamp with
-that exact JPEG. A source with only publication timing returns
-`snapshot_unavailable` with reason `timing_unavailable`. GPU capture timing
-correlation is to be verified in MCP-006.
+that exact JPEG. The CPU adapter uses the time the backend returned the
+frame being encoded. A source without verified acquisition timing returns
+`snapshot_unavailable` with reason `timing_unavailable`. This includes the
+built-in GPU preview branch, which supplies detached JPEGs from a separate
+appsink. [Snapshot source ADR](../adr/ADR-MCP-006-bounded-jpeg-snapshots.md)
 
 Freshness and waiting are independent. With `wait_ms: 0`, an empty slot
 yields `snapshot_unavailable` with reason `no_frame`, and an old frame
@@ -139,7 +141,10 @@ yields `snapshot_stale`. A positive wait can use a fresh existing image or
 wait for a qualifying publication within the effective deadline. Expiry of
 that wait yields `request_timeout`. Source lifecycle failure and known
 configuration or format failures can end the call earlier. Reject malformed
-source JPEG data as a sanitized `internal_error`.
+source JPEG data as a sanitized `internal_error`. The fixed-source adapter
+checks JPEG structure, dimensions, and EXIF absence. It estimates the wire
+budget from base64 size and both metadata copies with room for framing. The
+transport must enforce the final serialized size.
 
 ## Errors and MCP representation
 
