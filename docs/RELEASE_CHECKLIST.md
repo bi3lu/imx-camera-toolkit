@@ -92,6 +92,9 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   behavior in [ADR-MCP-003](adr/ADR-MCP-003-threat-model-and-access-policy.md).
   Record protocol tests for observer defaults, explicit snapshot opt-in,
   direct-call denials, disabled tools and the selected local transport boundary.
+  Confirm the local rate and concurrency limits, slot release after
+  cancellation or deadline, and the inclusive UTF-8 response limit.
+  [Camera tool protocol tests](../tests/integration/test_mcp_camera_tools.py)
 - Before v0.9.0, verify that the packaged tools return the documented domain
   errors for invalid arguments, exhausted tool budgets, expired deadlines and
   unexpected failures. Verify that diagnostics stay private and malformed

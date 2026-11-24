@@ -5,7 +5,7 @@ sections record extension points for later releases.
 
 ## Contract and compatibility
 
-[JSON Schema 2020-12 definitions](tool-contracts.schema.json) specify the
+[JSON Schema 2020-12 definitions](../../imx_camera_toolkit/_internal/mcp/tool-contracts.schema.json) specify the
 logical objects. [Fixtures](tool-contracts.examples.json) provide tool
 arguments and expected outcomes. Each fixture gives the names of the schema
 definitions to validate, the input validity, and the expected outcome kind.
@@ -168,9 +168,10 @@ propagates through the cooperative wait so the host can drain the operation.
 The absolute request deadline comes from the host's monotonic clock. An
 invalid server-supplied deadline yields `internal_error`. Reject malformed
 source JPEG data as a sanitized `internal_error`. The fixed-source adapter
-checks JPEG structure, dimensions, and EXIF absence. It estimates the wire
-budget from base64 size and both metadata copies with room for framing. The
-transport must enforce the final serialized size.
+checks JPEG structure, dimensions, EXIF absence, and raw byte size. The SDK
+server checks the UTF-8 size of the complete success response, including both
+metadata copies, base64, the request ID, and SDK protocol metadata. The
+newline used by stdio to frame the JSON-RPC response is outside this budget.
 
 ## Errors and MCP representation
 
@@ -235,6 +236,34 @@ On all three runs the JPEG bytes matched the fixture and the structured
 metadata matched the JSON text. The supported local profile uses the
 `2026-07-28` revision. Independent client UI verification is tracked
 separately. The probes used synthetic data.
+
+## Local tool registration
+
+The internal SDK 2.3.0 server factory binds an application-supplied `MCPHost`.
+The default tool set exposes `camera_status` and `camera_capabilities` with
+`mcp:camera:status`. A launcher must both enable `camera_snapshot` and grant
+`mcp:snapshot:read` for it to appear in discovery and return images. The tool
+set and grants are fixed for the lifetime of the server. The application
+enters and closes the host around its transport.
+
+Authorized and valid calls share a token bucket that starts with eight
+tokens and refills at 30 calls per second. Two snapshot reads can be active
+per host. A third read receives `rate_limited` immediately. A snapshot has a
+one-second absolute deadline, which also bounds any positive `wait_ms`.
+On timeout or disconnect the host requests cancellation and keeps the
+slot occupied until the snapshot task exits. Preview polling is cooperative
+and cached diagnostics and size-bounded JPEG serialization run inline.
+
+Run the [camera tool protocol tests](../../tests/integration/test_mcp_camera_tools.py)
+on a workstation with the pinned SDK and pytest installed:
+
+```bash
+python -m pytest tests/integration/test_mcp_camera_tools.py -q
+```
+
+These tests use a synthetic camera and an SDK subprocess. They exercise
+observer defaults, disabled and unknown names, missing grants, successful
+calls, argument validation, rate limits, and the exact UTF-8 response ceiling.
 
 ## Future inference and controls
 
