@@ -90,6 +90,10 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   the configured CPU or GPU path and reaches `ready` after that run's first
   raw frame, including with JPEG preview disabled. Check the stopped state
   and confirm a restart requires a new publication.
+- On the physical Jetson before v0.9.0, overlap two calls in one packaged
+  host and record one Argus session and one standalone shutdown. Verify a
+  borrowed camera continues publishing after host shutdown.
+  [Camera ownership smoke checks](adr/ADR-MCP-002-camera-ownership.md#verification)
 - On the physical Jetson before v0.9.0, decode a CPU MCP snapshot and confirm
   the acquisition age, fixed-source constraints and matching metadata. Verify
   that GPU HTTP preview still delivers JPEGs and built-in GPU MCP snapshots

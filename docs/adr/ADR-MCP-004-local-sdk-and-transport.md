@@ -41,7 +41,8 @@ camera. For borrowed sources, the MCP host only closes its own resources.
 Relaunch starts a fresh process and rediscovers tools. An application with a
 physical sensor gives that sensor one owner. Starting a second subprocess
 against the same sensor is outside this profile; multiple in-flight calls on
-a single host share its sources. MCP-007 owns the injected lifecycle contract.
+a single host share its sources.
+[Injected lifecycle contract](ADR-MCP-002-camera-ownership.md)
 
 Keep stdout exclusively for UTF-8 JSON-RPC messages, one per line. Route
 operational logs and native library output to stderr, including at capture
