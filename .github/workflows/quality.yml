@@ -63,6 +63,12 @@ jobs:
           --cov=imx_camera_toolkit/_internal
           --cov-report=term-missing
           --cov-fail-under=70
+      - name: Exercise the optional MCP runtime
+        run: |
+          uv sync --extra preview --extra mcp --group dev --frozen
+          uv run --no-sync python -c "import mcp, mcp_types"
+          uv run --no-sync pytest \
+            tests/integration/test_mcp_stdio.py tests/integration/test_mcp_camera_tools.py
 
   package:
     name: Build distribution
@@ -99,6 +105,7 @@ jobs:
               raise SystemExit("wheel does not contain imx_camera_toolkit")
 
           required = {
+              "imx_camera_toolkit/_internal/mcp/tool-contracts.schema.json",
               "imx_camera_toolkit/py.typed",
               "native/CMakeLists.txt",
               "view/advanced.html",
@@ -132,13 +139,17 @@ jobs:
           "$consumer_dir/venv/bin/python" -I - <<'PY'
           import sys
           from importlib.metadata import version
+          from importlib.util import find_spec
           from pathlib import Path
           import imx_camera_toolkit
 
           package = Path(imx_camera_toolkit.__file__).resolve()
           assert package.is_relative_to(Path(sys.prefix).resolve()), package
           assert imx_camera_toolkit.__version__ == version("imx-camera-toolkit")
+          for module in ("mcp", "mcp_types", "fastapi", "starlette"):
+              assert find_spec(module) is None, module
           PY
+          "$consumer_dir/venv/bin/imx-camera" mcp --help
           "$consumer_dir/venv/bin/python" -I -m mypy \
             --strict --config-file mypy.ini consumer_test.py
       - name: Export CycloneDX SBOM

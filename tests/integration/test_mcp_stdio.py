@@ -16,6 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from imx_camera_toolkit import CameraConfig, CameraOpenError, CameraStats
+from imx_camera_toolkit._internal import cli
 from imx_camera_toolkit._internal.camera.publishing.jpeg_slot import JPEGPreview
 from imx_camera_toolkit._internal.mcp import launcher
 
@@ -76,10 +77,10 @@ def _launch(profile: str) -> int:
 
     atexit.register(os.write, 1, b"process exited\n")
     with patch.object(launcher, "Camera", camera):
-        args = ["--sensor-id", "2"]
+        args = ["mcp", "--sensor-id", "2"]
         if profile == "snapshot":
             args.append("--enable-snapshot")
-        return launcher.main(args)
+        return cli.main(args)
 
 
 @asynccontextmanager

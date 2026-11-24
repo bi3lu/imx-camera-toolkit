@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from typing import cast
 
@@ -12,8 +13,62 @@ from imx_camera_toolkit._internal import cli
 from imx_camera_toolkit._internal.benchmarks import CameraBenchmarkResult
 from imx_camera_toolkit._internal.camera.config import CameraConfig
 from imx_camera_toolkit._internal.cli import main
+from imx_camera_toolkit._internal.mcp import launcher
 
 preview_module = importlib.import_module("imx_camera_toolkit.preview")
+
+
+def test_cli_mcp_help_and_invalid_sensor_precede_runtime(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Help and argument errors must work before the SDK is inspected."""
+
+    def unexpected(package: str) -> str:
+        """Reject runtime discovery during argument handling."""
+        pytest.fail(f"unexpected SDK lookup for {package}")
+
+    monkeypatch.setattr(launcher, "version", unexpected)
+    with pytest.raises(SystemExit) as help_exit:
+        main(("mcp", "--help"))
+    assert help_exit.value.code == 0
+    assert "--enable-snapshot" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit) as invalid_exit:
+        main(("mcp", "--sensor-id", "-1"))
+    assert invalid_exit.value.code == 2
+    assert "sensor ID must be greater than or equal to zero" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("sdk", "types"),
+    [(None, None), ("1.30.0", None), ("2.3.0", "2.2.0")],
+)
+def test_cli_mcp_runtime_error_precedes_capture(
+    sdk: str | None,
+    types: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An absent or incompatible SDK must fail on stderr before camera creation."""
+
+    def version(package: str) -> str:
+        """Report the requested installed distribution version."""
+        installed = {"mcp": sdk, "mcp-types": types}[package]
+        if installed is None:
+            raise PackageNotFoundError(package)
+        return installed
+
+    def camera(config: CameraConfig) -> None:
+        """Reject any attempt to construct a camera."""
+        pytest.fail(f"unexpected camera configuration {config}")
+
+    monkeypatch.setattr(launcher, "version", version)
+    monkeypatch.setattr(launcher, "Camera", camera)
+    assert main(("mcp",)) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "MCP SDK 2.3.0" in captured.err
+    assert '"imx-camera-toolkit[mcp]"' in captured.err
 
 
 def test_cli_runs_capture_benchmark_as_json(
