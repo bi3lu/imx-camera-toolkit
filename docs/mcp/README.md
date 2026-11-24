@@ -21,6 +21,11 @@ registered camera. Explicit arguments must form an object. Unknown keys,
 explicit nulls, and coercion from booleans or strings are invalid. An omitted
 arguments object is equivalent to `{}`. Schema defaults document what the
 server applies. All numeric values must be finite JSON numbers.
+The SDK-independent adapters validate decoded arguments before sampling the
+camera, capability provider, or preview source. Snapshot arguments use the
+effective server limits, which are validated when the adapter is constructed.
+Integer arguments must be decoded as integers, so a JSON value such as
+`1.0` is rejected even if an offline JSON Schema validator accepts it.
 
 Successful metadata and domain errors carry integer `schema_version: 1`,
 independent of the toolkit version and MCP protocol revision. Nullable
@@ -146,7 +151,10 @@ yields `snapshot_unavailable` with reason `no_frame`, and an old frame
 yields `snapshot_stale`. A positive wait can use a fresh existing image or
 wait for a qualifying publication within the effective deadline. Expiry of
 that wait yields `request_timeout`. Source lifecycle failure and known
-configuration or format failures can end the call earlier. Reject malformed
+configuration or format failures can end the call earlier. Cancellation
+propagates through the cooperative wait so the host can drain the operation.
+The absolute request deadline comes from the host's monotonic clock. An
+invalid server-supplied deadline yields `internal_error`. Reject malformed
 source JPEG data as a sanitized `internal_error`. The fixed-source adapter
 checks JPEG structure, dimensions, and EXIF absence. It estimates the wire
 budget from base64 size and both metadata copies with room for framing. The
@@ -179,6 +187,10 @@ The canonical codes for missing preview and inference data are
 `snapshot_unavailable` and `no_inference_result`. Stale errors include the
 observed `age_ms` and the applied `max_age_ms`. Keep credentials, paths, raw
 exceptions, private configuration and image bytes out of error messages.
+The domain layer uses fixed messages and validates detail values before
+serialization. It retains original exception causes for internal diagnostics.
+A typed camera timeout maps to `request_timeout`. An unclassified exception,
+including an unexpected timeout from application code, maps to `internal_error`.
 
 For successful tools, return the logical object in `structuredContent` and
 its serialized JSON in a text block for consumers that only read `content`.
@@ -191,10 +203,14 @@ metadata from the JSON text block.
 
 Return tool failures as completed MCP results with `isError: true` and one
 text block containing the error JSON. Clients read the error block before
-applying a success schema. Reserve JSON-RPC errors for malformed protocol
-requests, method or tool lookup, and protocol-level server failures. An HTTP
-auth or transport rejection before tool execution uses the applicable
-transport response. The scope and discovery policy is in
+applying a success schema. The transport handles malformed protocol requests,
+method or tool lookup, and protocol-level server failures as JSON-RPC errors.
+Disabled and unknown tool names share the same lookup error. An HTTP auth or
+transport rejection before tool execution uses the applicable transport
+response. Local calls reaching an enabled tool with insufficient scope get
+`permission_denied`. Once authorized, validate the domain arguments before
+allocating work capacity. An exhausted tool budget yields `rate_limited`.
+The scope and discovery policy is in
 [ADR-MCP-003](../adr/ADR-MCP-003-threat-model-and-access-policy.md).
 [MCP 2026-07-28 tool specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) ·
 [MCP 2025-11-25 tool specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
