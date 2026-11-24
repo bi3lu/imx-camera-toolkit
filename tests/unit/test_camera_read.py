@@ -127,7 +127,7 @@ def test_latest_frame_returns_the_current_raw_frame_without_waiting() -> None:
 def test_latest_jpeg_returns_the_current_preview_payload() -> None:
     """Latest JPEG access must expose preview data independently from raw frames."""
     camera = Camera(enable_preview=True)
-    camera._publisher._jpeg = b"preview"
+    camera._publisher._store(b"preview")
 
     assert camera.latest_jpeg() == b"preview"
 

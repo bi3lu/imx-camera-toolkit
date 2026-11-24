@@ -410,6 +410,14 @@ processed frame buffer may be used when it implements
 
 ## JPEG preview API
 
+CPU and GPU preview publishers retain a single detached JPEG with its
+publication sequence. The CPU publisher also records the acquisition
+timestamp for that encoded frame. The bounded MCP adapter uses this
+provenance to enforce freshness. The GPU preview appsink has no verified
+acquisition correlation, so its existing JPEG interface remains available
+to HTTP consumers. See the
+[bounded snapshot ADR](../../../docs/adr/ADR-MCP-006-bounded-jpeg-snapshots.md).
+
 ```python
 from imx_camera_toolkit import Camera, CameraConfig
 
