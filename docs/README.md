@@ -11,6 +11,7 @@ guide when choosing between CPU, GPU, MJPEG, WebRTC, and HLS paths.
 | [CPU/GPU release checklist](RELEASE_CHECKLIST.md) | Maintainers | Run host, Jetson, packaging, security, and release gates. |
 | [MCP Python SDK runtime ADR](adr/ADR-MCP-001-python-sdk-runtime.md) | Maintainers | Reproduce the SDK comparison and validate the proposed runtime on Jetson. |
 | [MCP tool contracts](mcp/README.md) | Adapter and transport developers | Implement the camera tools against shared schemas and fixtures. |
+| [Local MCP installation and launch](mcp/README.md#local-stdio-launch) | Client integrators | Install the optional runtime and configure the local stdio command. |
 | [MCP camera ownership ADR](adr/ADR-MCP-002-camera-ownership.md) | Application and transport developers | Bind one primary camera and coordinate host readiness, cancellation, and shutdown. |
 | [MCP threat model and access policy](adr/ADR-MCP-003-threat-model-and-access-policy.md) | Maintainers and integrators | Review local and remote trust boundaries, tool scopes, and security acceptance tests. |
 | [Local MCP SDK and transport ADR](adr/ADR-MCP-004-local-sdk-and-transport.md) | Maintainers and client integrators | Reproduce the versioned stdio profile, protocol errors, snapshot exchange and shutdown behavior. |

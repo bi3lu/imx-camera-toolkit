@@ -16,8 +16,8 @@
 The SDK v2 API supports discovery, per-request metadata, explicit tool results
 and stdio cancellation using the selected interpreter range. The exact pin
 bounds the tested SDK API, types and wire behavior. The lockfile bounds the
-resolver output for transitive dependencies on supported targets. MCP-012 adds
-the optional dependency and tests built artifacts and SDK-free core imports.
+resolver output for transitive dependencies on supported targets. The toolkit
+ships this runtime in its optional `mcp` extra.
 SDK 1.30.0 remains the spike's maintenance-line comparison. Before changing
 the pin, review upstream release notes, support policy, dependencies and
 advisories. Regenerate the relevant locks and rerun the SDK-free core checks,
@@ -31,9 +31,9 @@ support claim.
 
 ## Hosting and lifecycle
 
-The launch target is an application entry point. MCP-011 supplies a
-standalone CPU camera module and an internal application-owned stdio
-entry. MCP-012 covers packaging. The client owns the child process and
+The launch target is an application entry point. The installed
+`imx-camera mcp` command owns one CPU camera. Application-owned capture uses
+the internal stdio entry. The client owns the child process and
 closes its stdin to request graceful shutdown. The
 application validates configuration and grants before opening capture, then
 starts its sources before serving requests. Shutdown stops dispatch and

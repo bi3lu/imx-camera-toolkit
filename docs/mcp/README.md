@@ -267,20 +267,39 @@ calls, argument validation, rate limits, and the exact UTF-8 response ceiling.
 
 ## Local stdio launch
 
-Configure the trusted client to launch an absolute path to a Python
-interpreter that has the toolkit and MCP SDK 2.3.0 installed. On Jetson
-with the capture runtime available, launch the module with private stdin
-and stdout pipes and a separate stderr stream.
+The `mcp` extra installs MCP SDK 2.3.0 and its matching types package
+on Python 3.10–3.12. For the v0.9.0 release, install from the built wheel
+or source distribution. On Jetson, create the environment with the
+JetPack system interpreter so capture can use the system packages:
 
-```text
-/absolute/path/to/python -m imx_camera_toolkit._internal.mcp.launcher --sensor-id 0
+```bash
+uv venv --python /usr/bin/python3 --system-site-packages .venv
+uv pip install --python .venv/bin/python './dist/<toolkit-wheel>.whl[mcp]'
 ```
 
-The standalone module owns one CPU camera and exposes status and
+For a checkout on a POSIX workstation, install the locked test environment
+and inspect the command's options:
+
+```bash
+uv sync --frozen --extra preview --extra mcp --group dev
+uv run --frozen --extra preview --extra mcp --group dev imx-camera mcp --help
+```
+
+Configure the trusted client to launch the installed executable by absolute
+path, with private stdin and stdout pipes and a separate stderr stream.
+Use the environment that also has access to the Jetson capture runtime.
+
+```text
+/absolute/path/to/.venv/bin/imx-camera mcp --sensor-id 0
+```
+
+The standalone command owns one CPU camera and exposes status and
 capabilities by default. Add `--enable-snapshot` to start its fixed JPEG
 preview and enable and grant the snapshot tool. Capture starts before the
 server accepts requests. Close the write end of the child's stdin pipe
-to shut down, then launch a new subprocess to reconnect.
+to shut down, then launch a new subprocess to reconnect. The base
+installation provides CLI help. A valid launch with a missing or incompatible
+SDK reports the extra to install on stderr before accessing capture.
 
 An application already managing capture can call the internal async
 `serve_camera_stdio(host)` entry from its subprocess lifespan with a
@@ -294,7 +313,8 @@ Run the transport and camera tool tests on a POSIX workstation with the
 pinned SDK and pytest installed.
 
 ```bash
-python -m pytest -o addopts='' tests/integration/test_mcp_stdio.py tests/integration/test_mcp_camera_tools.py
+uv run --frozen --extra preview --extra mcp --group dev pytest \
+  tests/integration/test_mcp_stdio.py tests/integration/test_mcp_camera_tools.py
 ```
 
 The subprocess tests use synthetic capture to exercise ownership,

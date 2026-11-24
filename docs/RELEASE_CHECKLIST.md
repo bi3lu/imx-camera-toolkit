@@ -91,6 +91,11 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   input limit and eight outstanding request limit, and shutdown with a
   blocked output pipe. Record the independent client outcome.
   [Stdio transport tests](../tests/integration/test_mcp_stdio.py)
+- Verify the wheel and source distribution in clean Python 3.10–3.12
+  environments. With the base install, check core imports, MCP help and the
+  missing-runtime message. With the `mcp` extra, check SDK and types versions,
+  invalid launch arguments and a synthetic stdio exchange through the CLI.
+  [Local installation and launch](mcp/README.md#local-stdio-launch)
 - Before v0.9.0, verify tool registration against the scope names and admin
   behavior in [ADR-MCP-003](adr/ADR-MCP-003-threat-model-and-access-policy.md).
   Record protocol tests for observer defaults, explicit snapshot opt-in,
