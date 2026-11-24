@@ -23,8 +23,11 @@ from mcp_types import (
     Tool,
 )
 
-CONTRACTS = Path(__file__).resolve().parents[2] / "docs" / "mcp"
-SCHEMA = json.loads((CONTRACTS / "tool-contracts.schema.json").read_text())
+ROOT = Path(__file__).resolve().parents[2]
+CONTRACTS = ROOT / "docs" / "mcp"
+SCHEMA = json.loads(
+    (ROOT / "imx_camera_toolkit/_internal/mcp/tool-contracts.schema.json").read_text()
+)
 EXAMPLES = json.loads((CONTRACTS / "tool-contracts.examples.json").read_text())
 CASES = {case["name"]: case for case in EXAMPLES["cases"]}
 NAME = "imx-mcp-profile-probe"

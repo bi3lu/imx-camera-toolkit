@@ -35,7 +35,8 @@ def test_catalog_matches_contract() -> None:
         (MCPError("stale_inference_result", age_ms=11.2, max_age_ms=10), True),
     ]
     schema_path = (
-        Path(__file__).resolve().parents[2] / "docs/mcp/tool-contracts.schema.json"
+        Path(__file__).resolve().parents[2]
+        / "imx_camera_toolkit/_internal/mcp/tool-contracts.schema.json"
     )
     code_enum = json.loads(schema_path.read_text(encoding="utf-8"))["$defs"][
         "DomainError"

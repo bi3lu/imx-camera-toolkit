@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Protocol
 
 from .camera_adapter import CameraReadAdapter
-from .contracts import CameraCapabilities, CameraSnapshot, CameraStatus
+from .contracts import CameraCapabilities, CameraSnapshot, CameraStatus, SnapshotLimits
 from .errors import MCPError
 from .snapshot_adapter import CameraSnapshotAdapter
-from .validation import EMPTY_ARGUMENTS
+from .validation import EMPTY_ARGUMENTS, parse_snapshot_input
+
+_MAX_ACTIVE_SNAPSHOTS = 2
 
 
 class CaptureLifecycle(Protocol):
@@ -31,7 +34,7 @@ class MCPHost:
     adapters for its primary camera. The host owns snapshot wait tasks and,
     only when explicitly supplied, the standalone application camera.
     Diagnostics must use nonblocking cached reads. Callers enforce tool
-    authorization and request limits before dispatch.
+    authorization and request rate limits before dispatch.
     """
 
     def __init__(
@@ -109,6 +112,11 @@ class MCPHost:
             arguments, snapshot_adapter=self._snapshot_adapter
         )
 
+    @property
+    def snapshot_limits(self) -> SnapshotLimits:
+        """Return the effective limits without sampling the preview source."""
+        return self._snapshot_adapter.limits
+
     async def snapshot(
         self,
         arguments: object = EMPTY_ARGUMENTS,
@@ -126,6 +134,17 @@ class MCPHost:
             asyncio.CancelledError: If the client or host cancels the read.
         """
         self._require_running()
+        parse_snapshot_input(arguments, self.snapshot_limits)
+        timeout = None
+        if deadline_ns is not None:
+            if type(deadline_ns) is not int or deadline_ns < 0:
+                raise MCPError("internal_error")
+            timeout = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+            if timeout <= 0:
+                raise MCPError("request_timeout")
+        if len(self._snapshots) >= _MAX_ACTIVE_SNAPSHOTS:
+            raise MCPError("rate_limited")
+
         task = asyncio.create_task(
             self._snapshot_adapter.snapshot(arguments, deadline_ns=deadline_ns)
         )
@@ -133,6 +152,13 @@ class MCPHost:
         task.add_done_callback(self._forget_snapshot)
 
         try:
+            if deadline_ns is not None:
+                done, _ = await asyncio.wait((task,), timeout=timeout)
+                if not done or time.monotonic_ns() >= deadline_ns:
+                    self._cancel_snapshot(task)
+                    raise MCPError("request_timeout")
+                return task.result()
+
             return await asyncio.shield(task)
 
         except asyncio.CancelledError:

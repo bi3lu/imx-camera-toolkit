@@ -214,8 +214,8 @@ def test_fixed_source_rejects_explicit_quality(source: Preview) -> None:
     assert source.reads == 1
 
 
-def test_exact_byte_budgets(source: Preview, clock: Mock, photo: bytes) -> None:
-    """Enforce both independently inclusive limits with actual base64 expansion."""
+def test_exact_jpeg_byte_budget(source: Preview, clock: Mock, photo: bytes) -> None:
+    """Accept the exact raw JPEG ceiling and reject a byte over it."""
     del clock
     publication = source.current.publication
     assert publication is not None
@@ -233,17 +233,10 @@ def test_exact_byte_budgets(source: Preview, clock: Mock, photo: bytes) -> None:
     )
     result = asyncio.run(CameraSnapshotAdapter(source).snapshot())
     assert result.metadata.jpeg_bytes == 524_288
-    wire = snapshot_adapter._estimated_wire_bytes(result.metadata)
-    for limits in (
-        replace(HARD_SNAPSHOT_LIMITS, max_jpeg_bytes=len(data) - 1),
-        replace(HARD_SNAPSHOT_LIMITS, max_response_bytes=wire - 1),
-    ):
-        with pytest.raises(MCPError) as caught:
-            asyncio.run(CameraSnapshotAdapter(source, limits=limits).snapshot())
-        assert caught.value.code == "payload_too_large"
-
-    exact = replace(HARD_SNAPSHOT_LIMITS, max_response_bytes=wire)
-    assert asyncio.run(CameraSnapshotAdapter(source, limits=exact).snapshot()) == result
+    limits = replace(HARD_SNAPSHOT_LIMITS, max_jpeg_bytes=len(data) - 1)
+    with pytest.raises(MCPError) as caught:
+        asyncio.run(CameraSnapshotAdapter(source, limits=limits).snapshot())
+    assert caught.value.code == "payload_too_large"
 
 
 @pytest.mark.parametrize(

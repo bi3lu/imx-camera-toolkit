@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-from dataclasses import asdict
 from typing import Protocol
 
 from ..camera.publishing.jpeg_slot import JPEGPreview, JPEGPublication
@@ -28,7 +26,6 @@ from .validation import (
 
 _NS_PER_MS = 1_000_000
 _POLL_NS = 10 * _NS_PER_MS
-_WIRE_RESERVE_BYTES = 1024
 
 
 class SnapshotSource(Protocol):
@@ -74,27 +71,6 @@ def _read_publication(
     ):
         raise ValueError("JPEG publication does not match the fixed source")
     return publication
-
-
-def _estimated_wire_bytes(metadata: SnapshotMetadata) -> int:
-    """Estimate UTF-8 JSON-RPC size using base64 expansion and a framing reserve."""
-    structured = asdict(metadata)
-    envelope = {
-        "jsonrpc": "2.0",
-        "id": MAX_SAFE_INTEGER,
-        "result": {
-            "content": [
-                {"type": "text", "text": json.dumps(structured)},
-                {"type": "image", "mimeType": "image/jpeg", "data": ""},
-            ],
-            "isError": False,
-            "structuredContent": structured,
-        },
-    }
-    encoded_bytes = 4 * ((metadata.jpeg_bytes + 2) // 3)
-    return (
-        len(json.dumps(envelope).encode("utf-8")) + encoded_bytes + _WIRE_RESERVE_BYTES
-    )
 
 
 class CameraSnapshotAdapter:
@@ -232,8 +208,6 @@ class CameraSnapshotAdapter:
             publication.sequence,
             age_ns / _NS_PER_MS,
         )
-        if _estimated_wire_bytes(metadata) > self.limits.max_response_bytes:
-            raise MCPError("payload_too_large")
         self._check_deadline(expires_ns)
         return CameraSnapshot(metadata, publication.data)
 
