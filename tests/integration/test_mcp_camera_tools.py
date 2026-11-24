@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -24,6 +25,8 @@ from imx_camera_toolkit._internal.mcp.snapshot_adapter import CameraSnapshotAdap
 
 if TYPE_CHECKING:
     from mcp_types import CallToolResult
+
+pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX pipes")
 
 _ROOT = Path(__file__).resolve().parents[2]
 _PHOTO = _ROOT / "examples/mcp_runtime_spike/synthetic.jpg"
@@ -65,9 +68,8 @@ async def _serve(profile: str) -> None:
     from time import monotonic_ns
     from types import SimpleNamespace
 
-    from mcp.server.stdio import stdio_server
-
     from imx_camera_toolkit._internal.mcp import sdk_server, snapshot_adapter
+    from imx_camera_toolkit._internal.mcp.stdio import serve_camera_stdio
 
     # Keep the test JPEG age independent of process and pipe timing.
     clock = monotonic_ns()
@@ -90,15 +92,9 @@ async def _serve(profile: str) -> None:
                 sdk_server, "time", SimpleNamespace(monotonic_ns=lambda: clock)
             )
         if profile == "default":
-            server = sdk_server.create_camera_server(host)
+            await serve_camera_stdio(host)
         else:
-            server = sdk_server.create_camera_server(
-                host, enabled_tools=_TOOLS, grants=grants
-            )
-        async with host, stdio_server() as (read_stream, write_stream):
-            await server.run(
-                read_stream, write_stream, server.create_initialization_options()
-            )
+            await serve_camera_stdio(host, enabled_tools=_TOOLS, grants=grants)
     if profile in {"default", "observer", "denied"}:
         assert camera.reads == 0
     if profile == "rate":

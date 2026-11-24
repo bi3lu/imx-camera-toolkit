@@ -265,6 +265,43 @@ These tests use a synthetic camera and an SDK subprocess. They exercise
 observer defaults, disabled and unknown names, missing grants, successful
 calls, argument validation, rate limits, and the exact UTF-8 response ceiling.
 
+## Local stdio launch
+
+Configure the trusted client to launch an absolute path to a Python
+interpreter that has the toolkit and MCP SDK 2.3.0 installed. On Jetson
+with the capture runtime available, launch the module with private stdin
+and stdout pipes and a separate stderr stream.
+
+```text
+/absolute/path/to/python -m imx_camera_toolkit._internal.mcp.launcher --sensor-id 0
+```
+
+The standalone module owns one CPU camera and exposes status and
+capabilities by default. Add `--enable-snapshot` to start its fixed JPEG
+preview and enable and grant the snapshot tool. Capture starts before the
+server accepts requests. Close the write end of the child's stdin pipe
+to shut down, then launch a new subprocess to reconnect.
+
+An application already managing capture can call the internal async
+`serve_camera_stdio(host)` entry from its subprocess lifespan with a
+borrowed host. Start capture before serving and close it from the parent
+lifespan after serving returns. The entry claims the process's standard
+descriptors once. Ordinary stdin reads return EOF and ordinary stdout
+writes go to stderr through process exit. The [transport ADR](../adr/ADR-MCP-004-local-sdk-and-transport.md#hosting-and-lifecycle)
+details the pipe and shutdown limits.
+
+Run the transport and camera tool tests on a POSIX workstation with the
+pinned SDK and pytest installed.
+
+```bash
+python -m pytest -o addopts='' tests/integration/test_mcp_stdio.py tests/integration/test_mcp_camera_tools.py
+```
+
+The subprocess tests use synthetic capture to exercise ownership,
+partial startup failure, protocol-clean stdout, cancellation, disconnect
+and relaunch, and bounded input and output. The physical camera checks
+remain in the [release checklist](../RELEASE_CHECKLIST.md#mcp-release-gates).
+
 ## Future inference and controls
 
 `InferenceLatest` defines a draft envelope for the latest result published

@@ -87,7 +87,10 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   [ADR-MCP-004](adr/ADR-MCP-004-local-sdk-and-transport.md#workstation-interoperability-evidence)
   against the packaged host. Record supported client and protocol versions,
   JPEG decoding and metadata, unsupported revision handling, cancellation,
-  clean stdout, EOF and relaunch. Record the independent client outcome.
+  clean stdout, EOF and relaunch. Verify partial startup cleanup, the 64 KiB
+  input limit and eight outstanding request limit, and shutdown with a
+  blocked output pipe. Record the independent client outcome.
+  [Stdio transport tests](../tests/integration/test_mcp_stdio.py)
 - Before v0.9.0, verify tool registration against the scope names and admin
   behavior in [ADR-MCP-003](adr/ADR-MCP-003-threat-model-and-access-policy.md).
   Record protocol tests for observer defaults, explicit snapshot opt-in,

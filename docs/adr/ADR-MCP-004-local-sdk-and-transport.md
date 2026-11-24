@@ -31,9 +31,10 @@ support claim.
 
 ## Hosting and lifecycle
 
-The launch target is an application entry point. Its concrete invocation is
-implemented in MCP-011/MCP-012 and documented in MCP-015. The client owns the
-child process and closes its stdin to request graceful shutdown. The
+The launch target is an application entry point. MCP-011 supplies a
+standalone CPU camera module and an internal application-owned stdio
+entry. MCP-012 covers packaging. The client owns the child process and
+closes its stdin to request graceful shutdown. The
 application validates configuration and grants before opening capture, then
 starts its sources before serving requests. Shutdown stops dispatch and
 releases MCP waits before the application closes its owned producers and
@@ -44,13 +45,18 @@ against the same sensor is outside this profile; multiple in-flight calls on
 a single host share its sources.
 [Injected lifecycle contract](ADR-MCP-002-camera-ownership.md)
 
-Keep stdout exclusively for UTF-8 JSON-RPC messages, one per line. Route
-operational logs and native library output to stderr, including at capture
-startup. An EOF or shutdown closes request work within the host's cleanup
-budget. A client cancels a cooperative wait with `notifications/cancelled`.
-Cancellation stops response delivery and releases the wait promptly. Work
-already inside a non-interruptible call retains its admission slot until it
-actually finishes. A deadline protects both the tool and shutdown paths.
+The subprocess uses private POSIX pipes and a separate stderr stream. Its
+transport reserves stdout for UTF-8 JSON-RPC, one message per line, before
+entering the host. Ordinary stdout writes go to stderr through process exit,
+including native capture diagnostics. The transport closes on EOF, a broken
+output pipe, one second of blocked response delivery, an incoming frame over
+64 KiB excluding its newline, a duplicate outstanding request ID, or a ninth
+outstanding request. An ID remains outstanding until its response is written
+or the SDK settles its cancellation. The SDK cancels in-flight dispatch on
+disconnect. The host then drains its cooperative snapshot waits before the
+camera owner closes capture. The one-second write deadline covers the
+transport only. Capture shutdown is governed by its backend.
+[Local launch and verification](../mcp/README.md#local-stdio-launch) ·
 [stdio binding](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio) ·
 [Local scopes and grants](ADR-MCP-003-threat-model-and-access-policy.md#local-profile)
 

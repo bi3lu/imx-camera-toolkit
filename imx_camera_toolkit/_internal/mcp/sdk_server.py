@@ -35,9 +35,9 @@ from .errors import MCPError, map_tool_errors
 from .host import MCPHost
 from .validation import EMPTY_ARGUMENTS, parse_snapshot_input, validate_camera_input
 
-_OBSERVER_SCOPE = "mcp:camera:status"
-_SNAPSHOT_SCOPE = "mcp:snapshot:read"
-_SNAPSHOT_TOOL = "camera_snapshot"
+OBSERVER_SCOPE = "mcp:camera:status"
+SNAPSHOT_SCOPE = "mcp:snapshot:read"
+SNAPSHOT_TOOL = "camera_snapshot"
 _REQUEST_TIMEOUT_NS = 1_000_000_000
 _CALLS_PER_SECOND = 30
 _CALL_BURST = 8
@@ -57,13 +57,13 @@ class _ToolSpec:
 
 _TOOLS = {
     "camera_status": _ToolSpec(
-        _OBSERVER_SCOPE,
+        OBSERVER_SCOPE,
         "Read the primary camera state and capture diagnostics.",
         "CameraInput",
         "CameraStatus",
     ),
     "camera_capabilities": _ToolSpec(
-        _OBSERVER_SCOPE,
+        OBSERVER_SCOPE,
         "Read cached sensor, capture, control, and JPEG capabilities.",
         "CameraInput",
         "CameraCapabilities",
@@ -75,14 +75,14 @@ _TOOLS = {
             "SnapshotCapabilities",
         ),
     ),
-    _SNAPSHOT_TOOL: _ToolSpec(
-        _SNAPSHOT_SCOPE,
+    SNAPSHOT_TOOL: _ToolSpec(
+        SNAPSHOT_SCOPE,
         "Return one fresh JPEG from the primary camera's existing preview source.",
         "SnapshotInput",
         "SnapshotMetadata",
     ),
 }
-_DEFAULT_TOOLS = frozenset({"camera_status", "camera_capabilities"})
+DEFAULT_TOOLS = frozenset({"camera_status", "camera_capabilities"})
 
 
 def _tool(name: str, spec: _ToolSpec, schemas: dict[str, Any]) -> Tool:
@@ -109,8 +109,8 @@ def _tool_error(error: MCPError) -> CallToolResult:
 def create_camera_server(
     host: MCPHost,
     *,
-    enabled_tools: Collection[str] = _DEFAULT_TOOLS,
-    grants: Collection[str] = frozenset({_OBSERVER_SCOPE}),
+    enabled_tools: Collection[str] = DEFAULT_TOOLS,
+    grants: Collection[str] = frozenset({OBSERVER_SCOPE}),
 ) -> Server[Any]:
     """Create the SDK server for an application-managed host and fixed launch grants.
 
@@ -165,7 +165,7 @@ def create_camera_server(
             with map_tool_errors():
                 if _TOOLS[name].scope not in scopes:
                     raise MCPError("permission_denied")
-                if name == _SNAPSHOT_TOOL:
+                if name == SNAPSHOT_TOOL:
                     parse_snapshot_input(arguments, limits)
                 else:
                     validate_camera_input(arguments)
@@ -183,7 +183,7 @@ def create_camera_server(
                 credit -= 1
 
                 image = None
-                if name == _SNAPSHOT_TOOL:
+                if name == SNAPSHOT_TOOL:
                     deadline_ns = now + _REQUEST_TIMEOUT_NS
                     snapshot = await host.snapshot(arguments, deadline_ns=deadline_ns)
                     size = len(snapshot.jpeg)
@@ -224,7 +224,7 @@ def create_camera_server(
         if (
             ctx.method == "tools/call"
             and ctx.params is not None
-            and ctx.params.get("name") == _SNAPSHOT_TOOL
+            and ctx.params.get("name") == SNAPSHOT_TOOL
             and ctx.request_id is not None
             and isinstance(result, dict)
             and result.get("isError") is False
