@@ -10,14 +10,19 @@ from typing import Protocol
 from imx_camera_toolkit import __version__
 
 from ..camera.camera import Camera
-from ..camera.errors import CameraError, CameraTimeoutError
 from ..camera.gpu_camera import GpuCamera
 from ..camera.models import CameraStats
-from .contracts import CameraBackend, CameraCapabilities, CameraState, CameraStatus
-from .errors import MCPError
+from .contracts import (
+    MAX_SAFE_INTEGER,
+    CameraBackend,
+    CameraCapabilities,
+    CameraState,
+    CameraStatus,
+)
+from .errors import map_tool_errors
+from .validation import EMPTY_ARGUMENTS, validate_camera_input
 
 _PUBLIC_ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
-_MAX_SAFE_INTEGER = (1 << 53) - 1
 
 
 class CameraStatsSource(Protocol):
@@ -104,13 +109,17 @@ class CameraReadAdapter:
             raise ValueError("invalid public subscriber alias")
         self._clock = clock
 
-    def status(self) -> CameraStatus:
+    def status(self, arguments: object = EMPTY_ARGUMENTS) -> CameraStatus:
         """Read one camera statistics sample and separate subscription counts.
 
+        Args:
+            arguments: Decoded tool arguments from an authorized caller.
+
         Raises:
-            MCPError: If a diagnostics source or the observation clock fails.
+            MCPError: If validation, a diagnostics source or the clock fails.
         """
-        try:
+        with map_tool_errors():
+            validate_camera_input(arguments)
             stats = self._camera.stats() if self._camera is not None else None
             observed_at = self._clock()
             if observed_at.utcoffset() is None:
@@ -125,7 +134,7 @@ class CameraReadAdapter:
                 count = subscription.dropped_frames
                 if isinstance(count, bool) or not isinstance(count, int) or count < 0:
                     raise ValueError("invalid subscriber drop count")
-                if count <= _MAX_SAFE_INTEGER:
+                if count <= MAX_SAFE_INTEGER:
                     subscriber_drops[alias] = count
 
             return CameraStatus(
@@ -136,37 +145,30 @@ class CameraReadAdapter:
                 capture_fps=stats.capture_fps,
                 capture_dropped_frames=(
                     stats.dropped_frames
-                    if stats.dropped_frames <= _MAX_SAFE_INTEGER
+                    if stats.dropped_frames <= MAX_SAFE_INTEGER
                     else None
                 ),
                 subscriber_dropped_frames=subscriber_drops,
             )
-        except CameraTimeoutError as error:
-            raise MCPError("request_timeout") from error
-        except CameraError as error:
-            raise MCPError("camera_unavailable") from error
-        except Exception as error:
-            raise MCPError("internal_error") from error
 
-    def capabilities(self) -> CameraCapabilities:
+    def capabilities(self, arguments: object = EMPTY_ARGUMENTS) -> CameraCapabilities:
         """Read approved capability data without probing capture or controls.
 
-        Raises:
-            MCPError: If the registered capability provider fails.
-        """
-        if self._camera is None or self._capability_source is None:
-            return CameraCapabilities()
+        Args:
+            arguments: Decoded tool arguments from an authorized caller.
 
-        try:
+        Raises:
+            MCPError: If validation or the registered capability provider fails.
+        """
+        with map_tool_errors():
+            validate_camera_input(arguments)
+
+            if self._camera is None or self._capability_source is None:
+                return CameraCapabilities()
+
             capabilities = self._capability_source()
             if capabilities is None:
                 return CameraCapabilities()
             if not isinstance(capabilities, CameraCapabilities):
                 raise TypeError("capability provider must return CameraCapabilities")
             return capabilities
-        except CameraTimeoutError as error:
-            raise MCPError("request_timeout") from error
-        except CameraError as error:
-            raise MCPError("camera_unavailable") from error
-        except Exception as error:
-            raise MCPError("internal_error") from error

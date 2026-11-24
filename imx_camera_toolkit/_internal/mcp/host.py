@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 from typing import Protocol
 
 from .camera_adapter import CameraReadAdapter
 from .contracts import CameraCapabilities, CameraSnapshot, CameraStatus
 from .errors import MCPError
 from .snapshot_adapter import CameraSnapshotAdapter
+from .validation import EMPTY_ARGUMENTS
 
 
 class CaptureLifecycle(Protocol):
@@ -83,27 +83,33 @@ class MCPHost:
         """Drain the host before returning control to its application owner."""
         await self.aclose()
 
-    def status(self) -> CameraStatus:
+    def status(self, arguments: object = EMPTY_ARGUMENTS) -> CameraStatus:
         """Return cached diagnostics, including startup and recovery state.
 
+        Args:
+            arguments: Decoded tool arguments from an authorized caller.
+
         Raises:
-            MCPError: If dispatch is closed or the diagnostics fail.
+            MCPError: If dispatch is closed, validation fails or diagnostics fail.
         """
         self._require_running()
-        return self._read_adapter.status()
+        return self._read_adapter.status(arguments)
 
-    def capabilities(self) -> CameraCapabilities:
+    def capabilities(self, arguments: object = EMPTY_ARGUMENTS) -> CameraCapabilities:
         """Read approved cached capabilities for the shared source.
 
+        Args:
+            arguments: Decoded tool arguments from an authorized caller.
+
         Raises:
-            MCPError: If dispatch is closed or the capability provider fails.
+            MCPError: If dispatch is closed, validation fails or the provider fails.
         """
         self._require_running()
-        return self._read_adapter.capabilities()
+        return self._read_adapter.capabilities(arguments)
 
     async def snapshot(
         self,
-        arguments: Mapping[str, object] | None = None,
+        arguments: object = EMPTY_ARGUMENTS,
         *,
         deadline_ns: int | None = None,
     ) -> CameraSnapshot:

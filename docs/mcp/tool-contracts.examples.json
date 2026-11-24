@@ -416,6 +416,24 @@
       }
     },
     {
+      "name": "snapshot_rate_limited",
+      "tool": "camera_snapshot",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "rate_limited",
+          "message": "Tool request limit exceeded.",
+          "retryable": true,
+          "details": {
+            "retry_after_ms": 250
+          }
+        }
+      }
+    },
+    {
       "name": "snapshot_denied",
       "tool": "camera_snapshot",
       "arguments": {},
@@ -443,6 +461,21 @@
         "params": {
           "name": "camera_status",
           "arguments": []
+        }
+      },
+      "expects_tool_result": false
+    },
+    {
+      "name": "disabled_tool_lookup",
+      "kind": "json_rpc_error",
+      "protocol_revision": "2026-07-28",
+      "request": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+          "name": "camera_snapshot",
+          "arguments": {}
         }
       },
       "expects_tool_result": false

@@ -7,6 +7,7 @@ from typing import Literal
 
 CameraBackend = Literal["cpu", "gpu"]
 CameraState = Literal["unavailable", "starting", "ready", "recovering", "error"]
+MAX_SAFE_INTEGER = (1 << 53) - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,9 @@ class SnapshotLimits:
     max_wait_ms: int
     max_jpeg_bytes: int
     max_response_bytes: int
+
+
+HARD_SNAPSHOT_LIMITS = SnapshotLimits(1920, 1080, 95, 10_000, 1_000, 524_288, 786_432)
 
 
 @dataclass(frozen=True, slots=True)

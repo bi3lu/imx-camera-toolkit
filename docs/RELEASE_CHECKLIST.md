@@ -86,6 +86,10 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   behavior in [ADR-MCP-003](adr/ADR-MCP-003-threat-model-and-access-policy.md).
   Record protocol tests for observer defaults, explicit snapshot opt-in,
   direct-call denials, disabled tools and the selected local transport boundary.
+- Before v0.9.0, verify that the packaged tools return the documented domain
+  errors for invalid arguments, exhausted tool budgets, expired deadlines and
+  unexpected failures. Verify that diagnostics stay private and malformed
+  requests use JSON-RPC errors. [MCP error contract](mcp/README.md#errors-and-mcp-representation)
 - On the physical Jetson before v0.9.0, confirm that `camera_status` reports
   the configured CPU or GPU path and reaches `ready` after that run's first
   raw frame, including with JPEG preview disabled. Check the stopped state
