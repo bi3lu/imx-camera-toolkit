@@ -66,6 +66,7 @@ from .publishing import (
     EncodedVideoPublisher,
     GpuFramePublisher,
 )
+from .publishing.jpeg_slot import JPEGPreview
 from .recovery import RecoveryController, is_non_retryable_camera_failure
 
 logger = logging.getLogger(__name__)
@@ -632,6 +633,22 @@ class GpuCamera:
         """Newest independently encoded preview JPEG."""
         return self._preview_publisher.jpeg
 
+    def _jpeg_preview(self) -> JPEGPreview:
+        """Sample detached GPU preview data with acquisition timing unknown."""
+        config = self._config
+        state = self._recovery.state
+        if state == "running" and not self.running:
+            state = "stopped"
+        return JPEGPreview(
+            state,
+            config.enable_preview,
+            False,
+            config.output_width,
+            config.output_height,
+            config.quality,
+            self._preview_publisher.publication,
+        )
+
     def latest_jpeg(self) -> bytes | None:
         """Return newest preview JPEG without affecting the GPU branch."""
         return self._preview_publisher.jpeg
@@ -961,7 +978,12 @@ class GpuCamera:
                     jpeg = backend.read_preview()
 
                     if jpeg is not None:
-                        published = self._preview_publisher.publish(jpeg)
+                        published = self._preview_publisher.publish(
+                            jpeg,
+                            width=self._config.output_width,
+                            height=self._config.output_height,
+                            quality=self._config.quality,
+                        )
 
                         if published:
                             self._metrics.record_stage(

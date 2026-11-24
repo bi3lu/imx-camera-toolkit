@@ -53,6 +53,7 @@ from .models import (
 from .pipeline import build_gstreamer_pipeline, normalize_argus_properties
 from .processing import SoftwareHDRProcessor, SoftwareHDRSettings
 from .publishing import JPEGPublisher, RawFramePublisher, opencv_available
+from .publishing.jpeg_slot import JPEGPreview
 from .recovery import RecoveryController, is_non_retryable_camera_failure
 
 logger = logging.getLogger(__name__)
@@ -220,6 +221,7 @@ class Camera:
 
         self._config = resolved_config
         self._enable_preview = resolved_config.enable_preview
+        self._preview_started_ns = 0
         self._recovery_policy = recovery_policy or CameraRecoveryPolicy()
         if resolved_config.sensor_mode is not None and any(
             property_value.startswith("sensor-mode=")
@@ -518,6 +520,9 @@ class Camera:
             if self._enable_preview == enabled:
                 return
 
+            if enabled:
+                self._preview_started_ns = time.monotonic_ns()
+
             self._enable_preview = enabled
             self._config = replace(self._config, enable_preview=enabled)
 
@@ -585,6 +590,30 @@ class Camera:
                 self._frame_hub = LatestFrameHub[Frame](self.record_consumer_drop)
 
             return self._frame_hub.subscribe(name)
+
+    def _jpeg_preview(self) -> JPEGPreview:
+        """Sample the detached JPEG for internal consumers without waiting."""
+        publication = self._publisher.publication
+        if (
+            publication is not None
+            and publication.acquired_at_ns is not None
+            and publication.acquired_at_ns < self._preview_started_ns
+        ):
+            publication = None
+
+        config = self._config
+        state = self._recovery.state
+        if state == "running" and not self.running:
+            state = "stopped"
+        return JPEGPreview(
+            state,
+            self._enable_preview,
+            True,
+            config.output_width,
+            config.output_height,
+            config.quality,
+            publication,
+        )
 
     def latest_jpeg(self) -> bytes | None:
         """Return the newest preview JPEG without starting a capture pipeline.
@@ -682,6 +711,7 @@ class Camera:
             self.last_error = None
 
             with self._stats_lock:
+                self._preview_started_ns = time.monotonic_ns()
                 self._run_start_frame_number = self._raw_publisher.frame_number
                 self._recovery.set_state("running")
                 self._running.set()
@@ -805,6 +835,7 @@ class Camera:
         """
         if self.running:
             self._recovery.set_state("recovering")
+            self._preview_started_ns = time.monotonic_ns()
 
         while self.running:
             with self._stats_lock:
@@ -892,7 +923,12 @@ class Camera:
 
         if self._enable_preview:
             encoder_started_ns = time.monotonic_ns()
-            encoded = self._publisher.publish(frame)
+            encoded = self._publisher.publish(
+                frame,
+                width=self._config.output_width,
+                height=self._config.output_height,
+                acquired_at_ns=timestamp_ns,
+            )
             encoder_duration_ns = time.monotonic_ns() - encoder_started_ns
 
             if encoded:

@@ -92,3 +92,32 @@ class CameraCapabilities:
     snapshot: SnapshotCapabilities | None = None
     schema_version: Literal[1] = field(default=1, init=False)
     camera_id: Literal["primary"] = field(default="primary", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotMetadata:
+    """Metadata for one JPEG, including its age on the server monotonic clock."""
+
+    width: int
+    height: int
+    jpeg_quality: int | None
+    jpeg_bytes: int
+    frame_sequence: int
+    age_ms: float
+    schema_version: Literal[1] = field(default=1, init=False)
+    camera_id: Literal["primary"] = field(default="primary", init=False)
+    mime_type: Literal["image/jpeg"] = field(default="image/jpeg", init=False)
+    sequence_domain: Literal["jpeg_publication"] = field(
+        default="jpeg_publication", init=False
+    )
+    age_clock: Literal["server_monotonic"] = field(
+        default="server_monotonic", init=False
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class CameraSnapshot:
+    """One detached image and the metadata for that exact publication."""
+
+    metadata: SnapshotMetadata
+    jpeg: bytes
