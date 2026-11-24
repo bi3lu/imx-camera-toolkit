@@ -166,6 +166,13 @@ def test_clients_share_capture(photo: bytes, standalone: bool) -> None:
             first = asyncio.create_task(host.snapshot({"wait_ms": 1000}))
             second = asyncio.create_task(host.snapshot({"wait_ms": 1000}))
             await asyncio.wait_for(camera.two_reads.wait(), 1)
+            with pytest.raises(MCPError) as invalid:
+                await host.snapshot({"wait_ms": True})
+            assert invalid.value.code == "invalid_argument"
+            with pytest.raises(MCPError) as saturated:
+                await host.snapshot()
+            assert saturated.value.code == "rate_limited"
+            assert camera.preview_reads == 2
             assert camera.events == ["start"]
             camera.publication = JPEGPublication(photo, 3, 1, 1, 65, monotonic_ns())
             results = await asyncio.wait_for(asyncio.gather(first, second), 1)
@@ -293,12 +300,15 @@ def test_later_startup_failure_exits_entered_host() -> None:
     asyncio.run(scenario())
 
 
-def test_cancelled_close_still_drains_read_before_stopping_camera() -> None:
-    """Delay shutdown completion until a cancelled task releases its resources."""
+@pytest.mark.parametrize("client_cancels", [True, False])
+def test_cancelled_close_still_drains_reads_before_stopping_camera(
+    client_cancels: bool,
+) -> None:
+    """Retain admission during cleanup after either cancellation or deadline."""
 
     async def scenario() -> None:
         camera = FakeCamera()
-        started = asyncio.Event()
+        starts: asyncio.Queue[int | None] = asyncio.Queue()
         draining = asyncio.Event()
         release = asyncio.Event()
         closing_started = asyncio.Event()
@@ -313,7 +323,7 @@ def test_cancelled_close_still_drains_read_before_stopping_camera() -> None:
                 deadline_ns: int | None = None,
             ) -> CameraSnapshot:
                 """Simulate an asynchronous operation with cleanup to complete."""
-                started.set()
+                starts.put_nowait(deadline_ns)
 
                 try:
                     await asyncio.Future[None]()
@@ -328,13 +338,25 @@ def test_cancelled_close_still_drains_read_before_stopping_camera() -> None:
         async with MCPHost(
             CameraReadAdapter(camera), DelayedCleanup(camera), owned_camera=camera
         ) as host:
-            read = asyncio.create_task(host.snapshot())
-            await asyncio.wait_for(started.wait(), 1)
-            read.cancel()
-            await asyncio.wait_for(draining.wait(), 1)
+            deadline = None if client_cancels else monotonic_ns() + 250_000_000
+            read = asyncio.create_task(host.snapshot(deadline_ns=deadline))
+            second = asyncio.create_task(host.snapshot())
+            assert await asyncio.wait_for(starts.get(), 1) == deadline
+            assert await asyncio.wait_for(starts.get(), 1) is None
 
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(read, 1)
+            if client_cancels:
+                read.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(read, 1)
+            else:
+                with pytest.raises(MCPError) as timed_out:
+                    await asyncio.wait_for(read, 1)
+                assert timed_out.value.code == "request_timeout"
+
+            await asyncio.wait_for(draining.wait(), 1)
+            with pytest.raises(MCPError) as saturated:
+                await host.snapshot()
+            assert saturated.value.code == "rate_limited"
 
             async def close() -> None:
                 """Signal when this caller begins the shared close."""
@@ -360,7 +382,9 @@ def test_cancelled_close_still_drains_read_before_stopping_camera() -> None:
                 await asyncio.wait_for(closing, 1)
 
             await asyncio.wait_for(second_close, 1)
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(second, 1)
 
-        assert camera.events == ["start", "released", "stop"]
+        assert camera.events == ["start", "released", "released", "stop"]
 
     asyncio.run(scenario())

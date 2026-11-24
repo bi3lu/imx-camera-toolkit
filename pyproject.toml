@@ -150,3 +150,7 @@ pretty = true
 [[tool.mypy.overrides]]
 module = ["cv2", "gi", "gi.repository", "yaml"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["mcp", "mcp.*", "mcp_types", "mcp_types.*"]
+ignore_missing_imports = true

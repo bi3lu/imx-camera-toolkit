@@ -35,9 +35,9 @@ Validate input and fixed constraints before JPEG processing. Enforce
 configured byte limits before parsing, verify JPEG markers, frame
 dimensions, scan boundaries and EXIF absence without decompressing pixels,
 and check freshness again before constructing the result. Entropy correctness
-is the encoder's responsibility. The adapter estimates serialized size with
-base64 expansion, both metadata copies and a 1 KiB framing reserve. The
-transport remains responsible for measuring the exact serialized response.
+is the encoder's responsibility. The SDK boundary measures the serialized
+success response including base64, both metadata copies, and the JSON-RPC
+envelope before sending an image.
 Requests that require a different size or quality fail with
 `constraints_unsupported`. Resizing and re-encoding are outside this
 implementation.
