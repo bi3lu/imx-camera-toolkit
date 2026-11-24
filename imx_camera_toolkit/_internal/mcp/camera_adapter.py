@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Protocol
 
@@ -12,14 +13,19 @@ from imx_camera_toolkit import __version__
 from ..camera.camera import Camera
 from ..camera.gpu_camera import GpuCamera
 from ..camera.models import CameraStats
+from ..camera.profiles.registry import CameraProfile
+from ..camera_control.models import CameraCapabilities as ArgusCapabilities
 from .contracts import (
     MAX_SAFE_INTEGER,
     CameraBackend,
     CameraCapabilities,
+    CameraFrameFormat,
     CameraState,
     CameraStatus,
 )
 from .errors import map_tool_errors
+from .sensor_capabilities import project_sensor_capabilities
+from .snapshot_adapter import CameraSnapshotAdapter
 from .validation import EMPTY_ARGUMENTS, validate_camera_input
 
 _PUBLIC_ALIAS = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -72,6 +78,9 @@ class CameraReadAdapter:
         camera: CameraStatsSource | None = None,
         *,
         backend: CameraBackend | None = None,
+        profile: CameraProfile | None = None,
+        sensor_capabilities: ArgusCapabilities | None = None,
+        inspected_capabilities: ArgusCapabilities | None = None,
         capability_source: Callable[[], CameraCapabilities | None] | None = None,
         subscribers: Mapping[str, SubscriberStatsSource] | None = None,
         clock: Callable[[], datetime] = _utc_now,
@@ -82,8 +91,13 @@ class CameraReadAdapter:
             camera: Application-owned camera, or ``None`` if unregistered.
             backend: Explicit capture path for a custom source. Built-in
                 cameras identify their path by type when this is omitted.
-            capability_source: Read-only provider of approved, cached
-                capabilities. Return ``None`` when discovery is unavailable.
+            profile: Curated profile explicitly selected for this camera.
+            sensor_capabilities: Sensor-specific metadata and control
+                declarations for this camera.
+            inspected_capabilities: Cached Argus inspection for the same
+                installation, with optional confirmed sensor identity and modes.
+            capability_source: Optional override providing the complete cached
+                result. Return ``None`` when discovery is unavailable.
             subscribers: Approved public aliases mapped to individual existing
                 subscriptions. The mapping is copied at construction.
             clock: Wall clock returning an aware datetime for the observation.
@@ -101,6 +115,9 @@ class CameraReadAdapter:
         self._camera = camera
         self._backend = backend
         self._capability_source = capability_source
+        self._sensor_capabilities = project_sensor_capabilities(
+            profile, sensor_capabilities, inspected_capabilities
+        )
         self._subscribers = dict(subscribers) if subscribers is not None else {}
         if any(
             not isinstance(alias, str) or _PUBLIC_ALIAS.fullmatch(alias) is None
@@ -151,11 +168,17 @@ class CameraReadAdapter:
                 subscriber_dropped_frames=subscriber_drops,
             )
 
-    def capabilities(self, arguments: object = EMPTY_ARGUMENTS) -> CameraCapabilities:
+    def capabilities(
+        self,
+        arguments: object = EMPTY_ARGUMENTS,
+        *,
+        snapshot_adapter: CameraSnapshotAdapter | None = None,
+    ) -> CameraCapabilities:
         """Read approved capability data without probing capture or controls.
 
         Args:
             arguments: Decoded tool arguments from an authorized caller.
+            snapshot_adapter: The host's bound MCP snapshot reader, if present.
 
         Raises:
             MCPError: If validation or the registered capability provider fails.
@@ -163,12 +186,32 @@ class CameraReadAdapter:
         with map_tool_errors():
             validate_camera_input(arguments)
 
-            if self._camera is None or self._capability_source is None:
+            if self._camera is None:
                 return CameraCapabilities()
 
-            capabilities = self._capability_source()
-            if capabilities is None:
-                return CameraCapabilities()
-            if not isinstance(capabilities, CameraCapabilities):
-                raise TypeError("capability provider must return CameraCapabilities")
-            return capabilities
+            if self._capability_source is not None:
+                capabilities = self._capability_source()
+
+                if capabilities is None:
+                    return CameraCapabilities()
+
+                if not isinstance(capabilities, CameraCapabilities):
+                    raise TypeError(
+                        "capability provider must return CameraCapabilities"
+                    )
+
+                return capabilities
+
+            frame_format: CameraFrameFormat | None = None
+
+            if (
+                self._backend is not None
+                and _camera_state(self._camera.stats()) == "ready"
+            ):
+                frame_format = "BGR_CPU" if self._backend == "cpu" else "NV12_NVMM"
+
+            return replace(
+                self._sensor_capabilities,
+                frame_format=frame_format,
+                snapshot=snapshot_adapter.capabilities() if snapshot_adapter else None,
+            )

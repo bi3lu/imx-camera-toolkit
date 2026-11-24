@@ -105,7 +105,9 @@ class MCPHost:
             MCPError: If dispatch is closed, validation fails or the provider fails.
         """
         self._require_running()
-        return self._read_adapter.capabilities(arguments)
+        return self._read_adapter.capabilities(
+            arguments, snapshot_adapter=self._snapshot_adapter
+        )
 
     async def snapshot(
         self,

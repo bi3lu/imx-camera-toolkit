@@ -22,6 +22,17 @@ from imx_camera_toolkit import (
 from imx_camera_toolkit._internal.camera.backends.gstreamer import (
     GStreamerCaptureBackend,
 )
+from imx_camera_toolkit._internal.camera.profiles.registry import get_camera_profile
+from imx_camera_toolkit._internal.camera_control.capabilities import (
+    DEFAULT_CAPABILITIES,
+)
+from imx_camera_toolkit._internal.camera_control.models import (
+    CameraCapabilities as ArgusCapabilities,
+)
+from imx_camera_toolkit._internal.camera_control.models import SensorMode as ArgusMode
+from imx_camera_toolkit._internal.camera_control.runtime.controller import (
+    CameraController,
+)
 from imx_camera_toolkit._internal.consumers.latest import LatestFrameHub
 from imx_camera_toolkit._internal.mcp.camera_adapter import CameraReadAdapter
 from imx_camera_toolkit._internal.mcp.contracts import (
@@ -311,10 +322,15 @@ def test_builtin_status_requires_publication_in_current_run(
 
     try:
         assert adapter.status().state == "unavailable"
+        assert adapter.capabilities().frame_format is None
         camera.start()
         assert adapter.status().state == "starting"
+        assert adapter.capabilities().frame_format is None
         publish()
         assert adapter.status().state == "ready"
+        assert adapter.capabilities().frame_format == (
+            "BGR_CPU" if backend == "cpu" else "NV12_NVMM"
+        )
 
         worker = camera._thread
         assert worker is not None
@@ -323,6 +339,7 @@ def test_builtin_status_requires_publication_in_current_run(
         camera._recovery.set_state("failed")
         camera._running.clear()
         assert adapter.status().state == "error"
+        assert adapter.capabilities().frame_format is None
 
         camera.start()
         assert adapter.status().state == "starting"
@@ -347,3 +364,106 @@ def test_mock_camera_publication_state_resets_on_restart() -> None:
     camera.start()
     assert adapter.status().state == "starting"
     camera.stop()
+
+
+def test_profile_requires_explicit_selection() -> None:
+    """Matching pipeline defaults provide no evidence of attached hardware."""
+    profile = get_camera_profile("imx219-1080p")
+    camera = Camera(config=profile.config)
+    assert CameraReadAdapter(camera).capabilities() == CameraCapabilities()
+    assert CameraReadAdapter(camera, profile=profile).capabilities() == (
+        CameraCapabilities(sensor_model="IMX219-77")
+    )
+
+
+@pytest.mark.parametrize(
+    ("model", "mode", "backend", "frame_format"),
+    [
+        ("IMX219-77", ArgusMode(2, 1920, 1080, 30), "cpu", "BGR_CPU"),
+        ("IMX477", ArgusMode(1, 3840, 2160, 30), "gpu", "NV12_NVMM"),
+    ],
+)
+def test_sensor_projection_uses_cached_controller_and_inspection(
+    model: str,
+    mode: ArgusMode,
+    backend: CameraBackend,
+    frame_format: str,
+) -> None:
+    """Filter unsupported controls and allow only current published formats."""
+    apply = Mock()
+    controller = CameraController(
+        capabilities=ArgusCapabilities(
+            DEFAULT_CAPABILITIES.source_properties, (ArgusMode(0),), model
+        ),
+        runtime_handler=apply,
+    )
+    inspected = ArgusCapabilities(
+        frozenset({"exposuretimerange", "ispdigitalgainrange", "wbmode"}),
+        (replace(mode, name="/private/mode-name"),),
+        model,
+    )
+    source = Mock()
+    adapter = CameraReadAdapter(
+        source,
+        backend=backend,
+        sensor_capabilities=controller.capabilities,
+        inspected_capabilities=inspected,
+    )
+    source.stats.return_value = _STATS
+    capabilities = adapter.capabilities()
+    assert capabilities.frame_format == frame_format
+    assert capabilities.sensor_model == model
+    assert capabilities.sensor_modes == (
+        SensorMode(mode.index, mode.width, mode.height, mode.max_fps, mode.hdr),
+    )
+    assert capabilities.controls == ControlCapabilities(ExposureBounds(), False)
+
+    source.stats.return_value = replace(_STATS, state="recovering")
+    assert adapter.capabilities() == replace(capabilities, frame_format=None)
+    source.stats.return_value = replace(_STATS, has_published_frame=False)
+    assert adapter.capabilities() == replace(capabilities, frame_format=None)
+    assert source.mock_calls == [call.stats(), call.stats(), call.stats()]
+    assert controller.revision == 0
+    apply.assert_not_called()
+
+
+def test_inspection_alone_only_establishes_negative_control_support() -> None:
+    """Generic defaults and plugin properties do not identify sensor support."""
+    inspected = ArgusCapabilities(frozenset({"exposuretimerange"}))
+    camera = MockCamera(auto_start=False)
+    adapter = CameraReadAdapter(
+        camera,
+        sensor_capabilities=DEFAULT_CAPABILITIES,
+        inspected_capabilities=inspected,
+    )
+    assert adapter.capabilities() == CameraCapabilities(
+        controls=ControlCapabilities(gain=False)
+    )
+
+
+def test_inspected_identity_discards_metadata_for_a_different_sensor() -> None:
+    """Never attach stale mode or control declarations to another sensor model."""
+    declared = ArgusCapabilities(frozenset({"gainrange"}), (ArgusMode(2),), "IMX219")
+    inspected = ArgusCapabilities(frozenset({"gainrange"}), model="IMX477")
+    adapter = CameraReadAdapter(
+        MockCamera(auto_start=False),
+        sensor_capabilities=declared,
+        inspected_capabilities=inspected,
+    )
+    assert adapter.capabilities() == CameraCapabilities(
+        sensor_model="IMX477", controls=ControlCapabilities(exposure_us=False)
+    )
+
+
+def test_capabilities_filter_unpublishable_sensor_metadata() -> None:
+    """Drop private model labels and dimensions outside the JSON integer range."""
+    declared = ArgusCapabilities(
+        frozenset(), (ArgusMode(0, width=1 << 53),), "/private/model.yml"
+    )
+    adapter = CameraReadAdapter(
+        MockCamera(auto_start=False), sensor_capabilities=declared
+    )
+    assert adapter.capabilities() == CameraCapabilities(
+        sensor_modes=(SensorMode(0, hdr=False),),
+        controls=ControlCapabilities(False, False),
+    )

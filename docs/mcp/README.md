@@ -81,27 +81,39 @@ subscriber entry.
 
 ## Camera capabilities
 
-Project only information from the registered source, using existing
-configuration, negotiated state and discovery results. Reads reuse those
-results. `sensor_model` is a public model identifier. `sensor_modes` lists
-known applicable mode indices, dimensions in pixels, maximum FPS and HDR
-support. A mode field can be unknown. `frame_format` reports the active
-negotiated frame format. `controls` describes fixed exposure in microseconds
-and linear gain. A bounds object indicates known support and may have
-unknown endpoints. Use `false` for known lack of support and `null` when
-support is unknown. Write tools and permissions follow the release profile.
-`snapshot.source_supported` indicates whether a JPEG source is supported
-by this installation. `snapshot.configured` indicates
-whether one is configured for MCP. These describe the source, while discovery
-and calling permissions are evaluated for each caller. A supported source may
-be disabled. Successful capabilities responses can represent an unregistered
-camera using null source data.
+The camera owner can bind the explicitly selected curated profile,
+sensor-specific controller declarations, and a cached read-only Argus
+inspection for the same installation. MCP requests reuse these values and
+never run discovery or apply controls.
 
-The read adapter accepts a provider of cached capability values. An absent
-provider or an unknown result yields null capability fields. The provider
-can supply known fields individually from previously discovered information.
-Camera dependency or capture errors raised during a read return
-`camera_unavailable`, and a camera timeout returns `request_timeout`.
+| Field | Evidence |
+| --- | --- |
+| `sensor_model` | A public model identifier from confirmed metadata, a sensor declaration, or the selected profile, in that order. Pipeline defaults cannot identify an attached sensor. |
+| `sensor_modes` | Confirmed mode descriptors when available, then declarations for the matching sensor. Width and height are in pixels and the rate is maximum FPS. Profile capture settings represent one requested operating point. |
+| `frame_format` | `BGR_CPU` or `NV12_NVMM` once the corresponding capture path reports a publication in its ready state. Stopped, starting, recovering, and failed paths report `null`. |
+| `controls` | Sensor-specific declarations establish support for fixed exposure in microseconds and linear analog gain. A missing property in the cached inspection establishes lack of support for that installation. Property presence alone leaves sensor support unknown. |
+| `snapshot` | The host's actual snapshot adapter supplies preview configuration, available evidence of a timed JPEG source, and effective request limits. |
+
+Control values use `false` for known lack of support and `null` for unknown
+support. A bounds object with null endpoints means support is declared and
+the sensor limits are unknown. The current controller and Argus inspection do
+not provide per-sensor numeric bounds. Write tools and permissions follow the
+release profile.
+
+`snapshot.configured` is true when the host has bound a source whose preview
+is enabled. `snapshot.source_supported` becomes true when that source has
+published a JPEG with acquisition timing in the running state. Before that
+evidence it is unknown, and a source with no acquisition timing reports false.
+For example, the built-in GPU JPEG branch can be configured and usable by HTTP
+preview while reporting `source_supported: false` for MCP. Freshness, payload
+size and requested dimensions are evaluated by the snapshot tool. Video
+encoder availability is outside this contract. GStreamer factory presence
+alone cannot establish NVENC capability.
+
+An unregistered camera returns null source fields. An application may supply
+its own complete cached projection in place of the default mapping. Camera
+dependency or capture errors during a read return `camera_unavailable`, and a
+camera timeout returns `request_timeout`.
 Unexpected read failures return `internal_error`. The adapter keeps the
 original exception as an internal cause.
 

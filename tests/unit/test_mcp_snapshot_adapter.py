@@ -379,13 +379,19 @@ def test_cpu_record_and_legacy_preview_share_one_publication(
         assert publication is not None
         assert publication.acquired_at_ns == acquired_at_ns
         assert camera.wait_for_jpeg(-1, 0) == (publication.sequence, photo)
-        result = asyncio.run(CameraSnapshotAdapter(camera).snapshot())
+        adapter = CameraSnapshotAdapter(camera)
+        assert adapter.capabilities().source_supported is True
+        assert adapter.capabilities().configured
+        result = asyncio.run(adapter.snapshot())
         assert result.jpeg is publication.data
         assert result.metadata.frame_sequence == publication.sequence
         encoder.assert_called_once()
         camera._preview_started_ns = acquired_at_ns + 1
         assert camera._jpeg_preview().publication is None
         assert camera.latest_jpeg() == photo
+        camera.set_preview_enabled(False)
+        assert adapter.capabilities().source_supported is None
+        assert not adapter.capabilities().configured
     finally:
         camera.stop()
     assert camera._jpeg_preview().publication is None
@@ -408,8 +414,11 @@ def test_gpu_preview_never_acquires_a_raw_frame(
             quality=camera.config.quality,
         )
         assert camera.wait_for_jpeg(-1, 0) == (1, photo)
+        adapter = CameraSnapshotAdapter(camera)
+        assert adapter.capabilities().source_supported is False
+        assert adapter.capabilities().configured
         with pytest.raises(MCPError) as caught:
-            asyncio.run(CameraSnapshotAdapter(camera).snapshot({"wait_ms": 1_000}))
+            asyncio.run(adapter.snapshot({"wait_ms": 1_000}))
         assert caught.value.to_payload()["details"] == {"reason": "timing_unavailable"}
         raw_read.assert_not_called()
     finally:

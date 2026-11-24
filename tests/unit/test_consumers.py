@@ -7,11 +7,13 @@ import threading
 import time
 from collections.abc import Callable
 from functools import partial
+from types import SimpleNamespace
 
 import pytest
 
 from imx_camera_toolkit import Camera, GpuCamera
 from imx_camera_toolkit._internal.camera.models import GpuFrame, GpuFrameExpiredError
+from imx_camera_toolkit._internal.camera.publishing import encoded
 from imx_camera_toolkit.consumers import (
     FrameConsumer,
     InferenceConsumer,
@@ -30,14 +32,6 @@ def _wait_for(predicate: Callable[[], bool], timeout: float = 1.0) -> None:
         if time.monotonic() >= deadline:
             raise AssertionError("condition was not reached before timeout")
         time.sleep(0.001)
-
-
-def _preview_processed(
-    preview: InferencePreviewSource,
-    expected: int,
-) -> bool:
-    """Whether the adapter has rendered an expected number of previews."""
-    return preview.processed_frames >= expected
 
 
 def _consumer_failed(consumer: FrameConsumer[int], expected: int) -> bool:
@@ -225,11 +219,10 @@ def test_gpu_subscriber_keeps_processing_lease_after_new_publication() -> None:
     assert consumer.failed_frames == 0
 
 
-class _SlowRunner:
-    """Deterministic runner representing a ten-FPS inference workload."""
+class _FakeRunner:
+    """Deterministic runner that records preparation and closure."""
 
-    def __init__(self, duration: float = 0.1) -> None:
-        self.duration = duration
+    def __init__(self) -> None:
         self.prepared: list[FrameSpec] = []
         self.closed = False
 
@@ -243,14 +236,11 @@ class _SlowRunner:
         return self.prepared[-1] if self.prepared else None
 
     def infer(self, frame: GpuFrame) -> InferenceResult:
-        """Sleep for the configured cost and return a model-neutral result."""
-        time.sleep(self.duration)
-        sequence = frame.sequence
-        timestamp_ns = frame.timestamp_ns
+        """Return a model-neutral result for the supplied frame."""
         return InferenceResult(
-            frame_sequence=sequence,
-            frame_timestamp_ns=timestamp_ns,
-            inference_time_ns=int(self.duration * 1_000_000_000),
+            frame_sequence=frame.sequence,
+            frame_timestamp_ns=frame.timestamp_ns,
+            inference_time_ns=0,
             outputs=(),
         )
 
@@ -259,7 +249,22 @@ class _SlowRunner:
         self.closed = True
 
 
-class _ExpiredRunner(_SlowRunner):
+class _BlockingRunner(_FakeRunner):
+    """Keep inference in flight until the test releases the runner."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        super().__init__()
+
+    def infer(self, frame: GpuFrame) -> InferenceResult:
+        """Block inference while the test exercises the independent preview."""
+        self.entered.set()
+        assert self.release.wait(10.0), "test did not release inference"
+        return super().infer(frame)
+
+
+class _ExpiredRunner(_FakeRunner):
     """Runner simulating expiry before CUDA imports the native buffer."""
 
     def infer(self, frame: GpuFrame) -> InferenceResult:
@@ -267,7 +272,7 @@ class _ExpiredRunner(_SlowRunner):
         raise GpuFrameExpiredError("expired before import")
 
 
-class _OutputRunner(_SlowRunner):
+class _OutputRunner(_FakeRunner):
     """Runner exposing one named output shape for health diagnostics."""
 
     def infer(self, frame: GpuFrame) -> InferenceResult:
@@ -283,7 +288,7 @@ class _OutputRunner(_SlowRunner):
 def test_inference_consumer_reuses_runner_prepared_before_camera_capture() -> None:
     """The first borrowed frame must not trigger a second expensive prepare."""
     hub = LatestFrameHub[GpuFrame]()
-    runner = _SlowRunner(duration=0)
+    runner = _FakeRunner()
     frame = mock_gpu_frame(object(), width=1280, height=720)
     spec = FrameSpec.from_gpu_frame(frame)
     runner.prepare(spec)
@@ -321,7 +326,7 @@ def test_inference_context_cleanup_does_not_mask_primary_exception(
     """A secondary stop timeout must preserve the application failure."""
     inference = InferenceConsumer(
         LatestFrameHub[GpuFrame]().subscribe("cleanup"),
-        _SlowRunner(duration=0),
+        _FakeRunner(),
     )
 
     def fail_stop(timeout: float | None = 10.0) -> None:
@@ -338,7 +343,7 @@ def test_inference_consumer_classifies_expired_input_as_drop() -> None:
     hub = LatestFrameHub[GpuFrame]()
     inference = InferenceConsumer(
         hub.subscribe("expired"),
-        _ExpiredRunner(duration=0),
+        _ExpiredRunner(),
         initial_failure_backoff=0,
     )
     inference.start()
@@ -395,15 +400,23 @@ class _FakeJPEGSource:
             return self._frame_number, self._jpeg
 
 
-def test_slow_inference_does_not_limit_preview_or_accumulate_backlog() -> None:
-    """Ten-FPS inference must coexist with fresh thirty-FPS preview frames."""
+def test_slow_inference_does_not_limit_preview_or_accumulate_backlog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preview advances during blocked inference and reuses the latest result."""
     frame_hub = LatestFrameHub[GpuFrame]()
-    runner = _SlowRunner(duration=0.1)
+    runner = _BlockingRunner()
     inference = InferenceConsumer(
         frame_hub.subscribe("inference"),
         runner,
     )
+    results = inference.subscribe_results("test")
     preview_source = _FakeJPEGSource()
+    monkeypatch.setattr(
+        encoded,
+        "time",
+        SimpleNamespace(monotonic=lambda: 1.0 + preview_source.frame_number / 30),
+    )
     contexts: list[PreviewOverlayContext] = []
 
     def render(
@@ -421,44 +434,51 @@ def test_slow_inference_does_not_limit_preview_or_accumulate_backlog() -> None:
         max_fps=120.0,
         read_timeout=0.05,
     )
-    inference.start()
-    preview.start()
 
-    started = time.monotonic()
-    for sequence in range(1, 31):
-        timestamp_ns = time.monotonic_ns()
-        frame_hub.publish(
-            mock_gpu_frame(
-                object(),
-                sequence=sequence,
-                timestamp_ns=timestamp_ns,
-            )
+    def publish_preview(sequence: int, suffix: bytes) -> None:
+        """Publish and wait for the matching rendered preview."""
+        jpeg = f"jpeg-{sequence}".encode()
+        preview_source.publish(jpeg)
+        assert preview.wait_for_jpeg(sequence - 1, timeout=2.0) == (
+            sequence,
+            jpeg + suffix,
         )
-        preview_source.publish(f"jpeg-{sequence}".encode())
-        _wait_for(
-            partial(_preview_processed, preview, sequence),
-            timeout=0.2,
-        )
-        target = started + sequence / 30
-        time.sleep(max(target - time.monotonic(), 0))
 
-    _wait_for(
-        lambda: inference.latest_result is not None
-        and inference.latest_result.frame_sequence == 30,
-        timeout=0.5,
-    )
-    preview.stop()
-    inference.stop()
+    with inference, preview:
+        try:
+            frame_hub.publish(mock_gpu_frame(object(), sequence=1))
+            assert runner.entered.wait(2.0)
+            publish_preview(1, b"-pending")
+            for sequence in (2, 3):
+                frame_hub.publish(mock_gpu_frame(object(), sequence=sequence))
+                publish_preview(sequence, b"-pending")
 
-    assert preview.processed_frames == 30
-    assert inference.processed_frames < preview.processed_frames
-    assert inference.dropped_frames > 0
+            assert inference.latest_result is None
+            assert inference.dropped_frames == 1
+        finally:
+            runner.release.set()
+
+        result = results.receive(timeout=2.0)
+        assert result is not None
+        if result.frame_sequence == 1:
+            result = results.receive(timeout=2.0)
+        assert result is not None and result.frame_sequence == 3
+        publish_preview(4, b"-overlay")
+        publish_preview(5, b"-overlay")
+
+    assert preview.processed_frames == 5
+    assert inference.processed_frames == 2
+    assert preview.frame_number == 5
     assert inference.latest_result is not None
-    assert inference.latest_result.frame_sequence == 30
-    assert preview.frame_number == 30
     assert preview.result_frame_timestamp_ns == (
         inference.latest_result.frame_timestamp_ns
     )
     assert preview.detection_age_ns is not None
-    assert contexts[-1].result_frame_sequence is not None
+    assert [context.result_frame_sequence for context in contexts] == [
+        None,
+        None,
+        None,
+        3,
+        3,
+    ]
     assert runner.closed is True

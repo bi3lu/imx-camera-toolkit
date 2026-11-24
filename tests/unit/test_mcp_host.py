@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from time import monotonic_ns
 from unittest.mock import Mock
@@ -16,8 +17,10 @@ from imx_camera_toolkit._internal.camera.publishing.jpeg_slot import (
 )
 from imx_camera_toolkit._internal.mcp.camera_adapter import CameraReadAdapter
 from imx_camera_toolkit._internal.mcp.contracts import (
+    HARD_SNAPSHOT_LIMITS,
     CameraCapabilities,
     CameraSnapshot,
+    SnapshotCapabilities,
 )
 from imx_camera_toolkit._internal.mcp.errors import MCPError
 from imx_camera_toolkit._internal.mcp.host import MCPHost
@@ -103,6 +106,36 @@ def test_host_validates_decoded_arguments_before_reading() -> None:
             assert camera.preview_reads == 0
             assert host.status({"camera_id": "primary"}).state == "unavailable"
             assert host.capabilities({"camera_id": "primary"}) == CameraCapabilities()
+
+    asyncio.run(scenario())
+
+
+def test_host_projects_its_bound_snapshot_source_and_limits(photo: bytes) -> None:
+    """Report configured preview before publication and known timing afterward."""
+
+    async def scenario() -> None:
+        camera = FakeCamera()
+        limits = replace(HARD_SNAPSHOT_LIMITS, max_width=1280)
+        async with MCPHost(
+            CameraReadAdapter(camera, backend="cpu"),
+            CameraSnapshotAdapter(camera, limits=limits),
+        ) as host:
+            assert host.capabilities().snapshot == SnapshotCapabilities(
+                None, True, limits
+            )
+            camera.start()
+            camera.publication = JPEGPublication(photo, 1, 1, 1, 65, monotonic_ns())
+            result = host.capabilities()
+            assert result.frame_format == "BGR_CPU"
+            assert result.snapshot == SnapshotCapabilities(True, True, limits)
+        camera.stop()
+
+        async with MCPHost(
+            CameraReadAdapter(camera), CameraSnapshotAdapter(None, limits=limits)
+        ) as host:
+            assert host.capabilities().snapshot == SnapshotCapabilities(
+                None, False, limits
+            )
 
     asyncio.run(scenario())
 
