@@ -1,4 +1,4 @@
-"""Typed camera results for the versioned MCP tool contracts."""
+"""Typed results for the versioned MCP tool contracts."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Literal
 CameraBackend = Literal["cpu", "gpu"]
 CameraFrameFormat = Literal["BGR_CPU", "NV12_NVMM"]
 CameraState = Literal["unavailable", "starting", "ready", "recovering", "error"]
+InferenceState = Literal["unknown", "stopped", "initializing", "running", "degraded"]
 MAX_SAFE_INTEGER = (1 << 53) - 1
 
 
@@ -126,3 +127,18 @@ class CameraSnapshot:
 
     metadata: SnapshotMetadata
     jpeg: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class InferenceStatus:
+    """Cached worker diagnostics with optional timings in milliseconds."""
+
+    state: InferenceState
+    processed_frames: int | None = None
+    failed_frames: int | None = None
+    dropped_frames: int | None = None
+    consecutive_failures: int | None = None
+    error: Literal["worker_failure"] | None = None
+    inference_time_ms: float | None = None
+    age_ms: float | None = None
+    schema_version: Literal[1] = field(default=1, init=False)

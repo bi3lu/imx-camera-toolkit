@@ -146,8 +146,11 @@ compare against that baseline.
   [ADR-MCP-006](adr/ADR-MCP-006-bounded-jpeg-snapshots.md#verification)
 - Compare the matched capture and preview profiles with the recorded
   [performance baseline](mcp/jetson-validation.md#matched-performance-trials).
-- Before releasing inference tools, verify separate inference grants and the
-  response, provenance and payload tests from ADR-MCP-003.
+- Verify that the local SDK requires `mcp:inference:read` for
+  `inference_status` and that polling leaves worker ownership and result
+  publication with the application. Before releasing mapped results, verify
+  the provenance and payload checks from ADR-MCP-003.
+  [Inference status contract](mcp/README.md#inference-status)
 - Before enabling the remote profile, record MCP-027 review and passing
   evidence for issuer and audience validation, scope enforcement, trusted
   proxy and origin policy, request limits, redaction and audit retention.

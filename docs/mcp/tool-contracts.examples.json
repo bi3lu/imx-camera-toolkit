@@ -11,6 +11,10 @@
     "camera_snapshot": {
       "input": "SnapshotInput",
       "success": "SnapshotMetadata"
+    },
+    "inference_status": {
+      "input": "InferenceStatusInput",
+      "success": "InferenceStatus"
     }
   },
   "domain_error": "DomainError",
@@ -444,6 +448,41 @@
           "schema_version": 1,
           "code": "permission_denied",
           "message": "Permission denied.",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "name": "inference_status_degraded",
+      "tool": "inference_status",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "success",
+        "value": {
+          "schema_version": 1,
+          "state": "degraded",
+          "processed_frames": 3,
+          "failed_frames": 2,
+          "dropped_frames": 1,
+          "consecutive_failures": 2,
+          "error": "worker_failure",
+          "inference_time_ms": 2.5,
+          "age_ms": 5.0
+        }
+      }
+    },
+    {
+      "name": "inference_status_unconfigured",
+      "tool": "inference_status",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "inference_not_configured",
+          "message": "Inference is not configured.",
           "retryable": false
         }
       }

@@ -6,11 +6,23 @@ import asyncio
 import time
 from typing import Protocol
 
+from ..inference.contracts import InferenceResult
 from .camera_adapter import CameraReadAdapter
-from .contracts import CameraCapabilities, CameraSnapshot, CameraStatus, SnapshotLimits
+from .contracts import (
+    CameraCapabilities,
+    CameraSnapshot,
+    CameraStatus,
+    InferenceStatus,
+    SnapshotLimits,
+)
 from .errors import MCPError
+from .inference_adapter import InferenceReadAdapter
 from .snapshot_adapter import CameraSnapshotAdapter
-from .validation import EMPTY_ARGUMENTS, parse_snapshot_input
+from .validation import (
+    EMPTY_ARGUMENTS,
+    parse_snapshot_input,
+    validate_inference_status_input,
+)
 
 _MAX_ACTIVE_SNAPSHOTS = 2
 
@@ -43,6 +55,7 @@ class MCPHost:
         snapshot_adapter: CameraSnapshotAdapter,
         *,
         owned_camera: CaptureLifecycle | None = None,
+        inference_adapter: InferenceReadAdapter | None = None,
     ) -> None:
         """Bind the adapters without opening or reading the source.
 
@@ -51,10 +64,12 @@ class MCPHost:
             snapshot_adapter: Preview reads for the same camera.
             owned_camera: Unstarted primary camera transferred by an explicit
                 standalone application. Omit for application-owned capture.
+            inference_adapter: Cached reads from an application-owned worker.
         """
         self._read_adapter = read_adapter
         self._snapshot_adapter = snapshot_adapter
         self._owned_camera = owned_camera
+        self._inference_adapter = inference_adapter
         self._entered = False
         self._accepting = False
         self._snapshots: dict[asyncio.Task[CameraSnapshot], bool] = {}
@@ -116,6 +131,34 @@ class MCPHost:
     def snapshot_limits(self) -> SnapshotLimits:
         """Return the effective limits without sampling the preview source."""
         return self._snapshot_adapter.limits
+
+    def inference_status(self, arguments: object = EMPTY_ARGUMENTS) -> InferenceStatus:
+        """Read cached diagnostics for the bound inference source.
+
+        Raises:
+            MCPError: If dispatch is closed, arguments are invalid, or no
+                inference source is configured.
+        """
+        self._require_running()
+        validate_inference_status_input(arguments)
+
+        if self._inference_adapter is None:
+            raise MCPError("inference_not_configured")
+
+        return self._inference_adapter.status()
+
+    def inference_latest_result(self) -> InferenceResult:
+        """Read one result for internal mapping and freshness checks.
+
+        Raises:
+            MCPError: If dispatch is closed or the source or result is missing.
+        """
+        self._require_running()
+
+        if self._inference_adapter is None:
+            raise MCPError("inference_not_configured")
+
+        return self._inference_adapter.latest_result()
 
     async def snapshot(
         self,

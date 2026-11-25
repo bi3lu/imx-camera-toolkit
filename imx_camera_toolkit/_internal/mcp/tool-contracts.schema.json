@@ -418,6 +418,47 @@
         }
       ]
     },
+    "InferenceStatusInput": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "InferenceStatus": {
+      "type": "object",
+      "properties": {
+        "schema_version": { "const": 1 },
+        "state": { "enum": ["unknown", "stopped", "initializing", "running", "degraded"] },
+        "processed_frames": { "$ref": "#/$defs/InferenceFrameCount" },
+        "failed_frames": { "$ref": "#/$defs/InferenceFrameCount" },
+        "dropped_frames": { "$ref": "#/$defs/InferenceFrameCount" },
+        "consecutive_failures": { "$ref": "#/$defs/InferenceFrameCount" },
+        "error": { "enum": ["worker_failure", null] },
+        "inference_time_ms": { "$ref": "#/$defs/InferenceDuration" },
+        "age_ms": { "$ref": "#/$defs/InferenceDuration" }
+      },
+      "required": [
+        "schema_version",
+        "state",
+        "processed_frames",
+        "failed_frames",
+        "dropped_frames",
+        "consecutive_failures",
+        "error",
+        "inference_time_ms",
+        "age_ms"
+      ],
+      "additionalProperties": false
+    },
+    "InferenceFrameCount": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "InferenceDuration": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
     "InferenceLatest": {
       "type": "object",
       "properties": {
