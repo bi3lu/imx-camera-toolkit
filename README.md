@@ -26,6 +26,9 @@
   <a href="https://github.com/bi3lu/imx-camera-toolkit/blob/main/LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License">
   </a>
+  <a href="https://buymeacoffee.com/bi3lu">
+    <img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee">
+  </a>
 </p>
 
 </div>
