@@ -1,4 +1,4 @@
-# ADR-MCP-006 — Bounded JPEG snapshots
+# MCP ADR — Bounded JPEG snapshots
 
 **Status** Accepted
 
@@ -7,7 +7,7 @@
 The [camera snapshot contract](../mcp/README.md#camera-snapshot) requires a
 complete, detached JPEG, its publication sequence, and an age measured from
 acquisition on the server's monotonic clock. The application owns capture
-under the [local stdio profile](ADR-MCP-004-local-sdk-and-transport.md).
+under the [local stdio profile](ADR-mcp-local-sdk-and-transport.md).
 
 | Source | Encoding | Configuration and lifecycle | Timing evidence |
 | --- | --- | --- | --- |
@@ -44,10 +44,11 @@ implementation.
 
 Positive waits poll the same latest slot at intervals up to 10 ms, shortened
 by the effective deadline. They use no worker thread, retain no publication
-across an await, and stop on cancellation or terminal source state. The
-application/transport work in MCP-007 and MCP-010 owns admission, host
-shutdown and final wire enforcement. MCP-008 covers validation shared across
-tools.
+across an await, and stop on cancellation or terminal source state. The host
+and transport enforce admission, shutdown and final wire limits. The shared
+tool contracts define argument validation.
+[Host lifecycle](ADR-mcp-camera-ownership.md) ·
+[Tool contracts](../mcp/README.md)
 
 ## Verification
 

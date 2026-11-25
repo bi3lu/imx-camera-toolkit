@@ -1,7 +1,7 @@
 # Local MCP validation on Jetson
 
-The November 25, 2026 run passed the MCP-001 runtime checks and the MCP-014
-physical smoke and performance checks on the following configuration.
+The November 25, 2026 run passed the MCP runtime checks and the physical camera
+smoke and performance checks on the following configuration.
 
 | Item | Tested configuration |
 | --- | --- |
@@ -22,14 +22,14 @@ physical smoke and performance checks on the following configuration.
   Go MCP SDK 1.8.0 each negotiated `2026-07-28`, listed the three tools with
   snapshots enabled, and decoded a 1280×720 JPEG with matching metadata. Go
   also passed the independent synthetic 1×1 JPEG probe. See the
-  [transport ADR](../adr/ADR-MCP-004-local-sdk-and-transport.md#synthetic-camera-host-results)
+  [transport ADR](../adr/ADR-mcp-local-sdk-and-transport.md#synthetic-camera-host-results)
   for workstation results and the TypeScript transport limitation.
 - CPU and NVMM capture at 720p and 1080p, native CUDA interop and TensorRT/ONNX
   parity passed. The native build verified `GNU_RELRO`, `BIND_NOW` and a
   non-executable stack. Parity also passed with SDK 2.3.0 and with the isolated
   SDK 1.30.0 comparison. The spike decoded physical 1280×720 JPEGs with
   SDK 2.3.0 on both tested revisions and with SDK 1.30.0 on `2025-11-25`.
-  [Runtime decision](../adr/ADR-MCP-001-python-sdk-runtime.md)
+  [Runtime decision](../adr/ADR-mcp-python-sdk-runtime.md)
 - The embedded fixture verified `ready` after publication, stopped state,
   publication after restart, and `BGR_CPU` and `NV12_NVMM` with preview on and
   off. With cached Argus evidence, it reported the attached sensor's five
@@ -39,13 +39,13 @@ physical smoke and performance checks on the following configuration.
   and continued publication after closing the borrowed host. Two requests
   overlapped on one stdio pipe. The fixture simulated a pending snapshot on
   live capture to verify cancellation and disconnect. Observed GPU leases in
-  the checks were released. [Ownership ADR](../adr/ADR-MCP-002-camera-ownership.md)
+  the checks were released. [Ownership ADR](../adr/ADR-mcp-camera-ownership.md)
 - On CPU, a same-publication probe matched the returned server-monotonic age
   of 25.20 ms to the acquisition timestamp. The 1280×720, quality-65 image was
   93,869 bytes, and the response was 125,964 UTF-8 bytes before framing. The
   probe found no EXIF and verified the fixed-quality rejection. The built-in
   GPU branch served HTTP JPEGs and returned `timing_unavailable` for MCP
-  snapshots. [Snapshot ADR](../adr/ADR-MCP-006-bounded-jpeg-snapshots.md)
+  snapshots. [Snapshot ADR](../adr/ADR-mcp-bounded-jpeg-snapshots.md)
 
 ## Matched performance trials
 
@@ -88,6 +88,6 @@ The inference results cover the tested GPU worker and model.
   and Jetson Python 3.11–3.12 were also outside the tested configuration.
 
 Use the [release checklist](../RELEASE_CHECKLIST.md#mcp-release-gates) and the
-[physical SDK procedure](../adr/ADR-MCP-001-python-sdk-runtime.md#validate-on-jetson-orin-nano-super)
+[physical SDK procedure](../adr/ADR-mcp-python-sdk-runtime.md#validate-on-jetson-orin-nano-super)
 to reproduce these checks. Keep the dated results tied to their source
 revision when recording evidence for the final release candidate.

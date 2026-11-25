@@ -416,7 +416,7 @@ timestamp for that encoded frame. The bounded MCP adapter uses this
 provenance to enforce freshness. The GPU preview appsink has no verified
 acquisition correlation, so its existing JPEG interface remains available
 to HTTP consumers. See the
-[bounded snapshot ADR](../../../docs/adr/ADR-MCP-006-bounded-jpeg-snapshots.md).
+[bounded snapshot ADR](../../../docs/adr/ADR-mcp-bounded-jpeg-snapshots.md).
 
 ```python
 from imx_camera_toolkit import Camera, CameraConfig
