@@ -49,10 +49,11 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 
 ## Release gate
 
-- Before tagging v0.9.0, copy the release candidate checkout to a physical
-  Jetson Orin Nano Super with JetPack 6.2.3 and IMX219-77. Run the MCP smoke
-  and native interop checks, record the results, and accept the runtime
-  decision in [ADR-MCP-001](adr/ADR-MCP-001-python-sdk-runtime.md#validate-on-jetson-orin-nano-super).
+- The local MCP SDK decision is accepted for the tested Jetson configuration.
+  Verify the final release candidate against the recorded baseline and
+  collect evidence for the outstanding Jetson checks.
+  [SDK decision](adr/ADR-MCP-001-python-sdk-runtime.md) ·
+  [Physical baseline](mcp/jetson-validation.md#remaining-release-checks)
 - Confirm `GpuCamera()` remains usable without a feature flag and reports the
   stable NV12/NVMM contract.
 - Confirm `preview`, `snapshot`, and `test` accept both `--backend cpu` and
@@ -77,11 +78,18 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 
 ## MCP release gates
 
-- On the Jetson with the `mcp` extra and JetPack system packages available,
-  run the packaged CLI smoke against the connected sensor. Use the installed
-  environment's Python. The test starts the observer and snapshot launches
-  in sequence and emits protocol, status, capability and JPEG metadata as
-  JSON without saving camera images.
+The [November 25, 2026 Jetson run](mcp/jetson-validation.md) passed the
+packaged CPU smoke, SDK and native coexistence, local protocol and client
+checks, CPU/GPU capabilities, shared ownership, JPEG timing and matched
+performance trials at commit `0a22d91`. See the evidence page for the
+remaining production workflow checks and the limits of the tested profile.
+
+When validating the final release candidate, use the following checks to
+compare against that baseline.
+
+- Run the packaged CLI smoke with the `mcp` extra and JetPack system packages
+  available. The test starts the observer and snapshot launches in sequence
+  and emits protocol, status, capability and JPEG metadata as JSON.
 
   ```bash
   IMX_CAMERA_SENSOR=IMX219 IMX_CAMERA_SENSOR_ID=0 \
@@ -89,13 +97,12 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
     tests/hardware/test_mcp_jetson.py
   ```
 
-- On the physical Jetson before v0.9.0, compare `camera_capabilities` with
-  the installed sensor, driver mode descriptors, and read-only Argus
-  inspection. Verify the active CPU and GPU frame formats after publication,
-  then check preview disabled and enabled. Record the sensor, JetPack/L4T,
-  operating resolution and FPS, and observed control and JPEG timing support.
+- Compare `camera_capabilities` with the installed sensor, driver mode
+  descriptors and read-only Argus inspection. Verify the active CPU and GPU
+  frame formats after publication with preview off and on. Record operating
+  resolution, FPS, observed control support and JPEG timing support.
   [MCP capability contract](mcp/README.md#camera-capabilities)
-- Before v0.9.0, run the selected SDK and stdio profile checks in
+- Run the selected SDK and stdio profile checks in
   [ADR-MCP-004](adr/ADR-MCP-004-local-sdk-and-transport.md#workstation-interoperability-evidence)
   against the packaged host. Record supported client and protocol versions,
   JPEG decoding and metadata, unsupported revision handling, cancellation,
@@ -110,30 +117,30 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   missing-runtime message. With the `mcp` extra, check SDK and types versions,
   invalid launch arguments and a synthetic stdio exchange through the CLI.
   [Local installation and launch](mcp/README.md#local-stdio-launch)
-- Before v0.9.0, verify tool registration against the scope names and admin
+- Verify tool registration against the scope names and admin
   behavior in [ADR-MCP-003](adr/ADR-MCP-003-threat-model-and-access-policy.md).
   Record protocol tests for observer defaults, explicit snapshot opt-in,
   direct-call denials, disabled tools and the selected local transport boundary.
   Confirm the local rate and concurrency limits, slot release after
   cancellation or deadline, and the inclusive UTF-8 response limit.
   [Camera tool protocol tests](../tests/integration/test_mcp_camera_tools.py)
-- Before v0.9.0, verify that the packaged tools return the documented domain
+- Verify that the packaged tools return the documented domain
   errors for invalid arguments, exhausted tool budgets, expired deadlines and
   unexpected failures. Verify that diagnostics stay private and malformed
   requests use JSON-RPC errors. [MCP error contract](mcp/README.md#errors-and-mcp-representation)
-- On the physical Jetson before v0.9.0, confirm that `camera_status` reports
-  the configured CPU or GPU path and reaches `ready` after that run's first
-  raw frame, including with JPEG preview disabled. Check the stopped state
+- Confirm that `camera_status` reports the configured CPU or GPU path and
+  reaches `ready` after that run's first raw frame. Check the stopped state
   and confirm a restart requires a new publication.
-- On the physical Jetson before v0.9.0, overlap two calls in one packaged
-  host and record one Argus session and one standalone shutdown. Verify a
-  borrowed camera continues publishing after host shutdown.
+- Overlap two calls on one stdio connection and record one Argus session
+  and one standalone shutdown. Verify a borrowed camera continues
+  publishing after host shutdown.
   [Camera ownership smoke checks](adr/ADR-MCP-002-camera-ownership.md#verification)
-- On the physical Jetson before v0.9.0, decode a CPU MCP snapshot and confirm
-  the acquisition age, fixed-source constraints and matching metadata. Verify
-  that GPU HTTP preview still delivers JPEGs and built-in GPU MCP snapshots
-  return `timing_unavailable` until correlation is established.
+- Decode a CPU MCP snapshot and confirm acquisition age, fixed-source
+  constraints and matching metadata. Verify GPU HTTP JPEG delivery and the
+  built-in GPU MCP snapshot rejection `timing_unavailable`.
   [ADR-MCP-006](adr/ADR-MCP-006-bounded-jpeg-snapshots.md#verification)
+- Compare the matched capture and preview profiles with the recorded
+  [performance baseline](mcp/jetson-validation.md#matched-performance-trials).
 - Before releasing inference tools, verify separate inference grants and the
   response, provenance and payload tests from ADR-MCP-003.
 - Before enabling the remote profile, record MCP-027 review and passing

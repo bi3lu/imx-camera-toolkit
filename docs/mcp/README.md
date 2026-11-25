@@ -325,8 +325,10 @@ uv run --frozen --extra preview --extra mcp --group dev pytest \
 
 The subprocess tests use synthetic capture to exercise ownership,
 partial startup failure, protocol-clean stdout, cancellation, disconnect
-and relaunch, and bounded input and output. The physical camera checks
-remain in the [release checklist](../RELEASE_CHECKLIST.md#mcp-release-gates).
+and relaunch, and bounded input and output. The installed CLI also passed
+physical CPU smoke with Python and Go clients on JetPack 6.2.3. See the
+[Jetson validation results](jetson-validation.md) for tested versions,
+snapshot limits and CPU/GPU behavior.
 
 ## Future inference and controls
 

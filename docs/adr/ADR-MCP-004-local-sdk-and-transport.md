@@ -1,14 +1,14 @@
 # ADR-MCP-004 — Local MCP SDK and transport
 
-**Status** Accepted for v0.9.0. The physical runtime gate remains in
-[ADR-MCP-001](ADR-MCP-001-python-sdk-runtime.md#validate-on-jetson-orin-nano-super).
+**Status** Accepted for v0.9.0. The packaged profile passed on the
+[tested Jetson configuration](../mcp/jetson-validation.md).
 
 ## Release profile
 
 | Concern | Decision |
 | --- | --- |
 | SDK | Pin the optional MCP runtime to `mcp==2.3.0`. The SDK requires `mcp-types==2.3.0` transitively. |
-| Python | Toolkit support is Python 3.10–3.12. The SDK and its types package both require Python 3.10 or later. On Jetson, use the JetPack system Python 3.10 with access to system packages, subject to physical validation. |
+| Python | Toolkit support is Python 3.10–3.12. The SDK and its types package both require Python 3.10 or later. The validated Jetson runtime uses the JetPack system Python 3.10.12 with access to system packages. |
 | Protocol | Target `2026-07-28`. Use `server/discover` to verify capabilities and carry protocol version and client capabilities in each request's `_meta`. |
 | Local transport | The client launches one application subprocess with an absolute executable path, fixed argument vector, minimal environment and private stdio pipes. The launcher supplies grants under ADR-MCP-003. There is no local MCP HTTP listener. |
 | Hosting | Run the SDK in the camera-owning application's Python process. The application owns capture and optional producers; the injected MCP adapters borrow those sources. |

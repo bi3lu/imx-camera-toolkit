@@ -59,10 +59,13 @@ preview source feeding the adapter. The client received matching JPEG and
 metadata, a typed stale error and a cancellable wait. The JPEG decoded to
 1 × 1 pixels with macOS `sips`.
 
-Before release, run the packaged tool on the physical Jetson with the
-configured sensor, JetPack/L4T, output resolution, frame rate and preview
-quality recorded. Verify CPU image decoding and age, existing GPU HTTP
-preview, and the GPU timing rejection. Before enabling built-in GPU MCP
-snapshots, establish acquisition correlation across both branches under
-drops, recovery and restart, and verify conversion into the server's
-monotonic clock domain. MCP-014 calibrates the production limits.
+The physical Jetson run decoded the packaged CPU snapshot and matched the
+returned age to the acquisition time of the same JPEG. The GPU branch
+served HTTP JPEGs while the MCP adapter returned `timing_unavailable`.
+At JPEG quality 65, two of 90 physical 1080p CPU snapshot attempts exceeded
+a payload budget. All 90 attempts at 720p succeeded.
+[Snapshot evidence and trial conditions](../mcp/jetson-validation.md)
+
+Before enabling built-in GPU MCP snapshots, establish acquisition
+correlation across both branches under drops, recovery and restart, and
+verify conversion into the server's monotonic clock domain.
