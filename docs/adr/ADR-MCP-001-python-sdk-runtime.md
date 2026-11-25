@@ -1,23 +1,21 @@
 # ADR-MCP-001 — Python SDK runtime on Jetson
 
-- **MCP-001 status** DONE/BLOCKED
-- **Runtime decision** Proposed, pending physical Jetson validation
+- **MCP-001 status** DONE
+- **Runtime decision** Accepted for the local MCP profile
 - **Workstation evidence** 2026-11-23
+- **Physical Jetson evidence** 2026-11-25
 
-The workstation spike is complete. Development can proceed on `develop` with
-SDK v2 as the working candidate. Before the v0.9.0 release, copy the repository
-to the physical Jetson Orin Nano Super and run the validation below to accept
-the runtime decision.
+Use MCP SDK 2.3.0 in the toolkit process with JetPack system Python and access
+to the system packages. The physical check passed on Orin Nano Super with
+IMX219-77, JetPack 6.2.3 / L4T 36.5.2 and Python 3.10.12.
+[Jetson validation evidence](../mcp/jetson-validation.md)
 
-## Proposed runtime
+## Runtime decision
 
-Test MCP SDK `2.3.0` in the toolkit process using the JetPack system interpreter
-first. The published SDK and its `mcp-types` companion both declare Python
-`>=3.10`, so this candidate can use the existing Python 3.10 JetPack bindings if
-the hardware smoke passes. Keep SDK `1.30.0` as the maintenance-line comparison.
-Both pins are available in the experiment. ADR-MCP-004 selects v2.3.0 for
-the optional local profile. The toolkit currently has zero required
-dependencies and supports Python 3.10–3.12.
+The optional `mcp` extra selects SDK `2.3.0` and its matching `mcp-types`
+package. Both declare Python `>=3.10`. The experiment retains SDK `1.30.0`
+for comparison. The toolkit has zero required dependencies and supports
+Python 3.10–3.12.
 [Local SDK and transport ADR](ADR-MCP-004-local-sdk-and-transport.md) ·
 [MCP SDK 2.3.0](https://pypi.org/project/mcp/2.3.0/) ·
 [mcp-types 2.3.0](https://pypi.org/project/mcp-types/2.3.0/) ·
@@ -25,15 +23,14 @@ dependencies and supports Python 3.10–3.12.
 
 | Candidate | Published support | Evidence |
 | --- | --- | --- |
-| SDK 2.3.0 in-process on Python 3.10–3.12 | Current stable line. Implements the 2026-07-28 discovery protocol and the 2025-11-25 handshake. | Passes both revisions on macOS with a synthetic JPEG. Pending JetPack bindings, physical capture and native interop. |
-| SDK 1.30.0 in-process on Python 3.10–3.12 | Maintenance line for critical and security fixes. Latest advertised revision is 2025-11-25. | Passes the 2025-11-25 handshake on macOS with a synthetic JPEG. The v2 client's automatic discovery probe also falls back successfully, with a validation diagnostic on the v1 server. Pending the same Jetson checks. |
+| SDK 2.3.0 in-process on Python 3.10–3.12 | Implements the 2026-07-28 discovery protocol and the 2025-11-25 handshake. | Passed both revisions with a synthetic JPEG on macOS and a physical JPEG in the Jetson spike. The installed wheel passed physical CPU smoke, NVMM capture and TensorRT/ONNX parity on JetPack Python 3.10.12. |
+| SDK 1.30.0 in-process on Python 3.10–3.12 | Maintenance-line comparison with the 2025-11-25 handshake. | Passed the legacy handshake with a synthetic JPEG on macOS and a physical JPEG on Jetson. The isolated Jetson environment passed NVMM capture and TensorRT/ONNX parity. |
 | SDK v2 in a sidecar | Separate interpreter and process. Requires an authenticated, bounded local camera IPC contract. | Deferred. Revisit if Jetson evidence shows a dependency or process-isolation requirement. Measure IPC round-trip latency and validate peer access and deadlines if this path is prototyped. |
 
 The minimum-Python assumption in the RFC predates these released packages.
 Python 3.11 and 3.12 host installs establish Python package compatibility.
-Any proposed Jetson interpreter must separately pass the binding checks on
-the target image. The workstation protocol evidence supports implementation
-while the physical runtime decision is pending.
+The physical result applies to the tested JetPack system Python 3.10.12.
+Evaluate any alternate interpreter against the bindings on its target image.
 [Upstream releases](https://github.com/modelcontextprotocol/python-sdk/releases) ·
 [SDK protocol versions](https://py.sdk.modelcontextprotocol.io/protocol-versions/) ·
 [Upstream support policy](https://github.com/modelcontextprotocol/python-sdk/security)
@@ -64,7 +61,8 @@ check on Jetson decodes the received JPEG in memory.
   [Upstream advisories](https://github.com/modelcontextprotocol/python-sdk/security/advisories)
 - Ruff, Black and mypy passed. The host suite reported 250 passed, 4 skipped
   and 2 deselected. The skips covered TensorRT parity and the three GStreamer
-  integration tests. Physical CSI capture and real CUDA interop are pending.
+  integration tests. The physical results are recorded in the
+  [Jetson validation evidence](../mcp/jetson-validation.md).
 
 ## Reproduce on a workstation
 
@@ -157,7 +155,7 @@ UV_PROJECT_ENVIRONMENT="$spike_envs/baseline" \
 for sdk in v1 v2; do
   uv venv --python "$jetpack_python" --system-site-packages "$spike_envs/$sdk"
   UV_PROJECT_ENVIRONMENT="$spike_envs/$sdk" \
-    uv sync --project "$spike_dir" --locked --python "$jetpack_python" --group "sdk-$sdk"
+    uv sync --project "$spike_dir" --frozen --python "$jetpack_python" --group "sdk-$sdk"
   "$spike_envs/$sdk/bin/imx-camera" test --backend gpu --sensor-id 0 --json
 done
 "$spike_envs/v2/bin/python" "$spike_dir/client.py" \
@@ -173,9 +171,7 @@ for sdk_pin in mcp==1.30.0 mcp==2.3.0; do
 done
 ```
 
-Record the observed protocol, backend, JPEG byte count, checks that passed or
-were skipped, and the first failure for each candidate. Record any alternate
-Python interpreter and the source of each JetPack binding if it is evaluated.
-Accept the ADR after selecting one runtime with passing physical evidence.
-If every candidate fails, leave the MVP runtime decision open and document
-the concrete incompatibilities.
+The physical run used the archived spike lock with `--frozen` after `--locked`
+requested a lock update. When repeating the comparison, record negotiated
+protocols, backend, JPEG byte counts, skips and the first failure for each
+candidate. Record the source of any alternate interpreter's JetPack bindings.

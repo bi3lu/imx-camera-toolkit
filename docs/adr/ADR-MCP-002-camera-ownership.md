@@ -63,11 +63,9 @@ On a workstation, run the targeted lifecycle suite from the repository root.
 uv run --frozen --extra preview --group dev python -m pytest tests/unit/test_mcp_host.py --no-cov
 ```
 
-On Jetson, extend the physical smoke run with the packaged host. Overlap
-two calls through the same host and correlate them with capture start and
-stop instrumentation. Record one Argus camera session and one shutdown for
-the standalone launch. In a borrowed integration, close the MCP host while
-the parent application still owns capture. Verify continued frame
-publication, then stop the camera through its owner and record one shutdown.
-Record launch settings, session counts and outcomes with the physical gate.
-[Jetson runtime smoke](ADR-MCP-001-python-sdk-runtime.md#validate-on-jetson-orin-nano-super)
+The Jetson run verified one Argus session per capture run and a clean
+standalone shutdown. The embedded fixture overlapped two requests on one
+stdio connection, simulated a pending wait on live capture for cancellation
+and disconnect, and verified continued publication after the borrowed MCP
+host closed. The application then stopped capture and verified fresh
+publication after restart. [Physical ownership evidence](../mcp/jetson-validation.md#runtime-protocol-and-camera-behavior)

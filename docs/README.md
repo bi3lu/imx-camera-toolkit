@@ -9,7 +9,8 @@ guide when choosing between CPU, GPU, MJPEG, WebRTC, and HLS paths.
 | [GPU Camera and YOLO deployment guide](GPU_CAMERA_YOLO_GUIDE.md) | Application and deployment engineers | Prepare JetPack 6.2.3, validate an IMX sensor, export YOLO, build CUDA interop, run the GPU-first example, and deploy it in field mode. |
 | [CPU, GPU, and browser mode guide](GPU_PATH_GUIDE.md) | Developers and architects | Select the correct memory path and understand TensorRT cache, browser transport, and benchmark contracts. |
 | [CPU/GPU release checklist](RELEASE_CHECKLIST.md) | Maintainers | Run host, Jetson, packaging, security, and release gates. |
-| [MCP Python SDK runtime ADR](adr/ADR-MCP-001-python-sdk-runtime.md) | Maintainers | Reproduce the SDK comparison and validate the proposed runtime on Jetson. |
+| [MCP Python SDK runtime ADR](adr/ADR-MCP-001-python-sdk-runtime.md) | Maintainers | Review the selected runtime and reproduce the SDK comparison. |
+| [Local MCP validation on Jetson](mcp/jetson-validation.md) | Maintainers and client integrators | Review physical runtime evidence, the matched benchmarks and outstanding release checks. |
 | [MCP tool contracts](mcp/README.md) | Adapter and transport developers | Implement the camera tools against shared schemas and fixtures. |
 | [Local MCP installation and launch](mcp/README.md#local-stdio-launch) | Client integrators | Install the optional runtime and configure the local stdio command. |
 | [MCP camera ownership ADR](adr/ADR-MCP-002-camera-ownership.md) | Application and transport developers | Bind one primary camera and coordinate host readiness, cancellation, and shutdown. |
