@@ -41,6 +41,8 @@ There are two capture paths:
 
 Both use latest-frame delivery: if processing falls behind, old frames are skipped instead of piling up in a queue. The library also includes camera controls, diagnostics, and optional MJPEG, WebRTC, and HLS previews. It doesn't bundle inference models or tracking logic.
 
+The optional Model Context Protocol (MCP) integration lets a local client read camera status and capabilities and request a JPEG snapshot when enabled. Install the `mcp` extra and follow the [local MCP setup and example](docs/MCP_GUIDE.md).
+
 ## Hardware and requirements
 
 The current compatibility target is an **IMX219-77 on Jetson Orin Nano**, using **JetPack 6.2.3** at 30 FPS. The documented configurations include BGR/CPU capture with 1080p input and 720p output, and NV12/NVMM GPU capture at 720p or 1080p. GPU support for IMX477 is planned, not yet supported.

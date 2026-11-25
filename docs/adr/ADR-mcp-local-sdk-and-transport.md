@@ -1,4 +1,4 @@
-# ADR-MCP-004 — Local MCP SDK and transport
+# MCP ADR — Local MCP SDK and transport
 
 **Status** Accepted for v0.9.0. The packaged profile passed on the
 [tested Jetson configuration](../mcp/jetson-validation.md).
@@ -10,7 +10,7 @@
 | SDK | Pin the optional MCP runtime to `mcp==2.3.0`. The SDK requires `mcp-types==2.3.0` transitively. |
 | Python | Toolkit support is Python 3.10–3.12. The SDK and its types package both require Python 3.10 or later. The validated Jetson runtime uses the JetPack system Python 3.10.12 with access to system packages. |
 | Protocol | Target `2026-07-28`. Use `server/discover` to verify capabilities and carry protocol version and client capabilities in each request's `_meta`. |
-| Local transport | The client launches one application subprocess with an absolute executable path, fixed argument vector, minimal environment and private stdio pipes. The launcher supplies grants under ADR-MCP-003. There is no local MCP HTTP listener. |
+| Local transport | The client launches one application subprocess with an absolute executable path, fixed argument vector, minimal environment and private stdio pipes. The launcher supplies grants under the [local access policy](ADR-mcp-threat-model-and-access-policy.md#local-profile). There is no local MCP HTTP listener. |
 | Hosting | Run the SDK in the camera-owning application's Python process. The application owns capture and optional producers; the injected MCP adapters borrow those sources. |
 
 The SDK v2 API supports discovery, per-request metadata, explicit tool results
@@ -43,7 +43,7 @@ Relaunch starts a fresh process and rediscovers tools. An application with a
 physical sensor gives that sensor one owner. Starting a second subprocess
 against the same sensor is outside this profile; multiple in-flight calls on
 a single host share its sources.
-[Injected lifecycle contract](ADR-MCP-002-camera-ownership.md)
+[Injected lifecycle contract](ADR-mcp-camera-ownership.md)
 
 The subprocess uses private POSIX pipes and a separate stderr stream. Its
 transport reserves stdout for UTF-8 JSON-RPC, one message per line, before
@@ -58,7 +58,7 @@ camera owner closes capture. The one-second write deadline covers the
 transport only. Capture shutdown is governed by its backend.
 [Local launch and verification](../mcp/README.md#local-stdio-launch) ·
 [stdio binding](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio) ·
-[Local scopes and grants](ADR-MCP-003-threat-model-and-access-policy.md#local-profile)
+[Local scopes and grants](ADR-mcp-threat-model-and-access-policy.md#local-profile)
 
 Loopback Streamable HTTP would let several clients attach to one long-lived
 application, including a camera already owned by a web application. It adds
@@ -97,7 +97,7 @@ cleanly with diagnostics on stderr.
 
 The Python client exposes typed image blocks and structured metadata.
 A client UI needs to handle both blocks to display the image and metadata.
-Desktop UI rendering remains a separate MCP-028 check. The local release
+Desktop UI rendering remains a separate compatibility check. The local release
 profile requires modern discovery over private POSIX pipes. SDK 2.3.0 can
 accept legacy stdio initialization, so dispatch must enforce the same grants
 on any request it admits.
@@ -160,15 +160,15 @@ occupied until work completes. Shutdown drains the mapper before releasing
 owned resources, so the application must supply a finite, independent callback.
 
 Cap the detached application JSON at 16 KiB and reject invalid or oversized
-payloads atomically. Compute the payload budget before SDK wrapping. MCP-018
-adds freshness and provenance before SDK exposure. MCP-020 measures the local
-budget on Jetson and MCP-022 applies remote admission and response limits.
+payloads atomically. Compute the payload budget before SDK wrapping. Verify
+freshness and provenance before SDK exposure. Measure the local budget on
+Jetson and enforce remote admission and response limits before enabling remote access.
 [Application inference payload contract](../mcp/README.md#application-inference-payloads)
 
 ## Remote profile follow-up
 
-MCP-021 must select the deployed client/SDK/revision matrix and recheck
-the standards before implementing remote Streamable HTTP. Verify POST
+Select the deployed client/SDK/revision matrix and recheck the standards
+before implementing remote Streamable HTTP. Verify POST
 handling, Accept negotiation, request metadata headers and header/body
 agreement, modern errors and HTTP status mapping, SSE proxy buffering,
 disconnect cancellation and retry semantics. Modern HTTP has no standalone
@@ -178,10 +178,11 @@ behavior under that revision. Check actual client limits against the
 snapshot envelope. Enter the transport lifecycle from the parent ASGI
 lifespan if mounted into the camera application.
 
-Apply ADR-MCP-003's TLS, proxy, exact Host and Origin policy and OAuth
+Apply the remote access policy for TLS, proxies, exact Host and Origin checks, and OAuth
 resource-server requirements. Recheck protected resource metadata and
 challenge behavior, audience and scope on every protected request, and
 non-shared caching for principal-specific results. Complete the remote
 release gates before enabling the profile.
+[Remote access policy](ADR-mcp-threat-model-and-access-policy.md#remote-profile) ·
 [MCP HTTP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization) ·
 [Release checklist](../RELEASE_CHECKLIST.md#mcp-release-gates)

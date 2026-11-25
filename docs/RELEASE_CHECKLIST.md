@@ -52,7 +52,7 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 - The local MCP SDK decision is accepted for the tested Jetson configuration.
   Verify the final release candidate against the recorded baseline and
   collect evidence for the outstanding Jetson checks.
-  [SDK decision](adr/ADR-MCP-001-python-sdk-runtime.md) ·
+  [SDK decision](adr/ADR-mcp-python-sdk-runtime.md) ·
   [Physical baseline](mcp/jetson-validation.md#remaining-release-checks)
 - Confirm `GpuCamera()` remains usable without a feature flag and reports the
   stable NV12/NVMM contract.
@@ -103,13 +103,13 @@ compare against that baseline.
   resolution, FPS, observed control support and JPEG timing support.
   [MCP capability contract](mcp/README.md#camera-capabilities)
 - Run the selected SDK and stdio profile checks in
-  [ADR-MCP-004](adr/ADR-MCP-004-local-sdk-and-transport.md#workstation-interoperability-evidence)
+  [local transport ADR](adr/ADR-mcp-local-sdk-and-transport.md#workstation-interoperability-evidence)
   against the packaged host. Record supported client and protocol versions,
   JPEG decoding and metadata, unsupported revision handling, cancellation,
   clean stdout, EOF and relaunch. Verify partial startup cleanup, the 64 KiB
   input limit and eight outstanding request limit, and shutdown with a
   blocked output pipe. Repeat the
-  [independent Go client probe](adr/ADR-MCP-004-local-sdk-and-transport.md#synthetic-camera-host-results)
+  [independent Go client probe](adr/ADR-mcp-local-sdk-and-transport.md#synthetic-camera-host-results)
   and record the negotiated revision and decoded JPEG dimensions.
   [Stdio transport tests](../tests/integration/test_mcp_stdio.py)
 - Verify the wheel and source distribution in clean Python 3.10–3.12
@@ -123,7 +123,7 @@ compare against that baseline.
   ready status and opening the saved JPEG, along with any unclear steps.
   The target is 15 minutes or less.
 - Verify tool registration against the scope names and admin
-  behavior in [ADR-MCP-003](adr/ADR-MCP-003-threat-model-and-access-policy.md).
+  behavior in the [MCP access policy](adr/ADR-mcp-threat-model-and-access-policy.md).
   Record protocol tests for observer defaults, explicit snapshot opt-in,
   direct-call denials, disabled tools and the selected local transport boundary.
   Confirm the local rate and concurrency limits, slot release after
@@ -139,23 +139,24 @@ compare against that baseline.
 - Overlap two calls on one stdio connection and record one Argus session
   and one standalone shutdown. Verify a borrowed camera continues
   publishing after host shutdown.
-  [Camera ownership smoke checks](adr/ADR-MCP-002-camera-ownership.md#verification)
+  [Camera ownership smoke checks](adr/ADR-mcp-camera-ownership.md#verification)
 - Decode a CPU MCP snapshot and confirm acquisition age, fixed-source
   constraints and matching metadata. Verify GPU HTTP JPEG delivery and the
   built-in GPU MCP snapshot rejection `timing_unavailable`.
-  [ADR-MCP-006](adr/ADR-MCP-006-bounded-jpeg-snapshots.md#verification)
+  [Snapshot verification](adr/ADR-mcp-bounded-jpeg-snapshots.md#verification)
 - Compare the matched capture and preview profiles with the recorded
   [performance baseline](mcp/jetson-validation.md#matched-performance-trials).
 - Verify that the local SDK requires `mcp:inference:read` for
   `inference_status` and that polling leaves worker ownership and result
   publication with the application. Before releasing mapped results, verify
-  the provenance and payload checks from ADR-MCP-003.
-  [Inference status contract](mcp/README.md#inference-status)
+  the provenance and payload checks.
+  [Inference status contract](mcp/README.md#inference-status) ·
+  [MCP threat model](adr/ADR-mcp-threat-model-and-access-policy.md#threats-and-acceptance-evidence)
 - Before releasing `inference_latest`, verify the mapper's JSON limits, sanitized
   failures and admission after a timeout or disconnect. Measure inference
   polling alongside capture and preview on Jetson before claiming performance.
   [Application inference payload contract](mcp/README.md#application-inference-payloads)
-- Before enabling the remote profile, record MCP-027 review and passing
+- Before enabling the remote profile, record the security review and passing
   evidence for issuer and audience validation, scope enforcement, trusted
   proxy and origin policy, request limits, redaction and audit retention.
   Include control and preview authorization tests for any such tools shipped.

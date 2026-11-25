@@ -10,14 +10,14 @@ guide when choosing between CPU, GPU, MJPEG, WebRTC, and HLS paths.
 | [CPU, GPU, and browser mode guide](GPU_PATH_GUIDE.md) | Developers and architects | Select the correct memory path and understand TensorRT cache, browser transport, and benchmark contracts. |
 | [CPU/GPU release checklist](RELEASE_CHECKLIST.md) | Maintainers | Run host, Jetson, packaging, security, and release gates. |
 | [Local MCP camera observer guide](MCP_GUIDE.md) | Client integrators | Use the example to read camera status and save a JPEG over local stdio. |
-| [MCP Python SDK runtime ADR](adr/ADR-MCP-001-python-sdk-runtime.md) | Maintainers | Review the selected runtime and reproduce the SDK comparison. |
+| [MCP Python SDK runtime ADR](adr/ADR-mcp-python-sdk-runtime.md) | Maintainers | Review the selected runtime and reproduce the SDK comparison. |
 | [Local MCP validation on Jetson](mcp/jetson-validation.md) | Maintainers and client integrators | Review physical runtime evidence, the matched benchmarks and outstanding release checks. |
 | [MCP tool contracts](mcp/README.md) | Adapter and transport developers | Implement the camera tools against shared schemas and fixtures. |
 | [Local MCP installation and launch](mcp/README.md#local-stdio-launch) | Client integrators | Install the optional runtime and configure the local stdio command. |
-| [MCP camera ownership ADR](adr/ADR-MCP-002-camera-ownership.md) | Application and transport developers | Bind one primary camera and coordinate host readiness, cancellation, and shutdown. |
-| [MCP threat model and access policy](adr/ADR-MCP-003-threat-model-and-access-policy.md) | Maintainers and integrators | Review local and remote trust boundaries, tool scopes, and security acceptance tests. |
-| [Local MCP SDK and transport ADR](adr/ADR-MCP-004-local-sdk-and-transport.md) | Maintainers and client integrators | Reproduce the versioned stdio profile, protocol errors, snapshot exchange and shutdown behavior. |
-| [Bounded MCP JPEG snapshots](adr/ADR-MCP-006-bounded-jpeg-snapshots.md) | Maintainers and integrators | Review fixed preview sources, acquisition timing, and snapshot verification. |
+| [MCP camera ownership ADR](adr/ADR-mcp-camera-ownership.md) | Application and transport developers | Bind one primary camera and coordinate host readiness, cancellation, and shutdown. |
+| [MCP threat model and access policy](adr/ADR-mcp-threat-model-and-access-policy.md) | Maintainers and integrators | Review local and remote trust boundaries, tool scopes, and security acceptance tests. |
+| [Local MCP SDK and transport ADR](adr/ADR-mcp-local-sdk-and-transport.md) | Maintainers and client integrators | Reproduce the versioned stdio profile, protocol errors, snapshot exchange and shutdown behavior. |
+| [Bounded MCP JPEG snapshots](adr/ADR-mcp-bounded-jpeg-snapshots.md) | Maintainers and integrators | Review fixed preview sources, acquisition timing, and snapshot verification. |
 
 Component-specific details remain next to their implementations:
 

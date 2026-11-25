@@ -1,16 +1,16 @@
-# ADR-MCP-002 — Camera ownership and host lifecycle
+# MCP ADR — Camera ownership and host lifecycle
 
 **Status** Accepted for v0.9.0.
 
 ## One primary camera per host
 
-The v0.9.x single-camera decision from RFC ADR-MCP-007 binds one
-application-selected source to `primary`. All clients and in-flight calls on
-a host share its injected read and snapshot adapters. The application binds
+The v0.9.x single-camera profile binds one application-selected source to
+`primary`. All clients and in-flight calls on a host share its injected read
+and snapshot adapters. The application binds
 both adapters to the same camera and supplies only approved diagnostic
 providers. There is no camera registry or per-client capture. The local
 stdio profile runs the host in the capture application's process.
-[Local SDK and transport](ADR-MCP-004-local-sdk-and-transport.md)
+[Local SDK and transport](ADR-mcp-local-sdk-and-transport.md)
 
 ## Startup and readiness
 
@@ -27,9 +27,9 @@ An explicit standalone launcher may transfer one unstarted camera to its
 host. The launcher constructs the camera and injects both adapters. The
 host starts it once on entry, attempts cleanup if startup fails partway,
 and stops it after its reads drain. The target process must be the only
-owner of that physical sensor. The packaged entry point is covered by
-MCP-011 and MCP-012. A second stdio subprocess aimed at the same sensor
-is outside the launch profile.
+owner of that physical sensor. A second stdio subprocess aimed at the same
+sensor is outside the launch profile.
+[Packaged CLI entry point](../mcp/README.md#local-stdio-launch)
 
 Dispatch becomes available after successful host entry. Camera readiness is
 reported from the existing capture statistics and requires a valid frame
@@ -53,7 +53,7 @@ Diagnostics are cached and nonblocking. Snapshot reads use the adapter's
 cooperative wait with a one-second deadline and have no executor job to drain.
 The stdio transport stops SDK dispatch on disconnect and bounds a blocked
 response write to one second. It exits before the host drains its waits and
-releases owned capture. [Local transport](ADR-MCP-004-local-sdk-and-transport.md#hosting-and-lifecycle)
+releases owned capture. [Local transport](ADR-mcp-local-sdk-and-transport.md#hosting-and-lifecycle)
 
 ## Verification
 

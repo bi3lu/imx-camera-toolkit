@@ -72,7 +72,7 @@ and a separate stderr stream. Stdio carries MCP JSON-RPC and requires no HTTP
 listener or network token. Closing the child's stdin requests graceful
 shutdown. To reconnect, launch a new child after the old one exits. Keep
 requests for the same sensor on the same connection while it is open.
-[Local access policy](adr/ADR-MCP-003-threat-model-and-access-policy.md#local-profile)
+[Local access policy](adr/ADR-mcp-threat-model-and-access-policy.md#local-profile)
 
 | Tool | Result |
 | --- | --- |
@@ -119,4 +119,4 @@ Nano Super with IMX219-77, JetPack 6.2.3 / L4T 36.5.2, and CPython 3.10.12.
 Python MCP 2.3.0 and Go MCP SDK 1.8.0 both passed on that setup. Workstation
 results cover synthetic capture and separate client interoperability checks.
 [Physical Jetson results](mcp/jetson-validation.md) ·
-[Workstation and client compatibility](adr/ADR-MCP-004-local-sdk-and-transport.md#workstation-interoperability-evidence)
+[Workstation and client compatibility](adr/ADR-mcp-local-sdk-and-transport.md#workstation-interoperability-evidence)

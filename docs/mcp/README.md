@@ -45,7 +45,7 @@ All calls in one host share the application's `primary` binding. Capture
 normally belongs to the application, and a standalone launch can explicitly
 transfer its camera to the host. Host startup enables dispatch, while
 capture readiness follows the status contract below.
-[Camera ownership and host lifecycle](../adr/ADR-MCP-002-camera-ownership.md)
+[Camera ownership and host lifecycle](../adr/ADR-mcp-camera-ownership.md)
 
 ## Camera status
 
@@ -158,7 +158,7 @@ that exact JPEG. The CPU adapter uses the time the backend returned the
 frame being encoded. A source without verified acquisition timing returns
 `snapshot_unavailable` with reason `timing_unavailable`. This includes the
 built-in GPU preview branch, which supplies detached JPEGs from a separate
-appsink. [Snapshot source ADR](../adr/ADR-MCP-006-bounded-jpeg-snapshots.md)
+appsink. [Snapshot source ADR](../adr/ADR-mcp-bounded-jpeg-snapshots.md)
 
 Freshness and waiting are independent. With `wait_ms: 0`, an empty slot
 yields `snapshot_unavailable` with reason `no_frame`, and an old frame
@@ -214,7 +214,7 @@ base64 JPEG data. Metadata carries no image data. The selected local
 profile uses the SDK's explicit tool result type and advertises
 `outputSchema`. Clients that only read `content` can still read the same
 metadata from the JSON text block.
-[Local SDK and transport ADR](../adr/ADR-MCP-004-local-sdk-and-transport.md)
+[Local SDK and transport ADR](../adr/ADR-mcp-local-sdk-and-transport.md)
 
 Return tool failures as completed MCP results with `isError: true` and one
 text block containing the error JSON. Clients read the error block before
@@ -226,7 +226,7 @@ response. Local calls reaching an enabled tool with insufficient scope get
 `permission_denied`. Once authorized, validate the domain arguments before
 allocating work capacity. An exhausted tool budget yields `rate_limited`.
 The scope and discovery policy is in
-[ADR-MCP-003](../adr/ADR-MCP-003-threat-model-and-access-policy.md).
+[MCP access policy](../adr/ADR-mcp-threat-model-and-access-policy.md).
 [MCP 2026-07-28 tool specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) ·
 [MCP 2025-11-25 tool specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
 
@@ -239,7 +239,7 @@ metadata matched the JSON text. The supported local profile uses the
 `2026-07-28` revision. The Go SDK independently exercised the synthetic
 camera host and decoded the JPEG. Desktop UI rendering remains a separate
 check.
-[Workstation results and Go probe](../adr/ADR-MCP-004-local-sdk-and-transport.md#synthetic-camera-host-results)
+[Workstation results and Go probe](../adr/ADR-mcp-local-sdk-and-transport.md#synthetic-camera-host-results)
 
 ## Local tool registration
 
@@ -314,7 +314,7 @@ An application already managing capture can call the internal async
 borrowed host. Start capture before serving and close it from the parent
 lifespan after serving returns. The entry claims the process's standard
 descriptors once. Ordinary stdin reads return EOF and ordinary stdout
-writes go to stderr through process exit. The [transport ADR](../adr/ADR-MCP-004-local-sdk-and-transport.md#hosting-and-lifecycle)
+writes go to stderr through process exit. The [transport ADR](../adr/ADR-mcp-local-sdk-and-transport.md#hosting-and-lifecycle)
 details the pipe and shutdown limits.
 
 Run the transport and camera tool tests on a POSIX workstation with the
@@ -413,7 +413,7 @@ projection with server-owned frame timing and identity. The age is measured
 from the input frame timestamp on the server monotonic clock, and
 `inference_time_ms` measures runner duration. A JPEG sequence alone cannot
 establish a match. The SDK exposes `inference_status` today. Registering
-`inference_latest` requires the freshness and provenance checks in MCP-018.
+`inference_latest` requires freshness and frame provenance checks.
 
 ## Future camera controls
 

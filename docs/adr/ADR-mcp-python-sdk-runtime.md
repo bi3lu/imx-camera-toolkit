@@ -1,6 +1,5 @@
-# ADR-MCP-001 — Python SDK runtime on Jetson
+# MCP ADR — Python SDK runtime on Jetson
 
-- **MCP-001 status** DONE
 - **Runtime decision** Accepted for the local MCP profile
 - **Workstation evidence** 2026-11-23
 - **Physical Jetson evidence** 2026-11-25
@@ -16,7 +15,7 @@ The optional `mcp` extra selects SDK `2.3.0` and its matching `mcp-types`
 package. Both declare Python `>=3.10`. The experiment retains SDK `1.30.0`
 for comparison. The toolkit has zero required dependencies and supports
 Python 3.10–3.12.
-[Local SDK and transport ADR](ADR-MCP-004-local-sdk-and-transport.md) ·
+[Local SDK and transport ADR](ADR-mcp-local-sdk-and-transport.md) ·
 [MCP SDK 2.3.0](https://pypi.org/project/mcp/2.3.0/) ·
 [mcp-types 2.3.0](https://pypi.org/project/mcp-types/2.3.0/) ·
 [MCP SDK 1.30.0](https://pypi.org/project/mcp/1.30.0/)
