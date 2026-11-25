@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
 from ..inference.contracts import InferenceResult
@@ -17,6 +18,7 @@ from .contracts import (
 )
 from .errors import MCPError
 from .inference_adapter import InferenceReadAdapter
+from .inference_serialization import InferencePayload, InferencePayloadSerializer
 from .snapshot_adapter import CameraSnapshotAdapter
 from .validation import (
     EMPTY_ARGUMENTS,
@@ -25,6 +27,7 @@ from .validation import (
 )
 
 _MAX_ACTIVE_SNAPSHOTS = 2
+_MAPPING_TIMEOUT_NS = 250_000_000
 
 
 class CaptureLifecycle(Protocol):
@@ -43,8 +46,8 @@ class MCPHost:
     """Share one binding for the lifetime of an application host.
 
     Enter and use each host on one event loop. The application supplies the
-    adapters for its primary camera. The host owns snapshot wait tasks and,
-    only when explicitly supplied, the standalone application camera.
+    adapters for its primary camera. The host owns snapshot wait tasks, its
+    optional mapper thread and, when supplied, the standalone camera.
     Diagnostics must use nonblocking cached reads. Callers enforce tool
     authorization and request rate limits before dispatch.
     """
@@ -56,6 +59,7 @@ class MCPHost:
         *,
         owned_camera: CaptureLifecycle | None = None,
         inference_adapter: InferenceReadAdapter | None = None,
+        inference_serializer: InferencePayloadSerializer | None = None,
     ) -> None:
         """Bind the adapters without opening or reading the source.
 
@@ -65,11 +69,25 @@ class MCPHost:
             owned_camera: Unstarted primary camera transferred by an explicit
                 standalone application. Omit for application-owned capture.
             inference_adapter: Cached reads from an application-owned worker.
+            inference_serializer: Optional projection for this inference source.
+
+        Raises:
+            ValueError: If a mapper is configured without an inference source.
         """
+        if inference_serializer is not None and inference_adapter is None:
+            raise ValueError("an inference mapper requires a bound inference source")
+
         self._read_adapter = read_adapter
         self._snapshot_adapter = snapshot_adapter
         self._owned_camera = owned_camera
         self._inference_adapter = inference_adapter
+        self._inference_serializer = inference_serializer
+        self._mapping_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="mcp-inference")
+            if inference_serializer is not None
+            else None
+        )
+        self._mapping: asyncio.Future[InferencePayload] | None = None
         self._entered = False
         self._accepting = False
         self._snapshots: dict[asyncio.Task[CameraSnapshot], bool] = {}
@@ -160,6 +178,42 @@ class MCPHost:
 
         return self._inference_adapter.latest_result()
 
+    async def inference_payload(self, result: InferenceResult) -> InferencePayload:
+        """Map the caller's already sampled result without reading the slot again.
+
+        The caller applies freshness policy before passing the result here.
+        Admission stays occupied until the callback and JSON checks finish.
+
+        Raises:
+            MCPError: If dispatch is closed, no mapper is configured, or the
+                mapping is busy, exceeds its deadline or fails validation.
+            asyncio.CancelledError: If the caller cancels the wait.
+        """
+        self._require_running()
+        serializer = self._inference_serializer
+        executor = self._mapping_executor
+
+        if serializer is None or executor is None:
+            raise MCPError("inference_not_configured")
+
+        if self._mapping is not None:
+            raise MCPError("rate_limited")
+
+        deadline_ns = time.monotonic_ns() + _MAPPING_TIMEOUT_NS
+        future = asyncio.get_running_loop().run_in_executor(
+            executor, serializer.serialize, result
+        )
+        self._mapping = future
+        future.add_done_callback(self._forget_mapping)
+
+        remaining = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+        done, _ = await asyncio.wait((future,), timeout=remaining)
+
+        if not done or time.monotonic_ns() >= deadline_ns:
+            raise MCPError("request_timeout")
+
+        return future.result()
+
     async def snapshot(
         self,
         arguments: object = EMPTY_ARGUMENTS,
@@ -209,7 +263,7 @@ class MCPHost:
             raise
 
     async def aclose(self) -> None:
-        """Close admission, cancel pending reads and release owned capture once.
+        """Close admission, cancel snapshot waits and drain active mapping.
 
         Propagate caller cancellation after cleanup finishes so an enclosing
         application lifespan can safely release the borrowed sources.
@@ -244,8 +298,20 @@ class MCPHost:
         if snapshots:
             await asyncio.gather(*snapshots, return_exceptions=True)
 
+        if self._mapping is not None:
+            await asyncio.gather(self._mapping, return_exceptions=True)
+        if self._mapping_executor is not None:
+            self._mapping_executor.shutdown()
+
         if self._entered and self._owned_camera is not None:
             self._owned_camera.stop()
+
+    def _forget_mapping(self, future: asyncio.Future[InferencePayload]) -> None:
+        """Release admission and observe failures even after caller disconnect."""
+        self._mapping = None
+
+        if not future.cancelled():
+            future.exception()
 
     def _cancel_snapshot(self, task: asyncio.Task[CameraSnapshot]) -> None:
         """Request cancellation once so a second disconnect cannot interrupt cleanup."""
