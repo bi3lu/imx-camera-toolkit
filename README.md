@@ -134,6 +134,7 @@ The library handles capture, camera settings, and transport. Your application re
 
 ## Documentation
 
+- [Local MCP camera observer](docs/MCP_GUIDE.md) — read camera status and save an optional JPEG on Jetson with the `mcp` extra
 - [Documentation index](https://github.com/bi3lu/imx-camera-toolkit/blob/main/docs/README.md) — architecture and component references
 - [CPU, GPU, and browser modes](https://github.com/bi3lu/imx-camera-toolkit/blob/main/docs/GPU_PATH_GUIDE.md) — choosing an API, buffer lifetimes, and streaming options
 - [Camera hardware](https://github.com/bi3lu/imx-camera-toolkit/blob/main/imx_camera_toolkit/_internal/camera/README.md) — supported profiles, sensor modes, and validation

@@ -117,6 +117,11 @@ compare against that baseline.
   missing-runtime message. With the `mcp` extra, check SDK and types versions,
   invalid launch arguments and a synthetic stdio exchange through the CLI.
   [Local installation and launch](mcp/README.md#local-stdio-launch)
+- Ask a reader who did not write the [local observer guide](MCP_GUIDE.md) to
+  run both example commands on a working Jetson with dependencies already
+  installed. Record the elapsed time from opening the guide to verifying
+  ready status and opening the saved JPEG, along with any unclear steps.
+  The target is 15 minutes or less.
 - Verify tool registration against the scope names and admin
   behavior in [ADR-MCP-003](adr/ADR-MCP-003-threat-model-and-access-policy.md).
   Record protocol tests for observer defaults, explicit snapshot opt-in,
