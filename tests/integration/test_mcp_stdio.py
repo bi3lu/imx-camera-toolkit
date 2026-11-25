@@ -19,6 +19,12 @@ from imx_camera_toolkit import CameraConfig, CameraOpenError, CameraStats
 from imx_camera_toolkit._internal import cli
 from imx_camera_toolkit._internal.camera.publishing.jpeg_slot import JPEGPreview
 from imx_camera_toolkit._internal.mcp import launcher
+from imx_camera_toolkit._internal.mcp.contracts import CameraSnapshot
+from imx_camera_toolkit._internal.mcp.snapshot_adapter import CameraSnapshotAdapter
+from imx_camera_toolkit._internal.mcp.validation import (
+    EMPTY_ARGUMENTS,
+    parse_snapshot_input,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -51,7 +57,7 @@ class _Camera:
         """Record the first stop without emitting wire data."""
         assert self.running
         self.running = False
-        print("capture stopped")
+        print("capture stopped", flush=True)
 
     def stats(self) -> CameraStats:
         """Return diagnostics for the one owned camera."""
@@ -67,6 +73,27 @@ class _Camera:
         return JPEGPreview("running", self.config.enable_preview, True, 1, 1, 65, None)
 
 
+class _GatedSnapshotAdapter(CameraSnapshotAdapter):
+    """Leave positive waits pending until the host cancels them."""
+
+    async def snapshot(
+        self,
+        arguments: object = EMPTY_ARGUMENTS,
+        *,
+        deadline_ns: int | None = None,
+    ) -> CameraSnapshot:
+        """Signal entry and cleanup, using the requested wait as a fixture label."""
+        wait_ms = parse_snapshot_input(arguments, self.limits).wait_ms
+        if wait_ms == 0:
+            return await super().snapshot(arguments, deadline_ns=deadline_ns)
+        try:
+            print(f"snapshot {wait_ms} entered", flush=True)
+            await asyncio.Future[None]()
+        finally:
+            print(f"snapshot {wait_ms} exited", flush=True)
+        raise AssertionError("fixture wait unexpectedly completed")
+
+
 def _launch(profile: str) -> int:
     """Run the actual entry point with a noisy camera and process exit hook."""
 
@@ -78,8 +105,16 @@ def _launch(profile: str) -> int:
     atexit.register(os.write, 1, b"process exited\n")
     with patch.object(launcher, "Camera", camera):
         args = ["mcp", "--sensor-id", "2"]
-        if profile == "snapshot":
+        if profile in {"snapshot", "overlap"}:
             args.append("--enable-snapshot")
+        if profile == "overlap":
+            from imx_camera_toolkit._internal.mcp import sdk_server
+
+            with (
+                patch.object(launcher, "CameraSnapshotAdapter", _GatedSnapshotAdapter),
+                patch.object(sdk_server, "_REQUEST_TIMEOUT_NS", 30_000_000_000),
+            ):
+                return cli.main(args)
         return cli.main(args)
 
 
@@ -179,6 +214,135 @@ def test_owned_stdio_releases_partial_startup() -> None:
             assert stderr.count(b"capture stopped\n") == 1
 
     asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+def test_stdio_rejects_unsupported_revision_and_allows_discovery_retry() -> None:
+    """Return the negotiated revision on the same pipe after a rejected revision."""
+    pytest.importorskip("mcp")
+
+    async def scenario() -> None:
+        async with _process() as process:
+            await _request(
+                process,
+                1,
+                "server/discover",
+                _meta={
+                    **_META,
+                    "io.modelcontextprotocol/protocolVersion": "2099-01-01",
+                },
+            )
+            rejected = await _response(process)
+            assert rejected["id"] == 1
+            assert rejected["error"]["code"] == -32022
+            assert rejected["error"]["data"] == {
+                "requested": "2099-01-01",
+                "supported": ["2026-07-28"],
+            }
+            await _request(process, 2, "server/discover")
+            retry = await _response(process)
+            assert retry["id"] == 2
+            assert retry["result"]["supportedVersions"] == ["2026-07-28"]
+            stdout, _ = await process.communicate(input=b"")
+            assert stdout == b""
+            assert process.returncode == 0
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+def test_stdio_reuses_snapshot_slot_after_wait_deadline() -> None:
+    """Return a typed timeout and admit another read with the same camera."""
+    pytest.importorskip("mcp")
+
+    async def scenario() -> None:
+        async with _process("snapshot") as process:
+            for request_id in (1, 2):
+                await _request(
+                    process,
+                    request_id,
+                    "tools/call",
+                    name="camera_snapshot",
+                    arguments={"wait_ms": 20},
+                )
+                reply = await _response(process)
+                assert reply["id"] == request_id
+                result = reply["result"]
+                assert result["isError"] is True
+                assert "structuredContent" not in result
+                assert len(result["content"]) == 1
+                assert json.loads(result["content"][0]["text"]) == {
+                    "schema_version": 1,
+                    "code": "request_timeout",
+                    "message": "Request timed out.",
+                    "retryable": True,
+                }
+            await _request(process, 3, "tools/call", name="camera_snapshot")
+            reply = await _response(process)
+            assert reply["id"] == 3
+            error = json.loads(reply["result"]["content"][0]["text"])
+            assert error["code"] == "snapshot_unavailable"
+            assert error["details"] == {"reason": "no_frame"}
+            stdout, stderr = await process.communicate(input=b"")
+            assert stdout == b""
+            assert process.returncode == 0
+            assert stderr.count(b"capture started\n") == 1
+            assert stderr.count(b"capture stopped\n") == 1
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+def test_stdio_concurrent_requests_share_capture_and_release_cancelled_slot() -> None:
+    """Reject a third snapshot, admit a replacement, and drain before one stop."""
+    pytest.importorskip("mcp")
+
+    async def scenario() -> None:
+        async with _process("overlap") as process:
+            assert process.stderr is not None and process.stdin is not None
+            assert await process.stderr.readline() == b"capture started\n"
+
+            async def snapshot(request_id: int) -> None:
+                """Use the request ID to identify the corresponding fixture wait."""
+                await _request(
+                    process,
+                    request_id,
+                    "tools/call",
+                    name="camera_snapshot",
+                    arguments={"wait_ms": request_id},
+                )
+
+            await snapshot(1)
+            assert await process.stderr.readline() == b"snapshot 1 entered\n"
+            await snapshot(2)
+            assert await process.stderr.readline() == b"snapshot 2 entered\n"
+            await snapshot(3)
+            rejected = await _response(process)
+            assert rejected["id"] == 3
+            assert rejected["result"]["isError"] is True
+            assert (
+                json.loads(rejected["result"]["content"][0]["text"])["code"]
+                == "rate_limited"
+            )
+            await _request(process, 4, "tools/call", name="camera_status")
+            status = await _response(process)
+            assert status["id"] == 4
+            assert status["result"]["structuredContent"]["state"] == "ready"
+
+            process.stdin.write(
+                b'{"jsonrpc":"2.0","method":"notifications/cancelled",'
+                b'"params":{"requestId":1}}\n'
+            )
+            await process.stdin.drain()
+            assert await process.stderr.readline() == b"snapshot 1 exited\n"
+            await snapshot(5)
+            assert await process.stderr.readline() == b"snapshot 5 entered\n"
+
+            stdout, stderr = await process.communicate(input=b"")
+            assert all("error" in json.loads(line) for line in stdout.splitlines())
+            assert process.returncode == 0
+            cleanup = stderr.splitlines()
+            assert set(cleanup[:2]) == {b"snapshot 2 exited", b"snapshot 5 exited"}
+            assert cleanup[2:] == [b"capture stopped", b"process exited"]
+
+    asyncio.run(asyncio.wait_for(scenario(), 15))
 
 
 @pytest.mark.parametrize("disconnect", [False, True], ids=["cancel", "eof"])
