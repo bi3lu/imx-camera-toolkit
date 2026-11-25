@@ -77,6 +77,18 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
 
 ## MCP release gates
 
+- On the Jetson with the `mcp` extra and JetPack system packages available,
+  run the packaged CLI smoke against the connected sensor. Use the installed
+  environment's Python. The test starts the observer and snapshot launches
+  in sequence and emits protocol, status, capability and JPEG metadata as
+  JSON without saving camera images.
+
+  ```bash
+  IMX_CAMERA_SENSOR=IMX219 IMX_CAMERA_SENSOR_ID=0 \
+    .venv/bin/python -m pytest -m hardware -s --no-cov \
+    tests/hardware/test_mcp_jetson.py
+  ```
+
 - On the physical Jetson before v0.9.0, compare `camera_capabilities` with
   the installed sensor, driver mode descriptors, and read-only Argus
   inspection. Verify the active CPU and GPU frame formats after publication,
