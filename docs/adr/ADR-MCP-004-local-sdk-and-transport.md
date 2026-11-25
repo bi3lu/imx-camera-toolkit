@@ -150,6 +150,21 @@ cp tests/integration/mcp_go_client.go "$probe_dir/"
 )
 ```
 
+## Application inference serialization
+
+For v0.9.1 the camera-owning process may supply one explicitly versioned
+model-neutral projection of a cached inference result. Use one dedicated mapper
+thread per configured host, one active mapping and zero queued calls. The
+250 ms deadline bounds the request wait. Timeout and disconnect leave admission
+occupied until work completes. Shutdown drains the mapper before releasing
+owned resources, so the application must supply a finite, independent callback.
+
+Cap the detached application JSON at 16 KiB and reject invalid or oversized
+payloads atomically. Compute the payload budget before SDK wrapping. MCP-018
+adds freshness and provenance before SDK exposure. MCP-020 measures the local
+budget on Jetson and MCP-022 applies remote admission and response limits.
+[Application inference payload contract](../mcp/README.md#application-inference-payloads)
+
 ## Remote profile follow-up
 
 MCP-021 must select the deployed client/SDK/revision matrix and recheck

@@ -151,6 +151,10 @@ compare against that baseline.
   publication with the application. Before releasing mapped results, verify
   the provenance and payload checks from ADR-MCP-003.
   [Inference status contract](mcp/README.md#inference-status)
+- Before releasing `inference_latest`, verify the mapper's JSON limits, sanitized
+  failures and admission after a timeout or disconnect. Measure inference
+  polling alongside capture and preview on Jetson before claiming performance.
+  [Application inference payload contract](mcp/README.md#application-inference-payloads)
 - Before enabling the remote profile, record MCP-027 review and passing
   evidence for issuer and audience validation, scope enforcement, trusted
   proxy and origin policy, request limits, redaction and audit retention.

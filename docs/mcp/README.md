@@ -367,21 +367,55 @@ filter. The application owns worker startup, inference and shutdown.
 Polling reads cached data without waiting for a new result. Each response is
 detached before transport writes.
 
-## Future inference results and controls
+## Application inference payloads
 
-`InferenceLatest` defines a draft envelope for the latest result published
-by an application-owned worker. The application supplies `source_id`,
-`model_id`, a versioned `payload_schema` identifier and a JSON object
-matching that schema. The identifier is descriptive and requires no network
-lookup. The result age is elapsed server monotonic time since result
-publication. `inference_time_ms` measures runner duration when available.
-`frame_sequence` identifies the input in `raw_capture` when known. There is
-no implied correspondence to a JPEG sequence. The host can already read
-one cached result for internal processing. The SDK tool follows application
-serialization and freshness enforcement. The future adapter must bound
-serialized bytes and collection sizes according to the application schema
-and return `payload_too_large` on overflow. The envelope excludes tensors,
-device buffers and overlays.
+An application can configure the internal `InferencePayloadSerializer` as
+the `inference_serializer` on its `MCPHost`, alongside the bound inference
+adapter. Configure `source_id`, `model_id`, and `payload_schema` explicitly.
+IDs use 1–128 printable ASCII characters without spaces. The schema identifier
+uses 1–256 of those characters and includes the application schema version,
+for example `application/vnd.example.detector.v1+json`. The identifier
+requires no network lookup. The application owns the payload's schema and
+chooses which fields to disclose.
+
+The synchronous mapper receives one cached `InferenceResult` and returns a
+new or exclusively owned JSON object. Read approved values already available
+on the host. Keep the callback short and bounded, and avoid external I/O,
+GPU transfers, runner calls and waits on capture. Return plain dicts, lists,
+strings, booleans, nulls and finite numbers. Integers must fit within
+±9,007,199,254,740,991. The mapper must leave the returned containers stable
+while the host validates and detaches them. The envelope includes only the
+mapper's approved JSON projection and explicit descriptors. Raw tensor
+descriptors, binary buffers, overlay objects, resource handles and arbitrary
+result metadata are excluded from automatic projection.
+
+| Limit | Per mapping |
+| --- | --- |
+| Work slots | One active callback per host and zero queued calls. |
+| Deadline | 250 ms including executor dispatch and JSON validation. |
+| Encoded payload | 16 KiB of compact, ASCII-escaped JSON, including JSON syntax. |
+| Containers | Eight levels including the root object, with up to 128 members per object or array. |
+| Aggregate values | 1,024 values, counting the root, nested containers and scalar values. |
+
+The mapper runs outside capture and inference locks on a dedicated host thread.
+An occupied slot returns `rate_limited`. A deadline returns `request_timeout`
+and a disconnect cancels the caller's wait. In both cases the slot remains
+occupied until the callback and validation finish. Host shutdown drains active
+mapping before releasing owned capture, so the callback must finish independently
+of the request and application shutdown. Missing mapper configuration returns
+`inference_not_configured` on the internal mapping path. Invalid JSON or a
+mapper exception returns `internal_error`. Limit violations return
+`payload_too_large` without partial data. Error responses exclude mapper
+details and payload values.
+
+`InferenceLatest` is the draft response envelope. It combines the application
+projection with server-owned frame timing and identity. The age is measured
+from the input frame timestamp on the server monotonic clock, and
+`inference_time_ms` measures runner duration. A JPEG sequence alone cannot
+establish a match. The SDK exposes `inference_status` today. Registering
+`inference_latest` requires the freshness and provenance checks in MCP-018.
+
+## Future camera controls
 
 For `camera_set_controls`, the proposed input is `camera_id` and a
 nonempty `controls` object with an explicit, server-advertised allowlist of
