@@ -97,10 +97,10 @@ cleanly with diagnostics on stderr.
 
 The Python client exposes typed image blocks and structured metadata.
 A client UI needs to handle both blocks to display the image and metadata.
-Visual behavior in desktop clients and a second independent client are
-pending MCP-028. Handshake-only clients and HTTP-only clients are outside
-the local release profile. SDK 2.3.0 can accept legacy stdio initialization,
-so dispatch must enforce the same grants on any request it admits.
+Desktop UI rendering remains a separate MCP-028 check. The local release
+profile requires modern discovery over private POSIX pipes. SDK 2.3.0 can
+accept legacy stdio initialization, so dispatch must enforce the same grants
+on any request it admits.
 
 Run from the repository root on a workstation. The optional macOS commands
 below render the JPEG received by the client to a PNG and report its dimensions.
@@ -115,6 +115,39 @@ uv run --project "$spike_dir" --locked --group sdk-v2 \
   python "$spike_dir/probe_profile.py" --jpeg-output "$render_dir/received.jpg"
 sips -s format png "$render_dir/received.jpg" --out "$render_dir/received.png"
 sips -g pixelWidth -g pixelHeight "$render_dir/received.png"
+```
+
+### Synthetic camera host results
+
+These results use the production camera tool factory and stdio transport with
+a synthetic source on macOS ARM64. Each stdio launch has one connection.
+The overlap test sends concurrent requests over that connection and verifies
+one capture startup, shared snapshot admission, and cleanup before one stop.
+The relaunch test opens a fresh process after EOF.
+
+| Client | Environment | Revision and outcome |
+| --- | --- | --- |
+| Python SDK 2.3.0 and raw JSON-RPC assertions | CPython 3.10.20, 3.11.13, 3.12.0 | `2026-07-28`. All 14 host protocol cases pass. They cover discovery, policy, all three calls, malformed parameters, JPEG freshness and limits, deadline, cancellation, EOF, relaunch and unsupported revision. |
+| Go SDK 1.8.0 | Go 1.26.11, CPython 3.10.20, 3.11.13, 3.12.0, Python SDK 2.3.0 | `2026-07-28`. Discovery, listing and all three calls pass. Go's JPEG decoder returns a 1×1 image, and the JSON text and structured metadata match. |
+| TypeScript SDK 2.4.0, built-in stdio transport | Node.js 26.7.0, CPython 3.10.20 | Discovery closes before negotiation. The launcher supplies socket descriptors on this host, and the server requires POSIX pipes. |
+
+Run the [Go probe](../../tests/integration/mcp_go_client.go) on a workstation
+with Go 1.25 or newer. The probe runs from a temporary module and uses the
+project's Python test environment for the synthetic server.
+[Go SDK release](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)
+
+```bash
+uv sync --frozen --extra preview --extra mcp --group dev
+project_dir="$PWD"
+probe_dir=$(mktemp -d)
+cp tests/integration/mcp_go_client.go "$probe_dir/"
+(
+  cd "$probe_dir"
+  go mod init imx-mcp-probe
+  go get github.com/modelcontextprotocol/go-sdk/mcp@v1.8.0
+  go run . "$project_dir/.venv/bin/python" \
+    "$project_dir/tests/integration/test_mcp_camera_tools.py"
+)
 ```
 
 ## Remote profile follow-up

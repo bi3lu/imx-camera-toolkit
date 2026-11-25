@@ -89,7 +89,9 @@ JetPack/L4T version, sensor, cooling state, model hash, and TensorRT version.
   JPEG decoding and metadata, unsupported revision handling, cancellation,
   clean stdout, EOF and relaunch. Verify partial startup cleanup, the 64 KiB
   input limit and eight outstanding request limit, and shutdown with a
-  blocked output pipe. Record the independent client outcome.
+  blocked output pipe. Repeat the
+  [independent Go client probe](adr/ADR-MCP-004-local-sdk-and-transport.md#synthetic-camera-host-results)
+  and record the negotiated revision and decoded JPEG dimensions.
   [Stdio transport tests](../tests/integration/test_mcp_stdio.py)
 - Verify the wheel and source distribution in clean Python 3.10–3.12
   environments. With the base install, check core imports, MCP help and the

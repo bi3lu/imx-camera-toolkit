@@ -234,8 +234,10 @@ success results and a typed stale error from an SDK 1.30.0 server on
 `2025-11-25` and an SDK 2.3.0 server on both `2025-11-25` and `2026-07-28`.
 On all three runs the JPEG bytes matched the fixture and the structured
 metadata matched the JSON text. The supported local profile uses the
-`2026-07-28` revision. Independent client UI verification is tracked
-separately. The probes used synthetic data.
+`2026-07-28` revision. The Go SDK independently exercised the synthetic
+camera host and decoded the JPEG. Desktop UI rendering remains a separate
+check.
+[Workstation results and Go probe](../adr/ADR-MCP-004-local-sdk-and-transport.md#synthetic-camera-host-results)
 
 ## Local tool registration
 
@@ -254,16 +256,20 @@ On timeout or disconnect the host requests cancellation and keeps the
 slot occupied until the snapshot task exits. Preview polling is cooperative
 and cached diagnostics and size-bounded JPEG serialization run inline.
 
-Run the [camera tool protocol tests](../../tests/integration/test_mcp_camera_tools.py)
-on a workstation with the pinned SDK and pytest installed:
+Run the camera tool and stdio protocol tests on a workstation.
 
 ```bash
-python -m pytest tests/integration/test_mcp_camera_tools.py -q
+uv sync --frozen --extra preview --extra mcp --group dev
+uv run --no-sync pytest \
+  tests/integration/test_mcp_stdio.py tests/integration/test_mcp_camera_tools.py
 ```
 
 These tests use a synthetic camera and an SDK subprocess. They exercise
 observer defaults, disabled and unknown names, missing grants, successful
-calls, argument validation, rate limits, and the exact UTF-8 response ceiling.
+calls, argument validation, JPEG freshness, rate limits, and the exact UTF-8
+response ceiling. The stdio checks also cover unsupported revision retry,
+overlapping snapshot requests sharing one capture, slot release after timeout
+or cancellation, and shutdown before relaunch.
 
 ## Local stdio launch
 
