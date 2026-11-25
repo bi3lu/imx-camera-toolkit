@@ -459,12 +459,48 @@
       "minimum": 0,
       "maximum": 9007199254740991
     },
-    "InferenceLatest": {
+    "InferencePayload": {
       "type": "object",
       "properties": {
+        "source_id": { "$ref": "#/$defs/InferenceIdentifier" },
+        "model_id": { "$ref": "#/$defs/InferenceIdentifier" },
+        "payload_schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "not": { "pattern": "[^!-~]" }
+        },
+        "payload": { "$ref": "#/$defs/InferencePayloadObject" }
+      },
+      "required": ["source_id", "model_id", "payload_schema", "payload"]
+    },
+    "InferenceIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "not": { "pattern": "[^!-~]" }
+    },
+    "InferencePayloadObject": {
+      "type": "object",
+      "maxProperties": 128,
+      "additionalProperties": { "$ref": "#/$defs/InferencePayloadValue" }
+    },
+    "InferencePayloadValue": {
+      "anyOf": [
+        { "type": ["null", "boolean", "number", "string"] },
+        {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/InferencePayloadValue" }
+        },
+        { "$ref": "#/$defs/InferencePayloadObject" }
+      ]
+    },
+    "InferenceLatest": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/InferencePayload" }],
+      "properties": {
         "schema_version": { "const": 1 },
-        "source_id": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "model_id": { "type": "string", "minLength": 1, "maxLength": 128 },
         "frame_sequence": {
           "anyOf": [
             { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
@@ -481,21 +517,15 @@
             { "type": "number", "minimum": 0 },
             { "type": "null" }
           ]
-        },
-        "payload_schema": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "payload": { "type": "object" }
+        }
       },
       "required": [
         "schema_version",
-        "source_id",
-        "model_id",
         "frame_sequence",
         "sequence_domain",
         "age_ms",
         "age_clock",
-        "inference_time_ms",
-        "payload_schema",
-        "payload"
+        "inference_time_ms"
       ],
       "if": {
         "properties": {
@@ -511,7 +541,8 @@
         "properties": {
           "sequence_domain": { "const": "raw_capture" }
         }
-      }
+      },
+      "unevaluatedProperties": false
     }
   }
 }
