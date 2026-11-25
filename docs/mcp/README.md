@@ -1,7 +1,8 @@
 # MCP tool contracts
 
-The approved camera tool contracts target v0.9.0. The inference and control
-sections record extension points for later releases.
+The approved camera tool contracts target v0.9.0. The application-bound
+inference status tool targets v0.9.1. The remaining inference and control
+sections describe draft contracts.
 
 ## Contract and compatibility
 
@@ -15,6 +16,7 @@ definitions to validate, the input validity, and the expected outcome kind.
 | `camera_status` | `CameraInput` | `CameraStatus` |
 | `camera_capabilities` | `CameraInput` | `CameraCapabilities` |
 | `camera_snapshot` | `SnapshotInput` | `SnapshotMetadata` plus one JPEG |
+| `inference_status` | `InferenceStatusInput` | `InferenceStatus` |
 
 The camera ID is case-sensitive. Omitting it selects `primary`, the single
 registered camera. Explicit arguments must form an object. Unknown keys,
@@ -192,7 +194,7 @@ details instead of the human-readable message. Use allowlisted details only.
 | `request_timeout` | Effective tool deadline expired. | Yes |
 | `payload_too_large` | Response exceeds a byte budget. | No |
 | `internal_error` | Unexpected tool execution failure. | No |
-| `inference_not_configured` | Future inference tool has no configured result source. | No |
+| `inference_not_configured` | Inference tool has no configured result source. | No |
 | `no_inference_result` | A configured source has yet to publish a result. | Yes |
 | `stale_inference_result` | Latest result fails the age constraint. | Yes, after a new result |
 
@@ -330,7 +332,42 @@ physical CPU smoke with Python and Go clients on JetPack 6.2.3. See the
 [Jetson validation results](jetson-validation.md) for tested versions,
 snapshot limits and CPU/GPU behavior.
 
-## Future inference and controls
+## Inference status
+
+An application can bind its existing `InferenceConsumer` using the internal
+`InferenceReadAdapter.from_worker(worker)` and pass the adapter to `MCPHost`
+as `inference_adapter`. Enable `inference_status` and grant
+`mcp:inference:read` in the trusted launcher. The default local tool set
+and the standalone camera CLI leave it disabled. Omit arguments or send
+`{}`. The host uses one application-bound inference source.
+
+| State | Source condition |
+| --- | --- |
+| `stopped` | The worker is inactive, even if it retains a previous result. |
+| `initializing` | The worker is active and has no result or current failure. |
+| `running` | The worker is active and has a result and no current failure. |
+| `degraded` | The active worker has consecutive failures. |
+| `unknown` | The adapter uses a result-only source without worker diagnostics. |
+
+An enabled and authorized call without a bound source returns
+`inference_not_configured`. The adapter samples the latest result once and
+reads the worker's cached counters separately. The counters and lifecycle
+can change while sampling. The response exposes processed, failed, dropped
+and consecutive failure counts, with `null` for unavailable or out-of-range
+counts. The current failure indicator is `worker_failure` while consecutive
+failures are positive, then `null` after recovery. Only the failure
+indicator reaches the client.
+
+`inference_time_ms` measures runner duration. `age_ms` measures elapsed
+time from the result's input frame timestamp on the server monotonic clock.
+Both may describe a retained result while the worker is stopped or degraded.
+Missing or out-of-range timings are `null`. A zero or future frame timestamp
+also yields a null age. Status age is diagnostic and applies no freshness
+filter. The application owns worker startup, inference and shutdown.
+Polling reads cached data without waiting for a new result. Each response is
+detached before transport writes.
+
+## Future inference results and controls
 
 `InferenceLatest` defines a draft envelope for the latest result published
 by an application-owned worker. The application supplies `source_id`,
@@ -339,10 +376,12 @@ matching that schema. The identifier is descriptive and requires no network
 lookup. The result age is elapsed server monotonic time since result
 publication. `inference_time_ms` measures runner duration when available.
 `frame_sequence` identifies the input in `raw_capture` when known. There is
-no implied correspondence to a JPEG sequence. The read uses an existing
-result. The future adapter must bound serialized bytes and collection sizes
-according to the application schema and return `payload_too_large` on
-overflow. The envelope does not publish tensors, device buffers or overlays.
+no implied correspondence to a JPEG sequence. The host can already read
+one cached result for internal processing. The SDK tool follows application
+serialization and freshness enforcement. The future adapter must bound
+serialized bytes and collection sizes according to the application schema
+and return `payload_too_large` on overflow. The envelope excludes tensors,
+device buffers and overlays.
 
 For `camera_set_controls`, the proposed input is `camera_id` and a
 nonempty `controls` object with an explicit, server-advertised allowlist of
