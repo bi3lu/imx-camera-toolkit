@@ -1,4 +1,4 @@
-"""Register the camera tools on the optional MCP SDK 2.3 server."""
+"""Register local tools on the optional MCP SDK 2.3 server."""
 
 from __future__ import annotations
 
@@ -33,11 +33,18 @@ from imx_camera_toolkit import __version__
 
 from .errors import MCPError, map_tool_errors
 from .host import MCPHost
-from .validation import EMPTY_ARGUMENTS, parse_snapshot_input, validate_camera_input
+from .validation import (
+    EMPTY_ARGUMENTS,
+    parse_snapshot_input,
+    validate_camera_input,
+    validate_inference_status_input,
+)
 
 OBSERVER_SCOPE = "mcp:camera:status"
 SNAPSHOT_SCOPE = "mcp:snapshot:read"
 SNAPSHOT_TOOL = "camera_snapshot"
+INFERENCE_SCOPE = "mcp:inference:read"
+INFERENCE_STATUS_TOOL = "inference_status"
 _REQUEST_TIMEOUT_NS = 1_000_000_000
 _CALLS_PER_SECOND = 30
 _CALL_BURST = 8
@@ -80,6 +87,13 @@ _TOOLS = {
         "Return one fresh JPEG from the primary camera's existing preview source.",
         "SnapshotInput",
         "SnapshotMetadata",
+    ),
+    INFERENCE_STATUS_TOOL: _ToolSpec(
+        INFERENCE_SCOPE,
+        "Read cached status for the application's existing inference worker.",
+        "InferenceStatusInput",
+        "InferenceStatus",
+        ("InferenceFrameCount", "InferenceDuration"),
     ),
 }
 DEFAULT_TOOLS = frozenset({"camera_status", "camera_capabilities"})
@@ -167,6 +181,8 @@ def create_camera_server(
                     raise MCPError("permission_denied")
                 if name == SNAPSHOT_TOOL:
                     parse_snapshot_input(arguments, limits)
+                elif name == INFERENCE_STATUS_TOOL:
+                    validate_inference_status_input(arguments)
                 else:
                     validate_camera_input(arguments)
 
@@ -200,6 +216,8 @@ def create_camera_server(
                     )
                 elif name == "camera_status":
                     data = asdict(host.status(arguments))
+                elif name == INFERENCE_STATUS_TOOL:
+                    data = asdict(host.inference_status(arguments))
                 else:
                     data = asdict(host.capabilities(arguments))
 

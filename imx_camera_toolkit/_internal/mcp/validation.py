@@ -1,4 +1,4 @@
-"""Validate decoded camera tool arguments before accessing their sources."""
+"""Validate decoded tool arguments before accessing their sources."""
 
 from __future__ import annotations
 
@@ -52,6 +52,12 @@ def _camera_arguments(
 def validate_camera_input(arguments: object) -> None:
     """Validate the input shared by camera status and capabilities."""
     _camera_arguments(arguments, _CAMERA_KEYS)
+
+
+def validate_inference_status_input(arguments: object) -> None:
+    """Require an empty object for the one bound inference source."""
+    if not isinstance(arguments, Mapping) or arguments:
+        raise MCPError("invalid_argument")
 
 
 def _integer(value: object, minimum: int, maximum: int) -> int:

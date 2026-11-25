@@ -21,7 +21,9 @@ from imx_camera_toolkit._internal.camera.publishing.jpeg_slot import (
 from imx_camera_toolkit._internal.mcp.camera_adapter import CameraReadAdapter
 from imx_camera_toolkit._internal.mcp.contracts import HARD_SNAPSHOT_LIMITS
 from imx_camera_toolkit._internal.mcp.host import MCPHost
+from imx_camera_toolkit._internal.mcp.inference_adapter import InferenceReadAdapter
 from imx_camera_toolkit._internal.mcp.snapshot_adapter import CameraSnapshotAdapter
+from imx_camera_toolkit.inference import InferenceResult, TensorOutput
 
 if TYPE_CHECKING:
     from mcp_types import CallToolResult
@@ -33,6 +35,8 @@ _PHOTO = _ROOT / "examples/mcp_runtime_spike/synthetic.jpg"
 _TOOLS = ("camera_status", "camera_capabilities", "camera_snapshot")
 _OBSERVER = "mcp:camera:status"
 _VISION = "mcp:snapshot:read"
+_INFERENCE = "mcp:inference:read"
+_INFERENCE_STATUS = "inference_status"
 _REVISION = "2026-07-28"
 _WIRE_LIMIT = 2048
 
@@ -62,12 +66,43 @@ class _Camera:
         return JPEGPreview("running", True, True, 1, 1, 65, publication)
 
 
+class _Inference:
+    """Expose a degraded worker with a cached result and private tensor data."""
+
+    running = True
+    processed_frames = 3
+    failed_frames = 2
+    dropped_frames = 1
+    consecutive_failures = 2
+    reads = 0
+
+    def __init__(self, clock: int) -> None:
+        self.result = InferenceResult(
+            3,
+            clock - 5_000_000,
+            2_500_000,
+            (TensorOutput("private_output", (5, 3), "float32", object()),),
+            metadata={"private_metadata": object()},
+            overlays=(object(),),
+        )
+
+    @property
+    def latest_result(self) -> InferenceResult:
+        """Count the cached reads performed after transport authorization."""
+        self.reads += 1
+        return self.result
+
+
 async def _serve(profile: str) -> None:
     """Enter a borrowed test host and run it on a disposable stdio transport."""
     from time import monotonic_ns
     from types import SimpleNamespace
 
-    from imx_camera_toolkit._internal.mcp import sdk_server, snapshot_adapter
+    from imx_camera_toolkit._internal.mcp import (
+        inference_adapter,
+        sdk_server,
+        snapshot_adapter,
+    )
     from imx_camera_toolkit._internal.mcp.stdio import serve_camera_stdio
 
     # Keep the test JPEG age independent of process and pipe timing.
@@ -77,23 +112,49 @@ async def _serve(profile: str) -> None:
     snapshot = CameraSnapshotAdapter(
         camera, limits=replace(HARD_SNAPSHOT_LIMITS, max_response_bytes=_WIRE_LIMIT)
     )
-    host = MCPHost(read, snapshot)
+    inference = _Inference(clock)
+    host = MCPHost(
+        read,
+        snapshot,
+        inference_adapter=(
+            InferenceReadAdapter.from_worker(inference)
+            if profile in {"inference", "inference-denied"}
+            else None
+        ),
+    )
     grants = {
         "denied": {"admin"},
         "observer": {_OBSERVER},
+        "inference": {_INFERENCE},
+        "inference-denied": {_OBSERVER, _VISION},
+        "inference-unconfigured": {_INFERENCE},
     }.get(profile, {_OBSERVER, _VISION})
+
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(
             snapshot_adapter, "time", SimpleNamespace(monotonic_ns=lambda: clock)
         )
+        patch.setattr(
+            inference_adapter, "time", SimpleNamespace(monotonic_ns=lambda: clock)
+        )
+
         if profile == "rate":
             patch.setattr(
                 sdk_server, "time", SimpleNamespace(monotonic_ns=lambda: clock)
             )
+
         if profile == "default":
             await serve_camera_stdio(host)
+
+        elif profile.startswith("inference"):
+            await serve_camera_stdio(
+                host, enabled_tools=(_INFERENCE_STATUS,), grants=grants
+            )
+
         else:
             await serve_camera_stdio(host, enabled_tools=_TOOLS, grants=grants)
+
+    assert inference.reads == (1 if profile == "inference" else 0)
     if profile in {"default", "observer", "denied"}:
         assert camera.reads == 0
     if profile == "rate":
@@ -119,6 +180,72 @@ def _error(result: CallToolResult, code: str) -> dict[str, Any]:
     assert payload["schema_version"] == 1
     assert "/private/camera" not in block.text
     return payload
+
+
+@pytest.mark.integration
+def test_sdk_inference_status_requires_its_own_grant() -> None:
+    """Exercise inference discovery, policy, validation and the safe projection."""
+    pytest.importorskip("mcp")
+    from mcp import Client, MCPError, StdioServerParameters
+    from mcp_types import INVALID_PARAMS, TextContent
+
+    fixtures = json.loads(
+        (_ROOT / "docs/mcp/tool-contracts.examples.json").read_text(encoding="utf-8")
+    )
+    expected = next(
+        case["expected"]["value"]
+        for case in fixtures["cases"]
+        if case["name"] == "inference_status_degraded"
+    )
+
+    async def scenario() -> None:
+        for profile in (
+            "default",
+            "inference-denied",
+            "inference-unconfigured",
+            "inference",
+        ):
+            server = StdioServerParameters(
+                command=sys.executable, args=_server_args(profile), cwd=_ROOT
+            )
+            async with Client(server) as client:
+                tools = (await client.list_tools()).tools
+                with pytest.raises(MCPError) as hidden:
+                    await client.call_tool("inference_latest")
+                assert hidden.value.error.code == INVALID_PARAMS
+                if profile == "default":
+                    assert _INFERENCE_STATUS not in {tool.name for tool in tools}
+                    with pytest.raises(MCPError) as disabled:
+                        await client.call_tool(_INFERENCE_STATUS)
+                    assert disabled.value.error == hidden.value.error
+                elif profile == "inference-denied":
+                    assert not tools
+                    _error(
+                        await client.call_tool(_INFERENCE_STATUS, {"other": 1}),
+                        "permission_denied",
+                    )
+                else:
+                    assert [tool.name for tool in tools] == [_INFERENCE_STATUS]
+                    assert tools[0].input_schema["additionalProperties"] is False
+                    _error(
+                        await client.call_tool(_INFERENCE_STATUS, {"other": 1}),
+                        "invalid_argument",
+                    )
+                    result = await client.call_tool(_INFERENCE_STATUS)
+                    if profile == "inference-unconfigured":
+                        _error(result, "inference_not_configured")
+                        continue
+                    output_schema = tools[0].output_schema
+                    assert output_schema is not None
+                    assert set(output_schema["required"]) == set(expected)
+                    assert result.is_error is False
+                    assert result.structured_content == expected
+                    assert len(result.content) == 1
+                    block = result.content[0]
+                    assert isinstance(block, TextContent)
+                    assert json.loads(block.text) == expected
+
+    asyncio.run(asyncio.wait_for(scenario(), 15))
 
 
 @pytest.mark.integration
