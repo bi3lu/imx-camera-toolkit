@@ -40,12 +40,11 @@ _WIRE_LIMIT = 2048
 class _Camera:
     """Supply one synthetic frame and record every adapter source read."""
 
-    def __init__(self, clock: int, read_limit: int) -> None:
+    def __init__(self, clock: int) -> None:
         self.reads = 0
         self.stats_reads = 0
         self.photo = _PHOTO.read_bytes()
         self.clock = clock
-        self.read_limit = read_limit
 
     def stats(self) -> CameraStats:
         """Supply cached diagnostics for the running source."""
@@ -57,9 +56,9 @@ class _Camera:
     def _jpeg_preview(self) -> JPEGPreview:
         """Supply one fixed publication with deterministic acquisition age."""
         self.reads += 1
-        if self.reads > self.read_limit:
+        if self.reads > 3:
             raise RuntimeError("private failure /private/camera")
-        publication = JPEGPublication(self.photo, 3, 1, 1, 65, self.clock)
+        publication = JPEGPublication(self.photo, 3, 1, 1, 65, self.clock - 25_000_000)
         return JPEGPreview("running", True, True, 1, 1, 65, publication)
 
 
@@ -73,7 +72,7 @@ async def _serve(profile: str) -> None:
 
     # Keep the test JPEG age independent of process and pipe timing.
     clock = monotonic_ns()
-    camera = _Camera(clock, read_limit=3 if profile == "wire" else 2)
+    camera = _Camera(clock)
     read = CameraReadAdapter(camera, backend="cpu")
     snapshot = CameraSnapshotAdapter(
         camera, limits=replace(HARD_SNAPSHOT_LIMITS, max_response_bytes=_WIRE_LIMIT)
@@ -103,13 +102,7 @@ async def _serve(profile: str) -> None:
 
 def _server_args(profile: str) -> list[str]:
     """Run this test module's synthetic server using the client's interpreter."""
-    return [
-        "-c",
-        "import asyncio, runpy, sys; "
-        "asyncio.run(runpy.run_path(sys.argv[1])['_serve'](sys.argv[2]))",
-        str(Path(__file__).resolve()),
-        profile,
-    ]
+    return [str(Path(__file__).resolve()), profile]
 
 
 def _error(result: CallToolResult, code: str) -> dict[str, Any]:
@@ -123,6 +116,7 @@ def _error(result: CallToolResult, code: str) -> dict[str, Any]:
     assert isinstance(block, TextContent)
     payload: dict[str, Any] = json.loads(block.text)
     assert payload["code"] == code
+    assert payload["schema_version"] == 1
     assert "/private/camera" not in block.text
     return payload
 
@@ -188,8 +182,18 @@ def test_sdk_client_discovers_and_calls_camera_tools() -> None:
                     ).structured_content
                     assert capability["frame_format"] == "BGR_CPU"
                     assert capability["snapshot"]["source_supported"] is True
+                    assert _error(
+                        await client.call_tool("camera_snapshot", {"max_age_ms": 24}),
+                        "snapshot_stale",
+                    ) == {
+                        "schema_version": 1,
+                        "code": "snapshot_stale",
+                        "message": "The latest JPEG exceeds the maximum age.",
+                        "retryable": True,
+                        "details": {"age_ms": 25.0, "max_age_ms": 24},
+                    }
                     result = await client.call_tool(
-                        "camera_snapshot", {"jpeg_quality": 65}
+                        "camera_snapshot", {"jpeg_quality": 65, "max_age_ms": 25}
                     )
                     assert result.is_error is False
                     text, image = result.content
@@ -201,7 +205,19 @@ def test_sdk_client_discovers_and_calls_camera_tools() -> None:
                         == _PHOTO.read_bytes()
                     )
                     assert json.loads(text.text) == result.structured_content
-                    assert result.structured_content["frame_sequence"] == 3
+                    assert result.structured_content == {
+                        "schema_version": 1,
+                        "camera_id": "primary",
+                        "frame_sequence": 3,
+                        "width": 1,
+                        "height": 1,
+                        "mime_type": "image/jpeg",
+                        "jpeg_quality": 65,
+                        "jpeg_bytes": len(_PHOTO.read_bytes()),
+                        "age_ms": 25.0,
+                        "sequence_domain": "jpeg_publication",
+                        "age_clock": "server_monotonic",
+                    }
                     _error(await client.call_tool("camera_snapshot"), "internal_error")
 
     asyncio.run(asyncio.wait_for(scenario(), 15))
@@ -298,3 +314,7 @@ def test_wire_budget_counts_the_actual_serialized_response() -> None:
                 await asyncio.wait_for(process.wait(), 5)
 
     asyncio.run(asyncio.wait_for(scenario(), 15))
+
+
+if __name__ == "__main__":
+    asyncio.run(_serve(sys.argv[1]))
