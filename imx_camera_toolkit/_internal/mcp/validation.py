@@ -6,7 +6,12 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from types import MappingProxyType
 
-from .contracts import HARD_SNAPSHOT_LIMITS, SnapshotLimits
+from .contracts import (
+    DEFAULT_INFERENCE_MAX_AGE_MS,
+    HARD_INFERENCE_MAX_AGE_MS,
+    HARD_SNAPSHOT_LIMITS,
+    SnapshotLimits,
+)
 from .errors import MCPError
 
 EMPTY_ARGUMENTS: Mapping[str, object] = MappingProxyType({})
@@ -58,6 +63,20 @@ def validate_inference_status_input(arguments: object) -> None:
     """Require an empty object for the one bound inference source."""
     if not isinstance(arguments, Mapping) or arguments:
         raise MCPError("invalid_argument")
+
+
+def parse_inference_latest_input(arguments: object) -> int:
+    """Return the caller's maximum age in milliseconds within the server cap."""
+    if not isinstance(arguments, Mapping) or any(
+        type(key) is not str or key != "max_age_ms" for key in arguments
+    ):
+        raise MCPError("invalid_argument")
+
+    return _integer(
+        arguments.get("max_age_ms", DEFAULT_INFERENCE_MAX_AGE_MS),
+        1,
+        HARD_INFERENCE_MAX_AGE_MS,
+    )
 
 
 def _integer(value: object, minimum: int, maximum: int) -> int:

@@ -22,6 +22,9 @@ from imx_camera_toolkit._internal.mcp.camera_adapter import CameraReadAdapter
 from imx_camera_toolkit._internal.mcp.contracts import HARD_SNAPSHOT_LIMITS
 from imx_camera_toolkit._internal.mcp.host import MCPHost
 from imx_camera_toolkit._internal.mcp.inference_adapter import InferenceReadAdapter
+from imx_camera_toolkit._internal.mcp.inference_serialization import (
+    InferencePayloadSerializer,
+)
 from imx_camera_toolkit._internal.mcp.snapshot_adapter import CameraSnapshotAdapter
 from imx_camera_toolkit.inference import InferenceResult, TensorOutput
 
@@ -37,6 +40,7 @@ _OBSERVER = "mcp:camera:status"
 _VISION = "mcp:snapshot:read"
 _INFERENCE = "mcp:inference:read"
 _INFERENCE_STATUS = "inference_status"
+_INFERENCE_LATEST = "inference_latest"
 _REVISION = "2026-07-28"
 _WIRE_LIMIT = 2048
 
@@ -117,8 +121,15 @@ async def _serve(profile: str) -> None:
         read,
         snapshot,
         inference_adapter=(
-            InferenceReadAdapter.from_worker(inference)
-            if profile in {"inference", "inference-denied"}
+            InferenceReadAdapter.from_worker(inference, raw_capture_sequence=True)
+            if profile in {"inference", "inference-denied", "latest", "latest-denied"}
+            else None
+        ),
+        inference_serializer=(
+            InferencePayloadSerializer(
+                "test-camera", "test-model", "test.v1", lambda _: {"count": 2}
+            )
+            if profile in {"latest", "latest-denied"}
             else None
         ),
     )
@@ -128,6 +139,8 @@ async def _serve(profile: str) -> None:
         "inference": {_INFERENCE},
         "inference-denied": {_OBSERVER, _VISION},
         "inference-unconfigured": {_INFERENCE},
+        "latest": {_INFERENCE, _VISION},
+        "latest-denied": {_OBSERVER, _VISION},
     }.get(profile, {_OBSERVER, _VISION})
 
     with pytest.MonkeyPatch.context() as patch:
@@ -151,14 +164,29 @@ async def _serve(profile: str) -> None:
                 host, enabled_tools=(_INFERENCE_STATUS,), grants=grants
             )
 
+        elif profile == "latest":
+            await serve_camera_stdio(
+                host,
+                enabled_tools=(_INFERENCE_LATEST, "camera_snapshot"),
+                grants=grants,
+            )
+
+        elif profile == "latest-denied":
+            await serve_camera_stdio(
+                host, enabled_tools=(_INFERENCE_LATEST,), grants=grants
+            )
+
         else:
             await serve_camera_stdio(host, enabled_tools=_TOOLS, grants=grants)
 
-    assert inference.reads == (1 if profile == "inference" else 0)
+    expected_reads = {"inference": 1, "latest": 2}
+    assert inference.reads == expected_reads.get(profile, 0)
     if profile in {"default", "observer", "denied"}:
         assert camera.reads == 0
     if profile == "rate":
         assert camera.stats_reads == 8
+    if profile == "latest":
+        assert camera.reads == 1
 
 
 def _server_args(profile: str) -> list[str]:
@@ -244,6 +272,81 @@ def test_sdk_inference_status_requires_its_own_grant() -> None:
                     block = result.content[0]
                     assert isinstance(block, TextContent)
                     assert json.loads(block.text) == expected
+
+    asyncio.run(asyncio.wait_for(scenario(), 15))
+
+
+@pytest.mark.integration
+def test_sdk_inference_latest_checks_grant_and_freshness() -> None:
+    """Read one authorized mapped sample through the real stdio transport."""
+    pytest.importorskip("mcp")
+    from mcp import Client, StdioServerParameters
+    from mcp_types import TextContent
+
+    async def scenario() -> None:
+        for profile in ("latest-denied", "latest"):
+            server = StdioServerParameters(
+                command=sys.executable, args=_server_args(profile), cwd=_ROOT
+            )
+            async with Client(server) as client:
+                tools = (await client.list_tools()).tools
+                invalid = await client.call_tool(
+                    _INFERENCE_LATEST, {"max_age_ms": True}
+                )
+
+                if profile == "latest-denied":
+                    assert not tools
+                    _error(invalid, "permission_denied")
+                    continue
+
+                names = {tool.name: tool for tool in tools}
+                assert set(names) == {_INFERENCE_LATEST, "camera_snapshot"}
+                latest_tool = names[_INFERENCE_LATEST]
+                assert (
+                    latest_tool.input_schema["properties"]["max_age_ms"]["maximum"]
+                    == 10_000
+                )
+                schema = latest_tool.output_schema
+                assert schema is not None
+                assert set(schema["$defs"]) == {
+                    "InferencePayload",
+                    "InferenceIdentifier",
+                    "InferencePayloadObject",
+                    "InferencePayloadValue",
+                }
+                _error(invalid, "invalid_argument")
+                stale = await client.call_tool(_INFERENCE_LATEST, {"max_age_ms": 4})
+                assert _error(stale, "stale_inference_result")["details"] == {
+                    "age_ms": 5,
+                    "max_age_ms": 4,
+                }
+                ready = await client.call_tool(_INFERENCE_LATEST, {"max_age_ms": 5})
+                assert ready.is_error is False
+                assert ready.structured_content == {
+                    "schema_version": 1,
+                    "status": "ready",
+                    "source_id": "test-camera",
+                    "model_id": "test-model",
+                    "frame_sequence": 3,
+                    "sequence_domain": "raw_capture",
+                    "snapshot_correlation": "unknown",
+                    "age_ms": 5,
+                    "age_clock": "server_monotonic",
+                    "inference_time_ms": 2.5,
+                    "payload_schema": "test.v1",
+                    "payload": {"count": 2},
+                }
+                assert len(ready.content) == 1
+                block = ready.content[0]
+                assert isinstance(block, TextContent)
+                assert json.loads(block.text) == ready.structured_content
+                snapshot = await client.call_tool("camera_snapshot")
+                assert snapshot.is_error is False
+                assert snapshot.structured_content is not None
+                assert snapshot.structured_content["frame_sequence"] == 3
+                assert (
+                    snapshot.structured_content["sequence_domain"] == "jpeg_publication"
+                )
 
     asyncio.run(asyncio.wait_for(scenario(), 15))
 

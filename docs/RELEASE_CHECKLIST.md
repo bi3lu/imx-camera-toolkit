@@ -153,8 +153,11 @@ compare against that baseline.
   [Inference status contract](mcp/README.md#inference-status) ·
   [MCP threat model](adr/ADR-mcp-threat-model-and-access-policy.md#threats-and-acceptance-evidence)
 - Before releasing `inference_latest`, verify the mapper's JSON limits, sanitized
-  failures and admission after a timeout or disconnect. Measure inference
-  polling alongside capture and preview on Jetson before claiming performance.
+  failures and admission after a timeout or disconnect. Check the inclusive
+  freshness boundary, expiry during mapping, and unknown JPEG correlation
+  when sequences coincide. Measure inference polling alongside capture and
+  preview on Jetson before claiming performance.
+  [Latest result contract](mcp/README.md#latest-inference-result) ·
   [Application inference payload contract](mcp/README.md#application-inference-payloads)
 - Before enabling the remote profile, record the security review and passing
   evidence for issuer and audience validation, scope enforcement, trusted

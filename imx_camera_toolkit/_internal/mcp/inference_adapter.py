@@ -54,37 +54,69 @@ def _milliseconds(nanoseconds: int) -> float | None:
     return None
 
 
+def _frame_age_ms(result: InferenceResult) -> float | None:
+    """Measure age from a known timestamp in the host's monotonic domain."""
+    if result.frame_timestamp_ns > 0:
+        return _milliseconds(time.monotonic_ns() - result.frame_timestamp_ns)
+
+    return None
+
+
+def require_fresh_inference(result: InferenceResult, max_age_ms: int) -> float:
+    """Return the current age or reject an expired or unmeasurable result.
+
+    Raises:
+        MCPError: If the result's age is unknown or exceeds the limit.
+    """
+    age_ms = _frame_age_ms(result)
+
+    if age_ms is None or age_ms > max_age_ms:
+        raise MCPError("stale_inference_result", age_ms=age_ms, max_age_ms=max_age_ms)
+
+    return age_ms
+
+
+def inference_duration_ms(result: InferenceResult) -> float | None:
+    """Return the runner duration in bounded milliseconds."""
+    return _milliseconds(result.inference_time_ns)
+
+
 class InferenceReadAdapter:
     """Borrow a latest-result slot without taking worker lifecycle ownership.
 
     The source must expose a cached read and use the server monotonic clock for
     known frame timestamps. Bind a worker with `from_worker` to include health
     counters. The stock `InferenceConsumer` satisfies that read interface.
+    Enable `raw_capture_sequence` when the source preserves the input capture
+    counter. That counter may repeat across capture epochs.
     """
 
-    def __init__(self, source: InferenceResultSource) -> None:
+    def __init__(
+        self, source: InferenceResultSource, *, raw_capture_sequence: bool = False
+    ) -> None:
         """Bind the existing result slot without sampling it."""
         self._source = source
+        self._raw_capture_sequence = raw_capture_sequence
         self._worker: InferenceWorkerSource | None = None
 
     @classmethod
-    def from_worker(cls, worker: InferenceWorkerSource) -> InferenceReadAdapter:
+    def from_worker(
+        cls, worker: InferenceWorkerSource, *, raw_capture_sequence: bool = False
+    ) -> InferenceReadAdapter:
         """Borrow both the result slot and cached counters from the same worker."""
-        adapter = cls(worker)
+        adapter = cls(worker, raw_capture_sequence=raw_capture_sequence)
         adapter._worker = worker
         return adapter
+
+    def frame_sequence(self, result: InferenceResult) -> int | None:
+        """Project a declared raw capture sequence as a diagnostic counter."""
+        return _counter(result.frame_sequence) if self._raw_capture_sequence else None
 
     def status(self) -> InferenceStatus:
         """Read the slot once and project only safe timings and counters."""
         result = self._source.latest_result
-        inference_time_ms = None
-        age_ms = None
-
-        if result is not None:
-            inference_time_ms = _milliseconds(result.inference_time_ns)
-
-            if result.frame_timestamp_ns > 0:
-                age_ms = _milliseconds(time.monotonic_ns() - result.frame_timestamp_ns)
+        inference_time_ms = None if result is None else inference_duration_ms(result)
+        age_ms = None if result is None else _frame_age_ms(result)
 
         worker = self._worker
 

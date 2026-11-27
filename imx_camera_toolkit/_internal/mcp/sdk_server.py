@@ -35,6 +35,7 @@ from .errors import MCPError, map_tool_errors
 from .host import MCPHost
 from .validation import (
     EMPTY_ARGUMENTS,
+    parse_inference_latest_input,
     parse_snapshot_input,
     validate_camera_input,
     validate_inference_status_input,
@@ -45,6 +46,7 @@ SNAPSHOT_SCOPE = "mcp:snapshot:read"
 SNAPSHOT_TOOL = "camera_snapshot"
 INFERENCE_SCOPE = "mcp:inference:read"
 INFERENCE_STATUS_TOOL = "inference_status"
+INFERENCE_LATEST_TOOL = "inference_latest"
 _REQUEST_TIMEOUT_NS = 1_000_000_000
 _CALLS_PER_SECOND = 30
 _CALL_BURST = 8
@@ -95,7 +97,20 @@ _TOOLS = {
         "InferenceStatus",
         ("InferenceFrameCount", "InferenceDuration"),
     ),
+    INFERENCE_LATEST_TOOL: _ToolSpec(
+        INFERENCE_SCOPE,
+        "Return a fresh cached inference result mapped by the application.",
+        "InferenceLatestInput",
+        "InferenceLatest",
+        (
+            "InferencePayload",
+            "InferenceIdentifier",
+            "InferencePayloadObject",
+            "InferencePayloadValue",
+        ),
+    ),
 }
+
 DEFAULT_TOOLS = frozenset({"camera_status", "camera_capabilities"})
 
 
@@ -183,6 +198,8 @@ def create_camera_server(
                     parse_snapshot_input(arguments, limits)
                 elif name == INFERENCE_STATUS_TOOL:
                     validate_inference_status_input(arguments)
+                elif name == INFERENCE_LATEST_TOOL:
+                    parse_inference_latest_input(arguments)
                 else:
                     validate_camera_input(arguments)
 
@@ -218,6 +235,8 @@ def create_camera_server(
                     data = asdict(host.status(arguments))
                 elif name == INFERENCE_STATUS_TOOL:
                     data = asdict(host.inference_status(arguments))
+                elif name == INFERENCE_LATEST_TOOL:
+                    data = dict(await host.inference_latest(arguments))
                 else:
                     data = asdict(host.capabilities(arguments))
 

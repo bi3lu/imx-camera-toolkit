@@ -8,7 +8,7 @@ from sys import float_info
 from typing import Literal, TypedDict, overload
 
 from ..camera.errors import CameraError, CameraTimeoutError
-from .contracts import HARD_SNAPSHOT_LIMITS, MAX_SAFE_INTEGER
+from .contracts import HARD_INFERENCE_MAX_AGE_MS, HARD_SNAPSHOT_LIMITS, MAX_SAFE_INTEGER
 
 SimpleErrorCode = Literal[
     "camera_unavailable",
@@ -49,7 +49,7 @@ _ERRORS: dict[ErrorCode, tuple[str, bool]] = {
     "inference_not_configured": ("Inference is not configured.", False),
     "no_inference_result": ("No inference result is available.", True),
     "stale_inference_result": (
-        "The latest inference result exceeds the maximum age.",
+        "The latest inference result does not satisfy the maximum age.",
         True,
     ),
 }
@@ -64,7 +64,7 @@ class SnapshotUnavailableDetails(TypedDict):
 class StaleDetails(TypedDict):
     """Observed and requested ages in milliseconds."""
 
-    age_ms: float
+    age_ms: float | None
     max_age_ms: int
 
 
@@ -106,7 +106,17 @@ class MCPError(RuntimeError):
 
     @overload
     def __init__(
-        self, code: StaleErrorCode, /, *, age_ms: float, max_age_ms: int
+        self, code: Literal["snapshot_stale"], /, *, age_ms: float, max_age_ms: int
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        code: Literal["stale_inference_result"],
+        /,
+        *,
+        age_ms: float | None,
+        max_age_ms: int,
     ) -> None: ...
 
     @overload
@@ -148,12 +158,22 @@ class MCPError(RuntimeError):
             payload["retryable"] = reason == "no_frame"
 
         elif code in ("snapshot_stale", "stale_inference_result"):
+            age_cap = (
+                HARD_SNAPSHOT_LIMITS.max_age_ms
+                if code == "snapshot_stale"
+                else HARD_INFERENCE_MAX_AGE_MS
+            )
             if (
-                type(age_ms) not in (int, float)
-                or age_ms is None
-                or not 0 <= age_ms <= float_info.max
+                (
+                    age_ms is not None
+                    and (
+                        type(age_ms) not in (int, float)
+                        or not 0 <= age_ms <= float_info.max
+                    )
+                )
+                or (code == "snapshot_stale" and age_ms is None)
                 or type(max_age_ms) is not int
-                or not 1 <= max_age_ms <= HARD_SNAPSHOT_LIMITS.max_age_ms
+                or not 1 <= max_age_ms <= age_cap
             ):
                 raise ValueError("invalid MCP age details")
 

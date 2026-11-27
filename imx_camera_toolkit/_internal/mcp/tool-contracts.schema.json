@@ -407,7 +407,7 @@
             "details": {
               "type": "object",
               "properties": {
-                "age_ms": { "type": "number", "minimum": 0 },
+                "age_ms": { "type": ["number", "null"], "minimum": 0 },
                 "max_age_ms": { "type": "integer", "minimum": 1, "maximum": 10000 }
               },
               "required": ["age_ms", "max_age_ms"],
@@ -496,11 +496,20 @@
         { "$ref": "#/$defs/InferencePayloadObject" }
       ]
     },
+    "InferenceLatestInput": {
+      "type": "object",
+      "properties": {
+        "max_age_ms": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 2000 }
+      },
+      "additionalProperties": false
+    },
     "InferenceLatest": {
       "type": "object",
       "allOf": [{ "$ref": "#/$defs/InferencePayload" }],
       "properties": {
         "schema_version": { "const": 1 },
+        "status": { "const": "ready" },
+        "snapshot_correlation": { "const": "unknown" },
         "frame_sequence": {
           "anyOf": [
             { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
@@ -510,7 +519,7 @@
         "sequence_domain": {
           "enum": ["raw_capture", null]
         },
-        "age_ms": { "type": "number", "minimum": 0 },
+        "age_ms": { "type": "number", "minimum": 0, "maximum": 10000 },
         "age_clock": { "const": "server_monotonic" },
         "inference_time_ms": {
           "anyOf": [
@@ -521,6 +530,8 @@
       },
       "required": [
         "schema_version",
+        "status",
+        "snapshot_correlation",
         "frame_sequence",
         "sequence_domain",
         "age_ms",
