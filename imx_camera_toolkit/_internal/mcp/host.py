@@ -17,11 +17,20 @@ from .contracts import (
     SnapshotLimits,
 )
 from .errors import MCPError
-from .inference_adapter import InferenceReadAdapter
-from .inference_serialization import InferencePayload, InferencePayloadSerializer
+from .inference_adapter import (
+    InferenceReadAdapter,
+    inference_duration_ms,
+    require_fresh_inference,
+)
+from .inference_serialization import (
+    InferenceLatest,
+    InferencePayload,
+    InferencePayloadSerializer,
+)
 from .snapshot_adapter import CameraSnapshotAdapter
 from .validation import (
     EMPTY_ARGUMENTS,
+    parse_inference_latest_input,
     parse_snapshot_input,
     validate_inference_status_input,
 )
@@ -177,6 +186,41 @@ class MCPHost:
             raise MCPError("inference_not_configured")
 
         return self._inference_adapter.latest_result()
+
+    async def inference_latest(
+        self, arguments: object = EMPTY_ARGUMENTS
+    ) -> InferenceLatest:
+        """Map one fresh cached sample and check its age again after mapping.
+
+        Raises:
+            MCPError: If dispatch is closed, input is invalid, the binding
+                or sample is missing, freshness fails, or the mapper fails.
+            asyncio.CancelledError: If the caller cancels the wait.
+        """
+        self._require_running()
+        max_age_ms = parse_inference_latest_input(arguments)
+        adapter = self._inference_adapter
+
+        if adapter is None or self._inference_serializer is None:
+            raise MCPError("inference_not_configured")
+
+        result = adapter.latest_result()
+        require_fresh_inference(result, max_age_ms)
+        payload = await self.inference_payload(result)
+        self._require_running()
+        age_ms = require_fresh_inference(result, max_age_ms)
+        sequence = adapter.frame_sequence(result)
+        return {
+            **payload,
+            "schema_version": 1,
+            "status": "ready",
+            "frame_sequence": sequence,
+            "sequence_domain": "raw_capture" if sequence is not None else None,
+            "snapshot_correlation": "unknown",
+            "age_ms": age_ms,
+            "age_clock": "server_monotonic",
+            "inference_time_ms": inference_duration_ms(result),
+        }
 
     async def inference_payload(self, result: InferenceResult) -> InferencePayload:
         """Map the caller's already sampled result without reading the slot again.

@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable, Mapping, Sized
 from dataclasses import dataclass
 from math import isfinite
-from typing import TypeAlias, TypedDict
+from typing import Literal, TypeAlias, TypedDict
 
 from ..inference.contracts import InferenceResult
 from .contracts import MAX_SAFE_INTEGER
@@ -30,6 +30,19 @@ class InferencePayload(TypedDict):
     model_id: str
     payload_schema: str
     payload: dict[str, JSONValue]
+
+
+class InferenceLatest(InferencePayload):
+    """Application payload with freshness and input frame diagnostics."""
+
+    schema_version: Literal[1]
+    status: Literal["ready"]
+    frame_sequence: int | None
+    sequence_domain: Literal["raw_capture"] | None
+    snapshot_correlation: Literal["unknown"]
+    age_ms: float
+    age_clock: Literal["server_monotonic"]
+    inference_time_ms: float | None
 
 
 @dataclass(frozen=True, slots=True)

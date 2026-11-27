@@ -10,6 +10,8 @@ CameraFrameFormat = Literal["BGR_CPU", "NV12_NVMM"]
 CameraState = Literal["unavailable", "starting", "ready", "recovering", "error"]
 InferenceState = Literal["unknown", "stopped", "initializing", "running", "degraded"]
 MAX_SAFE_INTEGER = (1 << 53) - 1
+DEFAULT_INFERENCE_MAX_AGE_MS = 2_000
+HARD_INFERENCE_MAX_AGE_MS = 10_000
 
 
 @dataclass(frozen=True, slots=True)
