@@ -1,8 +1,7 @@
 # MCP tool contracts
 
 The approved camera tool contracts target v0.9.0. The application-bound
-inference status tool targets v0.9.1. The remaining inference and control
-sections describe draft contracts.
+inference tools target v0.9.1. The control section describes a draft contract.
 
 ## Contract and compatibility
 
@@ -17,6 +16,7 @@ definitions to validate, the input validity, and the expected outcome kind.
 | `camera_capabilities` | `CameraInput` | `CameraCapabilities` |
 | `camera_snapshot` | `SnapshotInput` | `SnapshotMetadata` plus one JPEG |
 | `inference_status` | `InferenceStatusInput` | `InferenceStatus` |
+| `inference_latest` | `InferenceLatestInput` | `InferenceLatest` |
 
 The camera ID is case-sensitive. Omitting it selects `primary`, the single
 registered camera. Explicit arguments must form an object. Unknown keys,
@@ -194,13 +194,14 @@ details instead of the human-readable message. Use allowlisted details only.
 | `request_timeout` | Effective tool deadline expired. | Yes |
 | `payload_too_large` | Response exceeds a byte budget. | No |
 | `internal_error` | Unexpected tool execution failure. | No |
-| `inference_not_configured` | Inference tool has no configured result source. | No |
+| `inference_not_configured` | The result source or required mapper is missing. | No |
 | `no_inference_result` | A configured source has yet to publish a result. | Yes |
-| `stale_inference_result` | Latest result fails the age constraint. | Yes, after a new result |
+| `stale_inference_result` | The latest result is too old or its age is unknown. | Yes, after a result with valid timing |
 
 The canonical codes for missing preview and inference data are
 `snapshot_unavailable` and `no_inference_result`. Stale errors include the
-observed `age_ms` and the applied `max_age_ms`. Keep credentials, paths, raw
+observed `age_ms` and the applied `max_age_ms`. An inference result without
+a usable timestamp has `age_ms: null`. Keep credentials, paths, raw
 exceptions, private configuration and image bytes out of error messages.
 The domain layer uses fixed messages and validates detail values before
 serialization. It retains original exception causes for internal diagnostics.
@@ -408,12 +409,44 @@ mapper exception returns `internal_error`. Limit violations return
 `payload_too_large` without partial data. Error responses exclude mapper
 details and payload values.
 
-`InferenceLatest` is the draft response envelope. It combines the application
-projection with server-owned frame timing and identity. The age is measured
-from the input frame timestamp on the server monotonic clock, and
-`inference_time_ms` measures runner duration. A JPEG sequence alone cannot
-establish a match. The SDK exposes `inference_status` today. Registering
-`inference_latest` requires freshness and frame provenance checks.
+## Latest inference result
+
+An embedded local host enables `inference_latest` explicitly and grants
+`mcp:inference:read`. The application supplies the worker and mapper.
+The tool accepts an optional integer `max_age_ms` from 1
+through 10,000, with a default of 2,000.
+
+The tool reads the cached slot once and checks the sample's age before and
+after mapping. Age equal to the limit is accepted. A successful response
+reports `status: "ready"` and the age at the post-mapping check, before
+serialization and delivery. The same sample supplies timing and payload
+even when a newer result arrives during mapping. Missing configuration and
+empty slots return `inference_not_configured` and `no_inference_result`,
+respectively. A sample that is already too old or has unknown age skips the
+mapper. A sample that expires during successful mapping returns
+`stale_inference_result` without the mapped payload. Polling reads results
+already produced by the existing worker.
+
+`age_clock: "server_monotonic"` means that `age_ms` is the elapsed time since
+`InferenceResult.frame_timestamp_ns` on the MCP host's monotonic clock.
+`inference_time_ms` is the runner duration in milliseconds. Zero, future, and
+out-of-range frame timestamps yield unknown age. A source crossing a process
+boundary must establish the same monotonic clock domain or translate to it
+before binding. If the clock relationship is unknown, publish a zero frame
+timestamp. Optional hardware capture timestamps stay outside the response.
+
+The application supplies `source_id` and `model_id` through its mapper
+configuration. A source that preserves the input raw capture counter can
+declare `raw_capture_sequence=True` on its read adapter. The resulting
+`frame_sequence` and `sequence_domain: "raw_capture"` are diagnostics within
+that capture epoch. Unknown provenance or an out-of-range counter yields
+`null` for both fields. Applications that replace the capture source or change
+clock domains must clear or replace the cached slot before serving the new
+epoch. A restart can reuse a frame sequence.
+
+`snapshot_correlation` is currently `"unknown"` even when the JPEG sequence
+equals the raw capture sequence. The existing bindings lack shared source,
+epoch, and acquisition identity between the JPEG and inference records.
 
 ## Future camera controls
 

@@ -15,6 +15,10 @@
     "inference_status": {
       "input": "InferenceStatusInput",
       "success": "InferenceStatus"
+    },
+    "inference_latest": {
+      "input": "InferenceLatestInput",
+      "success": "InferenceLatest"
     }
   },
   "domain_error": "DomainError",
@@ -486,6 +490,63 @@
           "retryable": false
         }
       }
+    },
+    {
+      "name": "inference_latest_ready",
+      "tool": "inference_latest",
+      "arguments": {
+        "max_age_ms": 120
+      },
+      "input_valid": true,
+      "expected": {
+        "kind": "success",
+        "value": {
+          "schema_version": 1,
+          "status": "ready",
+          "snapshot_correlation": "unknown",
+          "source_id": "primary-inference",
+          "model_id": "my-detector-v1",
+          "frame_sequence": 1024,
+          "sequence_domain": "raw_capture",
+          "age_ms": 120,
+          "age_clock": "server_monotonic",
+          "inference_time_ms": 18.4,
+          "payload_schema": "application/vnd.example.detector.v1+json",
+          "payload": {
+            "objects": [
+              {
+                "label": "cup",
+                "confidence": 0.91,
+                "bbox_xyxy": [
+                  120,
+                  80,
+                  230,
+                  220
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "inference_latest_unknown_age",
+      "tool": "inference_latest",
+      "arguments": {},
+      "input_valid": true,
+      "expected": {
+        "kind": "domain_error",
+        "value": {
+          "schema_version": 1,
+          "code": "stale_inference_result",
+          "message": "The latest inference result does not satisfy the maximum age.",
+          "retryable": true,
+          "details": {
+            "age_ms": null,
+            "max_age_ms": 2000
+          }
+        }
+      }
     }
   ],
   "protocol_examples": [
@@ -524,33 +585,5 @@
       "kind": "transport_rejection",
       "http_status": 401
     }
-  ],
-  "future_inference_example": {
-    "schema": "InferenceLatest",
-    "value": {
-      "schema_version": 1,
-      "source_id": "primary-inference",
-      "model_id": "my-detector-v1",
-      "frame_sequence": 1024,
-      "sequence_domain": "raw_capture",
-      "age_ms": 120,
-      "age_clock": "server_monotonic",
-      "inference_time_ms": 18.4,
-      "payload_schema": "application/vnd.example.detector.v1+json",
-      "payload": {
-        "objects": [
-          {
-            "label": "cup",
-            "confidence": 0.91,
-            "bbox_xyxy": [
-              120,
-              80,
-              230,
-              220
-            ]
-          }
-        ]
-      }
-    }
-  }
+  ]
 }
